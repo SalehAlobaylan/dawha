@@ -3443,6 +3443,167 @@ a {
   background: var(--surface);
 }
 
+.research-query-form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.research-query-input-row {
+  display: flex;
+  gap: 7px;
+}
+
+.research-query-input-row input {
+  min-width: 0;
+  flex: 1;
+  min-height: 39px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.research-query-input-row input:focus {
+  border-color: var(--red);
+}
+
+.research-query-input-row button {
+  flex: 0 0 auto;
+}
+
+.research-query-input-row button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.research-query-error {
+  margin: 8px 0 0;
+  color: var(--red);
+  font-size: 10px;
+}
+
+.research-result-card {
+  padding: 22px 24px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.research-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.research-result-head h2 {
+  max-width: 700px;
+  margin-top: 7px;
+  font-size: 17px;
+}
+
+.research-result-answer {
+  margin: 15px 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.9;
+}
+
+.research-result-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.research-result-stats strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.research-conflict-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 15px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--red);
+  background: rgba(153, 68, 56, 0.06);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.research-conflict-list > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.research-evidence-groups {
+  display: grid;
+  gap: 14px;
+  margin-top: 19px;
+}
+
+.research-evidence-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--olive);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.research-evidence-group-title small {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.research-evidence-item {
+  padding: 11px 0 8px;
+}
+
+.research-evidence-item + .research-evidence-item {
+  border-top: 1px dashed var(--rule);
+}
+
+.research-evidence-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.research-evidence-item > strong {
+  display: block;
+  margin-top: 9px;
+  font-size: 12px;
+}
+
+.research-evidence-item > p {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.research-evidence-item > small {
+  color: var(--disabled);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+}
+
 .research-focus-head h2 {
   max-width: 600px;
   margin-top: 7px;
@@ -5622,6 +5783,7 @@ a {
   }
 
   .research-focus-card,
+  .research-result-card,
   .evidence-comparison,
   .research-side-panel {
     padding: 17px;
@@ -5634,8 +5796,13 @@ a {
 
   .focus-claims,
   .comparison-columns,
-  .composer-grid {
+  .composer-grid,
+  .research-query-input-row {
     grid-template-columns: 1fr;
+  }
+
+  .research-query-input-row {
+    display: grid;
   }
 
   .focus-actions {

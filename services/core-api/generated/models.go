@@ -356,6 +356,52 @@ type QuestionSource struct {
 	Role       string
 }
 
+type ResearchAnswer struct {
+	ID                   pgtype.UUID
+	RunID                pgtype.UUID
+	Answer               string
+	Citations            []byte
+	Conflicts            []byte
+	InsufficientEvidence bool
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ResearchEvidence struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	Layer         string
+	ReferenceType string
+	ReferenceID   pgtype.UUID
+	SourceID      pgtype.UUID
+	PassageID     pgtype.UUID
+	StatementID   pgtype.UUID
+	ClaimID       pgtype.UUID
+	FindingID     pgtype.UUID
+	QuestionID    pgtype.UUID
+	Excerpt       string
+	Rank          int32
+	LexicalScore  pgtype.Float8
+	VectorScore   pgtype.Float8
+	RerankScore   pgtype.Float8
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ResearchRun struct {
+	ID                   pgtype.UUID
+	QuestionID           pgtype.UUID
+	ActorID              pgtype.UUID
+	Query                string
+	NormalizedQuery      string
+	QueryType            pgtype.Text
+	Status               string
+	InsufficientEvidence bool
+	ModelVersion         pgtype.Text
+	Error                pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type SchemaMigration struct {
 	Version   string
 	AppliedAt pgtype.Timestamptz

@@ -31,8 +31,10 @@ import type {
   QuestionNoteInput,
   QuestionSourceInput,
   ReviewSuggestionInput,
-  ResearchClaim,
-  SearchResponse,
+   ResearchClaim,
+   ResearchQueryInput,
+   ResearchQueryResult,
+   SearchResponse,
    SourceCandidate,
    SourceDetail,
    SourceFile,
@@ -147,6 +149,23 @@ export async function fetchDashboard(): Promise<DashboardData> {
   } catch {
     return { ...demoDashboard, mode: "demo" };
   }
+}
+
+export async function queryResearch(input: ResearchQueryInput): Promise<ResearchQueryResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API وخدمة البحث لتفعيل الاستعلام.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/query`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchQueryResult;
 }
 
 export async function fetchPublicTrees(): Promise<TreeSummary[]> {

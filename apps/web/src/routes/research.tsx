@@ -2,6 +2,8 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Plus, Search, Send, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
+import { queryResearch } from "../lib/api";
+import type { EpistemicTone, ResearchCitation, ResearchQueryResult } from "../types";
 import { EvidenceComparison, SourceCard } from "../components/EvidencePanels";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -13,11 +15,30 @@ export function ResearchPage() {
   const [activeTab, setActiveTab] = useState("الكل");
   const [search, setSearch] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
+  const [researchQuestion, setResearchQuestion] = useState("");
+  const [researchResult, setResearchResult] = useState<ResearchQueryResult | null>(null);
+  const [researchError, setResearchError] = useState("");
+  const [researchLoading, setResearchLoading] = useState(false);
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
     if (!normalized) return sources.slice(0, 3);
     return sources.filter((source) => `${source.title} ${source.excerpt} ${source.type}`.includes(normalized)).slice(0, 3);
   }, [search]);
+
+  const runResearch = async () => {
+    const question = researchQuestion.trim();
+    if (!question || researchLoading) return;
+    setResearchLoading(true);
+    setResearchError("");
+    try {
+      setResearchResult(await queryResearch({ question }));
+    } catch (error) {
+      setResearchResult(null);
+      setResearchError(error instanceof Error ? error.message : "تعذر تشغيل البحث.");
+    } finally {
+      setResearchLoading(false);
+    }
+  };
 
   return (
     <div className="page-stack">
@@ -30,7 +51,7 @@ export function ResearchPage() {
       <section className="research-command-bar">
         <div className="research-command-copy"><Sparkles size={17} /><span>مساعد البحث يسأل ويقترح، لكنه لا يحسم.</span></div>
         <button className="secondary-button" type="button" onClick={() => setComposerOpen((open) => !open)}><Plus size={15} /> إضافة ادعاء</button>
-        <button className="primary-button" type="button" onClick={() => setComposerOpen((open) => !open)}><Search size={15} /> ابدأ من سؤال</button>
+        <button className="primary-button" type="button" onClick={() => { setComposerOpen(false); document.getElementById("research-question")?.focus(); }}><Search size={15} /> ابدأ من سؤال</button>
       </section>
 
       {composerOpen ? (
@@ -50,6 +71,14 @@ export function ResearchPage() {
         <main className="research-main-column">
           <section className="research-focus-card">
             <div className="research-focus-head"><div><div className="eyebrow">السؤال النشط</div><h2>من كان والد عبدالله في هذه الروايات؟</h2></div><StatusBadge tone="question">قيد التحقيق</StatusBadge></div>
+            <form className="research-query-form" onSubmit={(event) => { event.preventDefault(); void runResearch(); }}>
+              <label htmlFor="research-question">اسأل عن أدلة مصدرة</label>
+              <div className="research-query-input-row">
+                <input id="research-question" value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} placeholder="مثال: من كان والد عبدالله في هذه الروايات؟" />
+                <button className="primary-button" type="submit" disabled={researchLoading || !researchQuestion.trim()}>{researchLoading ? "جارٍ البحث…" : "ابحث في الأدلة"}<Search size={15} /></button>
+              </div>
+            </form>
+            {researchError ? <p className="research-query-error">{researchError}</p> : null}
             <p className="research-focus-lead">المصادر المتاحة لا تحسم اسم الأب. هل توجد علاقة اعتماد بين المصدرين، أم روايتان مستقلتان؟</p>
             <div className="focus-claims">
               <div className="focus-claim focus-claim-supported"><div className="focus-claim-top"><StatusBadge tone="claim" compact>ادعاء ١</StatusBadge><span>مدعوم مبدئياً</span></div><strong>محمد بن سعد</strong><p>المصدر الأول يذكر أن عبدالله يتصل بمحمد.</p><div className="focus-claim-footer"><span><BookOpen size={13} /> مصدر أولي</span><span>١ من ٢</span></div></div>
@@ -57,6 +86,8 @@ export function ResearchPage() {
             </div>
             <div className="focus-actions"><button className="primary-button" type="button"><FileSearch size={15} /> ابحث عن مصدر جديد</button><button className="secondary-button" type="button"><GitBranch size={15} /> اعرض المسار</button><Link to="/questions" className="text-button">كل الأسئلة <ArrowLeft size={14} /></Link></div>
           </section>
+
+          {researchResult ? <ResearchResultPanel result={researchResult} /> : null}
 
           <EvidenceComparison />
 
@@ -80,5 +111,47 @@ export function ResearchPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+const researchLayerLabels: Record<ResearchCitation["layer"], string> = {
+  source_statement: "عبارة المصدر",
+  research_claim: "ادعاء بحثي",
+  tree_interpretation: "تفسير الشجرة",
+  platform_finding: "ملاحظة النظام",
+  open_question: "سؤال مفتوح",
+};
+
+function researchLayerTone(layer: ResearchCitation["layer"]): EpistemicTone {
+  if (layer === "source_statement") return "source";
+  if (layer === "research_claim") return "claim";
+  if (layer === "tree_interpretation") return "interpretation";
+  if (layer === "platform_finding") return "finding";
+  return "question";
+}
+
+function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
+  const groups: Array<{ citations: ResearchCitation[]; label: string }> = [
+    { citations: result.layers.sourceStatements, label: "عبارات المصدر" },
+    { citations: result.layers.researchClaims, label: "ادعاءات البحث" },
+    { citations: result.layers.treeInterpretations, label: "تفسيرات الشجرة" },
+    { citations: result.layers.platformFindings, label: "ملاحظات النظام" },
+    { citations: result.layers.openQuestions, label: "أسئلة مفتوحة" },
+  ].filter((group) => group.citations.length > 0);
+
+  return (
+    <section className="research-result-card" aria-live="polite">
+      <div className="research-result-head">
+        <div>
+          <div className="eyebrow">نتيجة البحث المربوطة</div>
+          <h2>{result.query}</h2>
+        </div>
+        <StatusBadge tone={result.insufficientEvidence ? "disputed" : "source"}>{result.insufficientEvidence ? "أدلة غير كافية" : "مرتبطة بمصادر"}</StatusBadge>
+      </div>
+      <p className="research-result-answer">{result.answer}</p>
+      <div className="research-result-stats"><span><strong>{result.citations.length}</strong> مادة</span><span><strong>{result.retrieval.fusedCandidates}</strong> مرشح</span><span><strong>{result.conflicts.length}</strong> تعارض</span><span>{result.modelVersion ?? "بدون نموذج"}</span></div>
+      {result.conflicts.length > 0 ? <div className="research-conflict-list">{result.conflicts.map((conflict, index) => <div key={`${conflict.leftId}-${conflict.rightId}-${index}`}><CircleAlert size={15} /><span><strong>{conflict.status}</strong> {conflict.explanation}</span></div>)}</div> : null}
+      <div className="research-evidence-groups">{groups.map((group) => <div className="research-evidence-group" key={group.label}><div className="research-evidence-group-title"><span>{group.label}</span><small>{group.citations.length}</small></div>{group.citations.map((citation) => <article className="research-evidence-item" key={`${citation.layer}-${citation.id}`}><div className="research-evidence-item-head"><StatusBadge tone={researchLayerTone(citation.layer)} compact>{researchLayerLabels[citation.layer]}</StatusBadge>{citation.rank > 0 ? <span>#{citation.rank}</span> : null}</div><strong>{citation.title || "بدون عنوان"}</strong><p>{citation.excerpt || "لا يوجد مقتطف متاح."}</p><small>{citation.locatorAr || citation.reviewStatus || citation.status || "بدون موقع"}</small></article>)}</div>)}</div>
+    </section>
   );
 }

@@ -239,6 +239,85 @@ export interface ResearchClaim {
   evidence: ClaimEvidence[];
 }
 
+export type ResearchLayer = "source_statement" | "research_claim" | "tree_interpretation" | "platform_finding" | "open_question";
+
+export interface ResearchScore {
+  lexical?: number;
+  vector?: number;
+  combined?: number;
+  rerank?: number;
+}
+
+export interface ResearchCitation {
+  layer: ResearchLayer;
+  type: string;
+  id: string;
+  sourceId?: string;
+  passageId?: string;
+  statementId?: string;
+  claimId?: string;
+  findingId?: string;
+  questionId?: string;
+  title: string;
+  excerpt: string;
+  locatorAr?: string;
+  pageNumber?: number;
+  reviewStatus?: string;
+  status?: string;
+  rank: number;
+  score: ResearchScore;
+}
+
+export interface ResearchConflict {
+  type: string;
+  leftId: string;
+  rightId: string;
+  status: string;
+  explanation: string;
+  sourceIds?: string[];
+}
+
+export interface ResearchLayeredEvidence {
+  sourceStatements: ResearchCitation[];
+  researchClaims: ResearchCitation[];
+  treeInterpretations: ResearchCitation[];
+  platformFindings: ResearchCitation[];
+  openQuestions: ResearchCitation[];
+}
+
+export interface ResearchRetrievalStats {
+  lexicalCandidates: number;
+  vectorCandidates: number;
+  fusedCandidates: number;
+  rerankedCandidates: number;
+  evidenceCount: number;
+}
+
+export interface ResearchQueryResult {
+  runId: string;
+  query: string;
+  normalizedQuery: string;
+  queryType: string;
+  answer: string;
+  insufficientEvidence: boolean;
+  modelVersion?: string;
+  createdAt: string;
+  citations: ResearchCitation[];
+  layers: ResearchLayeredEvidence;
+  conflicts: ResearchConflict[];
+  retrieval: ResearchRetrievalStats;
+}
+
+export interface ResearchQueryInput {
+  question: string;
+  question_id?: string;
+  source_id?: string;
+  person_id?: string;
+  place_id?: string;
+  from_year?: number;
+  to_year?: number;
+}
+
 export interface ClaimSummary {
   id: string;
   subjectType: string;

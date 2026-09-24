@@ -68,6 +68,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	geographyHandler := geographyHandler{Service: geographyService}
 	searchService := search.NewService(dependencies.DB)
 	searchHandler := searchHandler{Service: searchService}
+	researchService := research.NewService(dependencies.DB, dependencies.AI)
+	researchHandler := researchHandler{Service: researchService, Auth: authService, Logger: dependencies.Logger}
 	jobsService := dependencies.Jobs
 	if jobsService == nil {
 		jobsService = jobs.NewService(dependencies.DB)
@@ -143,6 +145,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/map", geographyHandler.mapFeatures)
 	mux.HandleFunc("GET /api/v1/map/places/{placeID}", geographyHandler.placeMap)
 	mux.HandleFunc("GET /api/v1/search", searchHandler.search)
+	mux.HandleFunc("POST /api/v1/research/query", researchHandler.query)
 	mux.HandleFunc("GET /api/v1/jobs", jobsHandler.list)
 	mux.HandleFunc("POST /api/v1/jobs", jobsHandler.enqueue)
 	mux.HandleFunc("POST /api/v1/jobs/claim", jobsHandler.claim)
