@@ -96,9 +96,11 @@ type SourceStatementView struct {
 }
 
 type SourceDetail struct {
-	Source     SourceView            `json:"source"`
-	Passages   []SourcePassageView   `json:"passages"`
-	Statements []SourceStatementView `json:"statements"`
+	Source            SourceView              `json:"source"`
+	Passages          []SourcePassageView     `json:"passages"`
+	Statements        []SourceStatementView   `json:"statements"`
+	Dependencies      []SourceDependencyView  `json:"dependencies"`
+	DependencySummary SourceDependencySummary `json:"dependencySummary"`
 }
 
 type CreateClaimInput struct {
@@ -125,9 +127,11 @@ type EvidenceView struct {
 	ID                string `json:"id"`
 	Relation          string `json:"relation"`
 	EvidenceNoteAR    string `json:"evidenceNoteAr,omitempty"`
+	SourceID          string `json:"sourceId,omitempty"`
 	SourceStatementID string `json:"sourceStatementId,omitempty"`
 	SourcePassageID   string `json:"sourcePassageId,omitempty"`
 	SourceTitleAR     string `json:"sourceTitleAr,omitempty"`
+	DependencyStatus  string `json:"dependencyStatus,omitempty"`
 	StatementTextAR   string `json:"statementTextAr,omitempty"`
 	PassageTextAR     string `json:"passageTextAr,omitempty"`
 }
@@ -259,7 +263,11 @@ func (s *Service) getSource(ctx context.Context, sourceID string, actorID *uuid.
 	if err != nil {
 		return SourceDetail{}, err
 	}
-	return SourceDetail{Source: source, Passages: passages, Statements: statements}, nil
+	dependencyGraph, err := s.loadSourceDependencyGraph(ctx, s.Pool, sourceUUID, actorID)
+	if err != nil {
+		return SourceDetail{}, err
+	}
+	return SourceDetail{Source: source, Passages: passages, Statements: statements, Dependencies: dependencyGraph.Items, DependencySummary: dependencyGraph.Summary}, nil
 }
 
 func (s *Service) CreateSource(ctx context.Context, actorID string, input CreateSourceInput) (SourceDetail, error) {
@@ -580,7 +588,13 @@ func (s *Service) ready() error {
 
 const sourceListQuery = `
 	SELECT s.id, s.title_ar, s.author_ar, s.source_type, s.publication_date_from, s.publication_date_to,
-	       s.edition_ar, s.citation_ar, s.location_ar, s.dependency_status, s.visibility, s.created_by, s.created_at, s.updated_at,
+	       s.edition_ar, s.citation_ar, s.location_ar,
+	       CASE
+	         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+	         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+	         ELSE s.dependency_status
+	       END,
+	       s.visibility, s.created_by, s.created_at, s.updated_at,
 	       (SELECT count(*) FROM source_passages sp WHERE sp.source_id = s.id),
 	       (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id)
 	FROM sources s`
@@ -699,7 +713,14 @@ func (s *Service) statements(ctx context.Context, q dbExecutor, sourceID uuid.UU
 func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]EvidenceView, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT ce.id, ce.relation, ce.evidence_note_ar, ce.source_statement_id, ce.source_passage_id,
-		       s.title_ar, ss.statement_text_ar, sp.text_ar
+		       s.id, s.title_ar,
+		       CASE
+		         WHEN s.id IS NULL THEN ''
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END,
+		       ss.statement_text_ar, sp.text_ar
 		FROM claim_evidence ce
 		LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = ce.source_passage_id
@@ -707,7 +728,14 @@ func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]Evide
 		WHERE ce.claim_id = $1 AND (s.id IS NULL OR s.visibility = 'public')
 		UNION ALL
 		SELECT cce.id, 'contradicts', cce.note_ar, cce.source_statement_id, cce.source_passage_id,
-		       s.title_ar, ss.statement_text_ar, sp.text_ar
+		       s.id, s.title_ar,
+		       CASE
+		         WHEN s.id IS NULL THEN ''
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END,
+		       ss.statement_text_ar, sp.text_ar
 		FROM claim_counter_evidence cce
 		LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = cce.source_passage_id
@@ -722,16 +750,18 @@ func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]Evide
 	items := make([]EvidenceView, 0)
 	for rows.Next() {
 		var item EvidenceView
-		var id, statementID, passageID pgtype.UUID
-		var note, title, statement, passage pgtype.Text
-		if err := rows.Scan(&item.ID, &item.Relation, &note, &statementID, &passageID, &title, &statement, &passage); err != nil {
+		var id, sourceID, statementID, passageID pgtype.UUID
+		var note, title, dependencyStatus, statement, passage pgtype.Text
+		if err := rows.Scan(&item.ID, &item.Relation, &note, &statementID, &passageID, &sourceID, &title, &dependencyStatus, &statement, &passage); err != nil {
 			return nil, err
 		}
 		item.ID = uuidString(id)
 		item.EvidenceNoteAR = textValue(note)
+		item.SourceID = uuidString(sourceID)
 		item.SourceStatementID = uuidString(statementID)
 		item.SourcePassageID = uuidString(passageID)
 		item.SourceTitleAR = textValue(title)
+		item.DependencyStatus = textValue(dependencyStatus)
 		item.StatementTextAR = textValue(statement)
 		item.PassageTextAR = textValue(passage)
 		items = append(items, item)

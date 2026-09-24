@@ -105,6 +105,68 @@ func (h evidenceHandler) createStatement(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, result)
 }
 
+func (h evidenceHandler) listDependencies(w http.ResponseWriter, r *http.Request) {
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	result, err := h.Service.ListSourceDependencies(r.Context(), r.PathValue("sourceID"), actorID)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h evidenceHandler) createDependency(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input evidence.CreateSourceDependencyInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.CreateSourceDependency(r.Context(), r.PathValue("sourceID"), user.ID, input)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h evidenceHandler) detectDependencies(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.DetectSourceDependencies(r.Context(), r.PathValue("sourceID"), user.ID)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h evidenceHandler) reviewDependency(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input evidence.ReviewSourceDependencyInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReviewSourceDependency(r.Context(), r.PathValue("dependencyID"), user.ID, input)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h evidenceHandler) listClaims(w http.ResponseWriter, r *http.Request) {
 	items, err := h.Service.ListClaims(r.Context())
 	if err != nil {

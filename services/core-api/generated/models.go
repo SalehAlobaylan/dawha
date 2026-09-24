@@ -678,6 +678,20 @@ type SourceDependency struct {
 	EvidenceAr        pgtype.Text
 	Status            string
 	CreatedAt         pgtype.Timestamptz
+	AlgorithmVersion  pgtype.Text
+	SignalData        []byte
+	ReviewedBy        pgtype.UUID
+	ReviewedAt        pgtype.Timestamptz
+	ReviewNoteAr      pgtype.Text
+}
+
+type SourceDependencyReview struct {
+	ID           pgtype.UUID
+	DependencyID pgtype.UUID
+	ReviewerID   pgtype.UUID
+	Decision     string
+	NoteAr       pgtype.Text
+	CreatedAt    pgtype.Timestamptz
 }
 
 type SourceFile struct {

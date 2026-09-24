@@ -11,6 +11,7 @@ import type {
   CreatePassageInput,
   CreateSourceInput,
   CreateStatementInput,
+  CreateSourceDependencyInput,
   CreateTreeInput,
   ContradictionFinding,
   ContradictionReviewInput,
@@ -48,10 +49,12 @@ import type {
   ResearchRunSummary,
   ResearchWorkspaceInput,
   ResearchWorkspaceSnapshot,
+  ReviewSourceDependencyInput,
   ReviewSuggestionInput,
   SearchResponse,
   SourceCandidate,
   SourceDetail,
+  SourceDependencyGraph,
   SourceFile,
   SourceMetadata,
   SourceProcessing,
@@ -953,6 +956,63 @@ export async function fetchSource(sourceId: string): Promise<SourceDetail> {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as SourceDetail;
+}
+
+export async function fetchSourceDependencies(sourceId: string): Promise<SourceDependencyGraph> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض اعتماد المصادر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies`, { credentials: "include", signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDependencyGraph;
+}
+
+export async function createSourceDependency(sourceId: string, input: CreateSourceDependencyInput): Promise<SourceDependencyGraph> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإضافة اعتماد مصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDependencyGraph;
+}
+
+export async function detectSourceDependencies(sourceId: string): Promise<SourceDependencyGraph> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لفحص اعتماد المصادر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies/detect`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDependencyGraph;
+}
+
+export async function reviewSourceDependency(dependencyId: string, input: ReviewSourceDependencyInput): Promise<SourceDependencyGraph> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لمراجعة اعتماد المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-dependencies/${dependencyId}/review`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDependencyGraph;
 }
 
 export async function fetchSourceProcessing(sourceId: string): Promise<SourceProcessing> {

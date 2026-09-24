@@ -1,6 +1,6 @@
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, BookOpen, Check, CircleHelp, FileSearch, GitBranch, Link2, Map, MessageCircleQuestion, Plus, RefreshCw, ShieldQuestion, Sparkles, UserRound, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, Check, CircleHelp, FileSearch, GitBranch, Link2, Map, MessageCircleQuestion, Plus, RefreshCw, ShieldAlert, ShieldQuestion, Sparkles, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { demoDashboard, sources } from "../data/demo";
 import { ApiError, addClaimEvidence, createClaim, createDispute, createQuestion, fetchResearchRun, fetchResearchWorkspace, linkDisputeClaim, linkQuestionClaim, linkQuestionDispute, linkQuestionEntity, linkQuestionFinding, queryResearch, reviewEntityResolutionCandidate } from "../lib/api";
@@ -215,7 +215,8 @@ function graphStatsForRun(detail: ResearchRunDetail): GraphStats {
 }
 
 function EvidenceLine({ evidence }: { evidence: WorkspaceClaim["evidence"][number] }) {
-  return <div className="workspace-evidence-line"><span>{evidence.statementTextAr || evidence.passageTextAr || "دليل مرتبط"}</span><small>{evidence.sourceTitleAr || evidence.locatorAr || "مصدر غير معروض"}{evidence.reviewStatus ? ` · ${evidence.reviewStatus}` : ""}</small></div>;
+  const dependencyWarning = evidence.dependencyStatus === "derived" ? "مصدر يعتمد على مصدر آخر" : evidence.dependencyStatus === "likely_dependent" ? "ارتباط يحتاج مراجعة" : "";
+  return <div className="workspace-evidence-line"><span>{evidence.statementTextAr || evidence.passageTextAr || "دليل مرتبط"}</span><small>{evidence.sourceTitleAr || evidence.locatorAr || "مصدر غير معروض"}{evidence.reviewStatus ? ` · ${evidence.reviewStatus}` : ""}</small>{dependencyWarning ? <small className="workspace-dependency-warning"><ShieldAlert size={11} /> {dependencyWarning}</small> : null}</div>;
 }
 
 function TimelineLine({ event }: { event: WorkspaceTimelineEvent }) {

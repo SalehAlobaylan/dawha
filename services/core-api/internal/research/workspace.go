@@ -51,18 +51,19 @@ type WorkspacePermissions struct {
 }
 
 type WorkspaceEvidence struct {
-	ID              string `json:"id"`
-	Kind            string `json:"kind"`
-	Relation        string `json:"relation"`
-	SourceID        string `json:"sourceId,omitempty"`
-	SourceTitleAR   string `json:"sourceTitleAr,omitempty"`
-	StatementID     string `json:"statementId,omitempty"`
-	StatementTextAR string `json:"statementTextAr,omitempty"`
-	PassageID       string `json:"passageId,omitempty"`
-	PassageTextAR   string `json:"passageTextAr,omitempty"`
-	LocatorAR       string `json:"locatorAr,omitempty"`
-	PageNumber      *int   `json:"pageNumber,omitempty"`
-	ReviewStatus    string `json:"reviewStatus,omitempty"`
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	Relation         string `json:"relation"`
+	SourceID         string `json:"sourceId,omitempty"`
+	SourceTitleAR    string `json:"sourceTitleAr,omitempty"`
+	StatementID      string `json:"statementId,omitempty"`
+	StatementTextAR  string `json:"statementTextAr,omitempty"`
+	PassageID        string `json:"passageId,omitempty"`
+	PassageTextAR    string `json:"passageTextAr,omitempty"`
+	LocatorAR        string `json:"locatorAr,omitempty"`
+	PageNumber       *int   `json:"pageNumber,omitempty"`
+	ReviewStatus     string `json:"reviewStatus,omitempty"`
+	DependencyStatus string `json:"dependencyStatus,omitempty"`
 }
 
 type WorkspaceClaim struct {
@@ -496,7 +497,13 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 	rows, err := q.Query(ctx, `
 		SELECT ce.claim_id, ce.id, 'evidence', ce.relation,
 		       COALESCE(ss.source_id, sp.source_id), s.title_ar, ss.id, ss.statement_text_ar,
-		       sp.id, sp.text_ar, COALESCE(ss.locator_ar, sp.locator_ar), sp.page_number, ss.review_status
+		       sp.id, sp.text_ar, COALESCE(ss.locator_ar, sp.locator_ar), sp.page_number, ss.review_status,
+		       CASE
+		         WHEN s.id IS NULL THEN ''
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END
 		FROM claim_evidence ce
 		LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = ce.source_passage_id
@@ -516,7 +523,13 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 		UNION ALL
 		SELECT cce.claim_id, cce.id, 'counter_evidence', 'contradicts',
 		       COALESCE(ss.source_id, sp.source_id), s.title_ar, ss.id, ss.statement_text_ar,
-		       sp.id, sp.text_ar, COALESCE(ss.locator_ar, sp.locator_ar), sp.page_number, ss.review_status
+		       sp.id, sp.text_ar, COALESCE(ss.locator_ar, sp.locator_ar), sp.page_number, ss.review_status,
+		       CASE
+		         WHEN s.id IS NULL THEN ''
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END
 		FROM claim_counter_evidence cce
 		LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = cce.source_passage_id
@@ -542,12 +555,12 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 	seen := make(map[string]map[string]struct{})
 	for rows.Next() {
 		var claimID, id, sourceID, statementID, passageID pgtype.UUID
-		var kind, relation, sourceTitle, statementText, passageText, locator, reviewStatus pgtype.Text
+		var kind, relation, sourceTitle, statementText, passageText, locator, reviewStatus, dependencyStatus pgtype.Text
 		var pageNumber pgtype.Int4
-		if err := rows.Scan(&claimID, &id, &kind, &relation, &sourceID, &sourceTitle, &statementID, &statementText, &passageID, &passageText, &locator, &pageNumber, &reviewStatus); err != nil {
+		if err := rows.Scan(&claimID, &id, &kind, &relation, &sourceID, &sourceTitle, &statementID, &statementText, &passageID, &passageText, &locator, &pageNumber, &reviewStatus, &dependencyStatus); err != nil {
 			return nil, err
 		}
-		item := WorkspaceEvidence{ID: uuidText(id), Kind: textValue(kind), Relation: textValue(relation), SourceID: uuidText(sourceID), SourceTitleAR: textValue(sourceTitle), StatementID: uuidText(statementID), StatementTextAR: textValue(statementText), PassageID: uuidText(passageID), PassageTextAR: textValue(passageText), LocatorAR: textValue(locator), ReviewStatus: textValue(reviewStatus)}
+		item := WorkspaceEvidence{ID: uuidText(id), Kind: textValue(kind), Relation: textValue(relation), SourceID: uuidText(sourceID), SourceTitleAR: textValue(sourceTitle), StatementID: uuidText(statementID), StatementTextAR: textValue(statementText), PassageID: uuidText(passageID), PassageTextAR: textValue(passageText), LocatorAR: textValue(locator), ReviewStatus: textValue(reviewStatus), DependencyStatus: textValue(dependencyStatus)}
 		if pageNumber.Valid {
 			value := int(pageNumber.Int32)
 			item.PageNumber = &value
@@ -571,7 +584,13 @@ func loadWorkspaceSources(ctx context.Context, q workspaceExecutor, questionID u
 		entityArg = entityID
 	}
 	rows, err := q.Query(ctx, `
-		SELECT s.id, s.title_ar, s.author_ar, s.source_type, s.dependency_status, s.visibility, s.citation_ar, s.location_ar,
+		SELECT s.id, s.title_ar, s.author_ar, s.source_type,
+		       CASE
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END,
+		       s.visibility, s.citation_ar, s.location_ar,
 		       (SELECT count(*) FROM source_passages sp WHERE sp.source_id = s.id),
 		       (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id)
 		FROM sources s

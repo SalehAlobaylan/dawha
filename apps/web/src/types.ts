@@ -120,10 +120,60 @@ export interface SourceStatement {
   createdAt: string;
 }
 
+export type SourceDependencyType = "cites" | "derived_from" | "likely_paraphrase" | "shared_origin" | "unknown";
+export type SourceDependencyStatus = "needs_review" | "confirmed" | "rejected";
+
+export interface SourceDependency {
+  id: string;
+  sourceId: string;
+  sourceTitleAr: string;
+  dependsOnSourceId?: string;
+  dependsOnSourceTitleAr?: string;
+  dependencyType: SourceDependencyType;
+  evidenceAr?: string;
+  status: SourceDependencyStatus;
+  algorithmVersion?: string;
+  signalData: Record<string, unknown>;
+  createdAt: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+}
+
+export interface SourceDependencySummary {
+  total: number;
+  needsReview: number;
+  confirmed: number;
+  rejected: number;
+  independentSourceCount: number;
+}
+
+export interface SourceDependencyGraph {
+  sourceId: string;
+  items: SourceDependency[];
+  summary: SourceDependencySummary;
+  detectedCount: number;
+  scannedPassageCount: number;
+  truncated: boolean;
+}
+
+export interface CreateSourceDependencyInput {
+  depends_on_source_id: string;
+  dependency_type: SourceDependencyType;
+  evidence_ar?: string;
+}
+
+export interface ReviewSourceDependencyInput {
+  decision: "confirmed" | "rejected";
+  note_ar?: string;
+}
+
 export interface SourceDetail {
   source: SourceMetadata;
   passages: SourcePassage[];
   statements: SourceStatement[];
+  dependencies: SourceDependency[];
+  dependencySummary: SourceDependencySummary;
 }
 
 export interface SourceFile {
@@ -214,9 +264,11 @@ export interface ClaimEvidence {
   id: string;
   relation: "supports" | "contextualizes" | "contradicts" | "refutes";
   evidenceNoteAr?: string;
+  sourceId?: string;
   sourceStatementId?: string;
   sourcePassageId?: string;
   sourceTitleAr?: string;
+  dependencyStatus?: string;
   statementTextAr?: string;
   passageTextAr?: string;
 }
@@ -481,6 +533,7 @@ export interface WorkspaceEvidence {
   locatorAr?: string;
   pageNumber?: number;
   reviewStatus?: string;
+  dependencyStatus?: string;
 }
 
 export interface WorkspaceClaim {

@@ -20,6 +20,9 @@ func TestEvidenceWriteRoutesRequireAuthentication(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/sources/00000000-0000-0000-0000-000000000001/statements", body: `{"statement_text_ar":"عبارة"}`},
 		{method: http.MethodPost, path: "/api/v1/claims", body: `{"subject_type":"person","subject_id":"00000000-0000-0000-0000-000000000001","predicate":"father_of","object_type":"person","object_id":"00000000-0000-0000-0000-000000000002"}`},
 		{method: http.MethodPost, path: "/api/v1/claims/00000000-0000-0000-0000-000000000001/evidence", body: `{"source_passage_id":"00000000-0000-0000-0000-000000000002","relation":"supports"}`},
+		{method: http.MethodPost, path: "/api/v1/sources/00000000-0000-0000-0000-000000000001/dependencies", body: `{"depends_on_source_id":"00000000-0000-0000-0000-000000000002","dependency_type":"cites"}`},
+		{method: http.MethodPost, path: "/api/v1/sources/00000000-0000-0000-0000-000000000001/dependencies/detect"},
+		{method: http.MethodPatch, path: "/api/v1/source-dependencies/00000000-0000-0000-0000-000000000003/review", body: `{"decision":"confirmed"}`},
 	}
 	for _, testCase := range cases {
 		recorder := httptest.NewRecorder()

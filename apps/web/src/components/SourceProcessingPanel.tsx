@@ -41,6 +41,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle }: SourceProcessin
       await queryClient.invalidateQueries({ queryKey: ["source-processing", sourceId] });
       await queryClient.invalidateQueries({ queryKey: ["source", sourceId] });
       await queryClient.invalidateQueries({ queryKey: ["sources"] });
+      await queryClient.invalidateQueries({ queryKey: ["source-dependencies", sourceId] });
     },
     onError: (error) => setMessage(errorMessage(error)),
   });
@@ -52,6 +53,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle }: SourceProcessin
       await queryClient.invalidateQueries({ queryKey: ["source-processing", sourceId] });
       await queryClient.invalidateQueries({ queryKey: ["source", sourceId] });
       await queryClient.invalidateQueries({ queryKey: ["sources"] });
+      await queryClient.invalidateQueries({ queryKey: ["source-dependencies", sourceId] });
     },
     onError: (error) => setMessage(errorMessage(error)),
   });
