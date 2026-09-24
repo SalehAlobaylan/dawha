@@ -11,6 +11,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
@@ -45,6 +46,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	treeHandler := treeHandler{Service: treeService, Auth: authService}
 	collaborationService := collaboration.NewService(dependencies.DB)
 	collaborationHandler := collaborationHandler{Service: collaborationService, Auth: authService}
+	evidenceService := evidence.NewService(dependencies.DB)
+	evidenceHandler := evidenceHandler{Service: evidenceService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +84,15 @@ func NewRouter(dependencies Dependencies) http.Handler {
 			},
 		})
 	})
+	mux.HandleFunc("GET /api/v1/sources", evidenceHandler.listSources)
+	mux.HandleFunc("POST /api/v1/sources", evidenceHandler.createSource)
+	mux.HandleFunc("GET /api/v1/sources/{sourceID}", evidenceHandler.getSource)
+	mux.HandleFunc("POST /api/v1/sources/{sourceID}/passages", evidenceHandler.createPassage)
+	mux.HandleFunc("POST /api/v1/sources/{sourceID}/statements", evidenceHandler.createStatement)
+	mux.HandleFunc("GET /api/v1/claims", evidenceHandler.listClaims)
+	mux.HandleFunc("POST /api/v1/claims", evidenceHandler.createClaim)
+	mux.HandleFunc("GET /api/v1/claims/{claimID}", evidenceHandler.getClaim)
+	mux.HandleFunc("POST /api/v1/claims/{claimID}/evidence", evidenceHandler.addEvidence)
 	mux.HandleFunc("POST /api/v1/normalize-name", normalizeName)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)

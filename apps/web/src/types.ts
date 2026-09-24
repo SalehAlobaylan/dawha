@@ -75,6 +75,137 @@ export interface SourceRecord {
   dependent?: boolean;
 }
 
+export interface SourceMetadata {
+  id: string;
+  titleAr: string;
+  authorAr?: string;
+  sourceType: string;
+  publicationDateFrom?: string;
+  publicationDateTo?: string;
+  editionAr?: string;
+  citationAr?: string;
+  locationAr?: string;
+  dependencyStatus: "unknown" | "independent" | "derived" | "likely_dependent";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  passageCount: number;
+  statementCount: number;
+}
+
+export interface SourcePassage {
+  id: string;
+  sourceId: string;
+  sequenceNumber: number;
+  pageNumber?: number;
+  locatorAr?: string;
+  textAr: string;
+  createdAt: string;
+}
+
+export interface SourceStatement {
+  id: string;
+  sourceId: string;
+  sourcePassageId?: string;
+  statementTextAr: string;
+  locatorAr?: string;
+  extractionMethod: "manual" | "ocr" | "ai" | "imported";
+  reviewStatus: "unreviewed" | "accepted" | "rejected" | "needs_review";
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface SourceDetail {
+  source: SourceMetadata;
+  passages: SourcePassage[];
+  statements: SourceStatement[];
+}
+
+export interface ClaimEvidence {
+  id: string;
+  relation: "supports" | "contextualizes" | "contradicts" | "refutes";
+  evidenceNoteAr?: string;
+  sourceStatementId?: string;
+  sourcePassageId?: string;
+  sourceTitleAr?: string;
+  statementTextAr?: string;
+  passageTextAr?: string;
+}
+
+export interface ResearchClaim {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  predicate: string;
+  objectType: string;
+  objectId: string;
+  timeFrom?: string;
+  timeTo?: string;
+  placeId?: string;
+  status: string;
+  notesAr?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  evidence: ClaimEvidence[];
+}
+
+export interface ClaimSummary {
+  id: string;
+  subjectType: string;
+  predicate: string;
+  objectType: string;
+  status: string;
+  evidenceCount: number;
+  createdAt: string;
+}
+
+export interface CreateSourceInput {
+  title_ar: string;
+  author_ar?: string;
+  source_type: string;
+  publication_date_from?: string;
+  publication_date_to?: string;
+  edition_ar?: string;
+  citation_ar?: string;
+  location_ar?: string;
+  dependency_status?: "unknown" | "independent" | "derived" | "likely_dependent";
+}
+
+export interface CreatePassageInput {
+  sequence_number?: number;
+  page_number?: number;
+  locator_ar?: string;
+  text_ar: string;
+}
+
+export interface CreateStatementInput {
+  source_passage_id?: string;
+  statement_text_ar: string;
+  locator_ar?: string;
+  review_status?: "unreviewed" | "accepted" | "rejected" | "needs_review";
+}
+
+export interface CreateClaimInput {
+  subject_type: string;
+  subject_id: string;
+  predicate: string;
+  object_type: string;
+  object_id: string;
+  time_from?: string;
+  time_to?: string;
+  place_id?: string;
+  status?: string;
+  notes_ar?: string;
+}
+
+export interface AddEvidenceInput {
+  source_statement_id?: string;
+  source_passage_id?: string;
+  evidence_note_ar?: string;
+  relation: "supports" | "contextualizes" | "contradicts" | "refutes";
+}
+
 export interface TreeSummary {
   id: string;
   name: string;

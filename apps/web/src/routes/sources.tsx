@@ -3,6 +3,7 @@ import { ArrowLeft, BookOpen, CheckCircle2, FileStack, Search, SlidersHorizontal
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
 import { SourceCard } from "../components/EvidencePanels";
+import { SourceEvidenceWorkspace } from "../components/SourceEvidenceWorkspace";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
@@ -25,9 +26,11 @@ export function SourcesPage() {
     <div className="page-stack">
       <TopBar eyebrow="المكتبة / المصادر" title="المصدر أولاً" description="ما الذي يقوله النص بالضبط؟ افتح الاقتباس، ثم احكم على الادعاء الذي بُني فوقه." />
       <section className="source-library-hero">
-        <div className="source-library-copy"><div className="eyebrow">مكتبة المصادر</div><h2>لا نخلط بين النص<br /><em>وما استنتجناه منه.</em></h2><p>كل مصدر يحتفظ بموضعه ونصه، ويظل الاقتباس جزءاً من قوة الدليل، لا عنصراً ثانوياً.</p><div className="library-hero-actions"><button className="primary-button" type="button"><UploadCloud size={15} /> أضف مصدراً</button><span><BookOpen size={14} /> 1,248 مصدراً مفهرساً</span></div></div>
+        <div className="source-library-copy"><div className="eyebrow">مكتبة المصادر</div><h2>لا نخلط بين النص<br /><em>وما استنتجناه منه.</em></h2><p>كل مصدر يحتفظ بموضعه ونصه، ويظل الاقتباس جزءاً من قوة الدليل، لا عنصراً ثانوياً.</p><div className="library-hero-actions"><a className="primary-button" href="#evidence-workspace"><UploadCloud size={15} /> أضف مصدراً</a><span><BookOpen size={14} /> 1,248 مصدراً مفهرساً</span></div></div>
         <div className="source-stack-visual"><div className="source-sheet source-sheet-back" /><div className="source-sheet source-sheet-middle" /><div className="source-sheet source-sheet-front"><span>المصدر</span><strong>ما ورد فيه</strong><i /></div><span className="source-visual-caption">طبقة النص<br />أصل الحجة</span></div>
       </section>
+
+      <SourceEvidenceWorkspace />
 
       <section className="source-stats-row"><div><strong>842</strong><span>مخطوطات وكتب</span></div><div><strong>211</strong><span>سجلات وأرشيف</span></div><div><strong>17</strong><span>مصدر يحتاج مراجعة</span></div><div><strong>94%</strong><span>لديها موضع اقتباس</span></div><StatusBadge tone="source">المصدر لا يصبح حقيقة تلقائياً</StatusBadge></section>
 

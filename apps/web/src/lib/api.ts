@@ -1,12 +1,21 @@
 import { demoDashboard, treeNodes } from "../data/demo";
 import type {
+  AddEvidenceInput,
   AddPersonInput,
   AddRelationshipInput,
+  ClaimSummary,
   CollaboratorsResponse,
+  CreateClaimInput,
+  CreatePassageInput,
+  CreateSourceInput,
+  CreateStatementInput,
   CreateTreeInput,
   DashboardData,
   ForkTreeInput,
   InvitationCreated,
+  ResearchClaim,
+  SourceDetail,
+  SourceMetadata,
   TreeActivity,
   TreeDetail,
   TreeDiff,
@@ -295,6 +304,132 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchSources(): Promise<SourceMetadata[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض مكتبة المصادر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: SourceMetadata[] };
+  return payload.items ?? [];
+}
+
+export async function fetchSource(sourceId: string): Promise<SourceDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDetail;
+}
+
+export async function createSource(input: CreateSourceInput): Promise<SourceDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإضافة مصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDetail;
+}
+
+export async function createSourcePassage(sourceId: string, input: CreatePassageInput): Promise<SourceDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإضافة مقطع.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/passages`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDetail;
+}
+
+export async function createSourceStatement(sourceId: string, input: CreateStatementInput): Promise<SourceDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتسجيل عبارة مصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/statements`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceDetail;
+}
+
+export async function fetchClaims(): Promise<ClaimSummary[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الادعاءات.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: ClaimSummary[] };
+  return payload.items ?? [];
+}
+
+export async function fetchClaim(claimId: string): Promise<ResearchClaim> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الادعاء.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchClaim;
+}
+
+export async function createClaim(input: CreateClaimInput): Promise<ResearchClaim> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لحفظ ادعاء.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchClaim;
+}
+
+export async function addClaimEvidence(claimId: string, input: AddEvidenceInput): Promise<ResearchClaim> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط الدليل.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}/evidence`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchClaim;
 }
 
 export async function fetchCollaborators(treeId: string): Promise<CollaboratorsResponse> {
