@@ -61,6 +61,15 @@ def clamp(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 4)
 
 
+def relation_parts(value: str, predicate: str) -> tuple[str, str]:
+    index = value.find(predicate)
+    if index < 0:
+        return value[:100], ""
+    subject = value[:index].strip(" ،,.؟?")
+    object_text = value[index + len(predicate) :].strip(" ،,.؟?")
+    return subject or value[:100], object_text
+
+
 class NameNormalizationRequest(BaseModel):
     value: str = Field(min_length=1, max_length=500)
 
@@ -276,7 +285,7 @@ class DeterministicProvider:
         for index in range(dimensions):
             byte = digest[index % len(digest)]
             next_byte = digest[(index * 7 + 13) % len(digest)]
-            values.append(round(((byte + next_byte) / 255) * 2 - 1, 6))
+            values.append(round((byte + next_byte) / 255 - 1, 6))
         return values
 
     def classify(self, request: ClassificationRequest) -> ClassificationResponse:
@@ -327,13 +336,15 @@ class DeterministicProvider:
             lowered = normalized_text(clean)
             if not any(term in lowered for term in _RELATION_TERMS):
                 continue
-            predicate = next((term for term in _RELATION_TERMS if term in lowered), "ذكر")
-            subject = clean.split(predicate, 1)[0].strip() or clean[:100]
+            predicate = next((term for term in _RELATION_TERMS if term in clean), "")
+            if not predicate:
+                predicate = next((term for term in _RELATION_TERMS if term in lowered), "ذكر")
+            subject, object_text = relation_parts(clean, predicate)
             claims.append(
                 ClaimCandidate(
                     subject_text=subject[:500],
                     predicate=predicate,
-                    object_text=None,
+                    object_text=object_text[:500] if object_text else None,
                     confidence=0.45,
                     rationale="علاقة مستخرجة من مؤشرات لغوية؛ يلزمها مراجعة ومصدر.",
                 )

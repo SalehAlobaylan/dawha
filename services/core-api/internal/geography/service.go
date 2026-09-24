@@ -153,7 +153,7 @@ func (s *Service) associationFeatures(ctx context.Context) ([]Feature, error) {
 		LEFT JOIN tribes et ON ga.entity_type = 'tribe' AND et.id = ga.entity_id
 		LEFT JOIN sources s ON s.id = ga.source_id
 		LEFT JOIN spatial_evidence se ON se.geographic_association_id = ga.id
-		WHERE p.geometry IS NOT NULL
+		WHERE p.geometry IS NOT NULL AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY ga.time_from NULLS LAST, ga.created_at DESC
 	`)
 	if err != nil {
@@ -175,7 +175,7 @@ func (s *Service) migrationFeatures(ctx context.Context) ([]Feature, error) {
 		LEFT JOIN people ep ON m.subject_type = 'person' AND ep.id = m.subject_id
 		LEFT JOIN sources s ON s.id = m.source_id
 		LEFT JOIN spatial_evidence se ON se.migration_event_id = m.id
-		WHERE pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL
+		WHERE (pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL) AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY m.time_from NULLS LAST, m.created_at DESC
 	`)
 	if err != nil {
@@ -193,7 +193,7 @@ func (s *Service) regionFeatures(ctx context.Context) ([]Feature, error) {
 		       ST_X(ST_Centroid(r.geometry)), ST_Y(ST_Centroid(r.geometry)), NULL::float8, NULL::float8, NULL::float8, NULL::float8
 		FROM historical_regions r
 		LEFT JOIN sources s ON s.id = r.source_id
-		WHERE r.geometry IS NOT NULL
+		WHERE r.geometry IS NOT NULL AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY r.name_ar
 	`)
 	if err != nil {

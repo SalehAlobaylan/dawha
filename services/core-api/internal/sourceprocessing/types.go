@@ -1,0 +1,203 @@
+package sourceprocessing
+
+import (
+	"context"
+	"errors"
+	"io"
+	"time"
+
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	SourceProcessJobType = "source_process"
+	EmbeddingDimensions  = 1536
+	MaxUploadBytes       = 25 << 20
+	MaxPages             = 200
+	MaxCandidates        = 5000
+	MaxCandidatesPerPage = 100
+)
+
+var (
+	ErrDatabaseUnavailable = errors.New("source processing database is unavailable")
+	ErrStorageUnavailable  = errors.New("source processing storage is unavailable")
+	ErrAIUnavailable       = errors.New("source processing AI service is unavailable")
+	ErrQueueUnavailable    = errors.New("source processing queue is unavailable")
+	ErrValidation          = errors.New("source processing input is invalid")
+	ErrNotFound            = errors.New("source processing resource was not found")
+	ErrForbidden           = errors.New("source processing access is forbidden")
+	ErrConflict            = errors.New("source processing state conflict")
+	ErrUnsupportedDocument = errors.New("source document format is not supported")
+)
+
+type JobPayload struct {
+	SourceID     string `json:"source_id"`
+	SourceFileID string `json:"source_file_id"`
+}
+
+type UploadInput struct {
+	Filename    string
+	ContentType string
+	Content     []byte
+}
+
+type FileView struct {
+	ID                 string     `json:"id"`
+	SourceID           string     `json:"sourceId"`
+	OriginalFilenameAR string     `json:"originalFilenameAr"`
+	MimeType           string     `json:"mimeType"`
+	ByteSize           int64      `json:"byteSize"`
+	ChecksumSHA256     string     `json:"checksumSha256"`
+	ProcessingStatus   string     `json:"processingStatus"`
+	ProcessingError    string     `json:"processingError,omitempty"`
+	ProcessedAt        *time.Time `json:"processedAt,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+}
+
+type ProcessingRunView struct {
+	ID             string     `json:"id"`
+	SourceID       string     `json:"sourceId"`
+	SourceFileID   string     `json:"sourceFileId"`
+	JobID          string     `json:"jobId,omitempty"`
+	Status         string     `json:"status"`
+	Stage          string     `json:"stage"`
+	PageCount      int        `json:"pageCount"`
+	PassageCount   int        `json:"passageCount"`
+	CandidateCount int        `json:"candidateCount"`
+	ModelVersion   string     `json:"modelVersion,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+type CandidateView struct {
+	ID                     string                `json:"id"`
+	SourceID               string                `json:"sourceId"`
+	SourceFileID           string                `json:"sourceFileId"`
+	SourcePassageID        string                `json:"sourcePassageId"`
+	SourceStatementID      string                `json:"sourceStatementId,omitempty"`
+	CandidateType          string                `json:"candidateType"`
+	RawTextAR              string                `json:"rawTextAr"`
+	NormalizedTextAR       string                `json:"normalizedTextAr"`
+	SubjectTextAR          string                `json:"subjectTextAr,omitempty"`
+	PredicateAR            string                `json:"predicateAr,omitempty"`
+	ObjectTextAR           string                `json:"objectTextAr,omitempty"`
+	ProposedEntityType     string                `json:"proposedEntityType,omitempty"`
+	ProposedEntityID       string                `json:"proposedEntityId,omitempty"`
+	ProposedEntityNameAR   string                `json:"proposedEntityNameAr,omitempty"`
+	ProposedMatchScore     *float64              `json:"proposedMatchScore,omitempty"`
+	ProposedMatchMatchedOn string                `json:"proposedMatchMatchedOn,omitempty"`
+	SubjectEntityType      string                `json:"subjectEntityType,omitempty"`
+	SubjectEntityID        string                `json:"subjectEntityId,omitempty"`
+	ObjectEntityType       string                `json:"objectEntityType,omitempty"`
+	ObjectEntityID         string                `json:"objectEntityId,omitempty"`
+	Confidence             float64               `json:"confidence"`
+	RationaleAR            string                `json:"rationaleAr"`
+	PageNumber             *int                  `json:"pageNumber,omitempty"`
+	PassageTextAR          string                `json:"passageTextAr"`
+	LocatorAR              string                `json:"locatorAr,omitempty"`
+	ModelVersion           string                `json:"modelVersion,omitempty"`
+	Status                 string                `json:"status"`
+	ReviewedBy             string                `json:"reviewedBy,omitempty"`
+	ReviewedAt             *time.Time            `json:"reviewedAt,omitempty"`
+	ReviewNoteAR           string                `json:"reviewNoteAr,omitempty"`
+	AcceptedRecordType     string                `json:"acceptedRecordType,omitempty"`
+	AcceptedRecordID       string                `json:"acceptedRecordId,omitempty"`
+	CreatedAt              time.Time             `json:"createdAt"`
+	UpdatedAt              time.Time             `json:"updatedAt"`
+	Reviews                []CandidateReviewView `json:"reviews"`
+}
+
+type CandidateReviewView struct {
+	ID         string    `json:"id"`
+	ReviewerID string    `json:"reviewerId"`
+	Decision   string    `json:"decision"`
+	NoteAR     string    `json:"noteAr,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type ProcessingView struct {
+	SourceID   string              `json:"sourceId"`
+	Files      []FileView          `json:"files"`
+	Runs       []ProcessingRunView `json:"runs"`
+	Candidates []CandidateView     `json:"candidates"`
+}
+
+type ReviewInput struct {
+	Decision string `json:"decision"`
+	NoteAR   string `json:"note_ar"`
+}
+
+type JobEnqueuer interface {
+	Enqueue(context.Context, jobs.EnqueueInput) (jobs.EnqueueResult, error)
+}
+
+type TransactionalJobEnqueuer interface {
+	EnqueueTx(context.Context, pgx.Tx, jobs.EnqueueInput) (jobs.EnqueueResult, error)
+}
+
+type Extractor interface {
+	Extract(context.Context, ExtractInput) ([]Page, error)
+}
+
+type ExtractInput struct {
+	Reader      io.Reader
+	ContentType string
+	Filename    string
+}
+
+type Page struct {
+	Number      int
+	Text        string
+	StartOffset int
+	EndOffset   int
+}
+
+type Service struct {
+	Pool      *pgxpool.Pool
+	Store     storage.Store
+	Jobs      JobEnqueuer
+	AI        ai.Provider
+	Extractor Extractor
+}
+
+type processedEntity struct {
+	Candidate ai.EntityCandidate
+	Link      entityLink
+}
+
+type processedClaim struct {
+	Candidate ai.ClaimCandidate
+	Subject   entityLink
+	Object    entityLink
+}
+
+type processedPage struct {
+	Page       Page
+	Normalized string
+	Embedding  []float32
+	Model      string
+	Entities   []processedEntity
+	Claims     []processedClaim
+}
+
+type entityLink struct {
+	Type      string
+	ID        string
+	Name      string
+	Score     float64
+	MatchedOn string
+}
+
+type entityReference struct {
+	Type    string
+	ID      string
+	Name    string
+	Aliases []string
+}

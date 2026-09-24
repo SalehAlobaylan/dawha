@@ -23,6 +23,16 @@ func TestValidateEnqueueRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestValidateJobType(t *testing.T) {
+	value, err := validateJobType("  source_process  ")
+	if err != nil || value != "source_process" {
+		t.Fatalf("unexpected job type: %q, %v", value, err)
+	}
+	if _, err := validateJobType(string(make([]byte, 101))); err != ErrValidation {
+		t.Fatalf("expected type validation error, got %v", err)
+	}
+}
+
 func TestBackoffIsBounded(t *testing.T) {
 	if backoff(1) != time.Second || backoff(3) != 4*time.Second || backoff(20) != 512*time.Second {
 		t.Fatalf("unexpected backoff values: %v %v %v", backoff(1), backoff(3), backoff(20))

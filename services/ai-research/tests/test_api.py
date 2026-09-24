@@ -29,6 +29,7 @@ def test_embed_is_deterministic_and_structured() -> None:
     assert first.status_code == 200
     assert first.json() == second.json()
     assert len(first.json()["embedding"]) == 32
+    assert all(-1 <= value <= 1 for value in first.json()["embedding"])
     assert first.json()["deterministic"] is True
 
 
@@ -102,6 +103,7 @@ def test_remaining_structured_outputs_are_reviewable() -> None:
     assert classification.json()["candidates"]
     assert claims.status_code == 200
     assert claims.json()["claims"][0]["status"] == "needs_review"
+    assert claims.json()["claims"][0]["object_text"]
     assert resolution.status_code == 200
     assert resolution.json()["matches"][0]["candidate_id"] == "p1"
     assert rerank.status_code == 200

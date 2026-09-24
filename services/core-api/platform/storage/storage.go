@@ -14,6 +14,7 @@ type Object struct {
 
 type Store interface {
 	Put(ctx context.Context, key string, body io.Reader, contentType string) (Object, error)
+	Get(ctx context.Context, key string) (io.ReadCloser, Object, error)
 	SignedURL(ctx context.Context, key string, expires time.Duration) (string, error)
 	Delete(ctx context.Context, key string) error
 }

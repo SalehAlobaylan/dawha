@@ -47,6 +47,7 @@ type SourceView struct {
 	CitationAR          string    `json:"citationAr,omitempty"`
 	LocationAR          string    `json:"locationAr,omitempty"`
 	DependencyStatus    string    `json:"dependencyStatus"`
+	Visibility          string    `json:"visibility"`
 	CreatedBy           string    `json:"createdBy"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`
@@ -64,9 +65,12 @@ type SourcePassageInput struct {
 type SourcePassageView struct {
 	ID             string    `json:"id"`
 	SourceID       string    `json:"sourceId"`
+	SourceFileID   string    `json:"sourceFileId,omitempty"`
 	SequenceNumber int       `json:"sequenceNumber"`
 	PageNumber     *int      `json:"pageNumber,omitempty"`
 	LocatorAR      string    `json:"locatorAr,omitempty"`
+	StartOffset    *int      `json:"startOffset,omitempty"`
+	EndOffset      *int      `json:"endOffset,omitempty"`
 	TextAR         string    `json:"textAr"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
@@ -81,6 +85,7 @@ type SourceStatementInput struct {
 type SourceStatementView struct {
 	ID               string    `json:"id"`
 	SourceID         string    `json:"sourceId"`
+	SourceFileID     string    `json:"sourceFileId,omitempty"`
 	SourcePassageID  string    `json:"sourcePassageId,omitempty"`
 	StatementTextAR  string    `json:"statementTextAr"`
 	LocatorAR        string    `json:"locatorAr,omitempty"`
@@ -170,10 +175,29 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 func (s *Service) ListSources(ctx context.Context) ([]SourceView, error) {
+	return s.listSources(ctx, nil)
+}
+
+func (s *Service) ListSourcesForActor(ctx context.Context, actorID string) ([]SourceView, error) {
+	actorUUID, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return nil, ErrForbidden
+	}
+	return s.listSources(ctx, &actorUUID)
+}
+
+func (s *Service) listSources(ctx context.Context, actorID *uuid.UUID) ([]SourceView, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	rows, err := s.Pool.Query(ctx, sourceListQuery+` ORDER BY s.updated_at DESC, s.id`)
+	query := sourceListQuery + ` WHERE s.visibility = 'public'`
+	args := []any{}
+	if actorID != nil {
+		query += ` OR s.created_by = $1 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND ur.role IN ('researcher', 'moderator', 'admin'))`
+		args = append(args, *actorID)
+	}
+	query += ` ORDER BY s.updated_at DESC, s.id`
+	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +214,18 @@ func (s *Service) ListSources(ctx context.Context) ([]SourceView, error) {
 }
 
 func (s *Service) GetSource(ctx context.Context, sourceID string) (SourceDetail, error) {
+	return s.getSource(ctx, sourceID, nil)
+}
+
+func (s *Service) GetSourceForActor(ctx context.Context, sourceID, actorID string) (SourceDetail, error) {
+	actorUUID, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return SourceDetail{}, ErrForbidden
+	}
+	return s.getSource(ctx, sourceID, &actorUUID)
+}
+
+func (s *Service) getSource(ctx context.Context, sourceID string, actorID *uuid.UUID) (SourceDetail, error) {
 	if err := s.ready(); err != nil {
 		return SourceDetail{}, err
 	}
@@ -197,7 +233,21 @@ func (s *Service) GetSource(ctx context.Context, sourceID string) (SourceDetail,
 	if err != nil {
 		return SourceDetail{}, ErrNotFound
 	}
-	source, err := s.sourceByID(ctx, s.Pool, sourceUUID)
+	var source SourceView
+	if actorID == nil {
+		source, err = s.sourceByID(ctx, s.Pool, sourceUUID)
+	} else {
+		source, err = s.sourceByIDAny(ctx, s.Pool, sourceUUID)
+		if err == nil && source.Visibility != "public" {
+			allowed, accessErr := canViewSource(ctx, s.Pool, sourceUUID, *actorID)
+			if accessErr != nil {
+				return SourceDetail{}, accessErr
+			}
+			if !allowed {
+				return SourceDetail{}, ErrForbidden
+			}
+		}
+	}
 	if err != nil {
 		return SourceDetail{}, err
 	}
@@ -229,17 +279,25 @@ func (s *Service) CreateSource(ctx context.Context, actorID string, input Create
 		return SourceDetail{}, err
 	}
 	sourceID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return SourceDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO sources
-			(id, title_ar, author_ar, source_type, publication_date_from, publication_date_to, edition_ar, citation_ar, location_ar, dependency_status, created_by)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, $11)
+			(id, title_ar, author_ar, source_type, publication_date_from, publication_date_to, edition_ar, citation_ar, location_ar, dependency_status, visibility, created_by)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, 'private', $11)
 	`, sourceID, input.TitleAR, input.AuthorAR, input.SourceType, from, to, input.EditionAR, input.CitationAR, input.LocationAR, input.DependencyStatus, actorUUID); err != nil {
 		return SourceDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "source_created", "source", sourceID, nil, input); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "source_created", "source", sourceID, nil, input); err != nil {
 		return SourceDetail{}, err
 	}
-	return s.GetSource(ctx, sourceID.String())
+	if err := tx.Commit(ctx); err != nil {
+		return SourceDetail{}, err
+	}
+	return s.GetSourceForActor(ctx, sourceID.String(), actorID)
 }
 
 func (s *Service) CreatePassage(ctx context.Context, sourceID, actorID string, input SourcePassageInput) (SourceDetail, error) {
@@ -254,30 +312,42 @@ func (s *Service) CreatePassage(ctx context.Context, sourceID, actorID string, i
 	if err != nil {
 		return SourceDetail{}, err
 	}
-	allowed, err := canManageSource(ctx, s.Pool, sourceUUID, actorUUID)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return SourceDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	allowed, err := canManageSource(ctx, tx, sourceUUID, actorUUID)
 	if err != nil {
 		return SourceDetail{}, err
 	}
 	if !allowed {
 		return SourceDetail{}, ErrForbidden
 	}
+	var lockedSourceID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM sources WHERE id = $1 FOR UPDATE`, sourceUUID).Scan(&lockedSourceID); err != nil {
+		return SourceDetail{}, err
+	}
 	sequence := input.SequenceNumber
 	if sequence == 0 {
-		if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM source_passages WHERE source_id = $1`, sourceUUID).Scan(&sequence); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM source_passages WHERE source_id = $1`, sourceUUID).Scan(&sequence); err != nil {
 			return SourceDetail{}, err
 		}
 	}
 	passageID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO source_passages (id, source_id, sequence_number, page_number, locator_ar, text_ar, normalized_text_ar)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
 	`, passageID, sourceUUID, sequence, input.PageNumber, input.LocatorAR, input.TextAR, identity.NormalizeArabicName(input.TextAR)); err != nil {
 		return SourceDetail{}, mapConflict(err)
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "source_passage_added", "source_passage", passageID, nil, map[string]any{"source_id": sourceUUID.String(), "sequence_number": sequence}); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "source_passage_added", "source_passage", passageID, nil, map[string]any{"source_id": sourceUUID.String(), "sequence_number": sequence}); err != nil {
 		return SourceDetail{}, err
 	}
-	return s.GetSource(ctx, sourceUUID.String())
+	if err := tx.Commit(ctx); err != nil {
+		return SourceDetail{}, err
+	}
+	return s.GetSourceForActor(ctx, sourceUUID.String(), actorID)
 }
 
 func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string, input SourceStatementInput) (SourceDetail, error) {
@@ -325,7 +395,7 @@ func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string,
 	if err := writeAudit(ctx, s.Pool, actorUUID, "source_statement_recorded", "source_statement", statementID, nil, input); err != nil {
 		return SourceDetail{}, err
 	}
-	return s.GetSource(ctx, sourceUUID.String())
+	return s.GetSourceForActor(ctx, sourceUUID.String(), actorID)
 }
 
 func (s *Service) ListClaims(ctx context.Context) ([]ClaimSummary, error) {
@@ -510,14 +580,25 @@ func (s *Service) ready() error {
 
 const sourceListQuery = `
 	SELECT s.id, s.title_ar, s.author_ar, s.source_type, s.publication_date_from, s.publication_date_to,
-	       s.edition_ar, s.citation_ar, s.location_ar, s.dependency_status, s.created_by, s.created_at, s.updated_at,
+	       s.edition_ar, s.citation_ar, s.location_ar, s.dependency_status, s.visibility, s.created_by, s.created_at, s.updated_at,
 	       (SELECT count(*) FROM source_passages sp WHERE sp.source_id = s.id),
 	       (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id)
 	FROM sources s`
 
 func (s *Service) sourceByID(ctx context.Context, q dbExecutor, sourceID uuid.UUID) (SourceView, error) {
-	row := q.QueryRow(ctx, sourceListQuery+` WHERE s.id = $1`, sourceID)
-	item, err := scanSource(row)
+	return s.sourceByIDWhere(ctx, q, sourceID, true)
+}
+
+func (s *Service) sourceByIDAny(ctx context.Context, q dbExecutor, sourceID uuid.UUID) (SourceView, error) {
+	return s.sourceByIDWhere(ctx, q, sourceID, false)
+}
+
+func (s *Service) sourceByIDWhere(ctx context.Context, q dbExecutor, sourceID uuid.UUID, publicOnly bool) (SourceView, error) {
+	query := sourceListQuery + ` WHERE s.id = $1`
+	if publicOnly {
+		query += ` AND s.visibility = 'public'`
+	}
+	item, err := scanSource(q.QueryRow(ctx, query, sourceID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SourceView{}, ErrNotFound
@@ -533,7 +614,7 @@ func scanSource(row pgx.Row) (SourceView, error) {
 	var from, to pgtype.Date
 	var createdBy pgtype.UUID
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&item.ID, &item.TitleAR, &author, &item.SourceType, &from, &to, &edition, &citation, &location, &item.DependencyStatus, &createdBy, &createdAt, &updatedAt, &item.PassageCount, &item.StatementCount); err != nil {
+	if err := row.Scan(&item.ID, &item.TitleAR, &author, &item.SourceType, &from, &to, &edition, &citation, &location, &item.DependencyStatus, &item.Visibility, &createdBy, &createdAt, &updatedAt, &item.PassageCount, &item.StatementCount); err != nil {
 		return SourceView{}, err
 	}
 	item.AuthorAR = textValue(author)
@@ -550,7 +631,7 @@ func scanSource(row pgx.Row) (SourceView, error) {
 
 func (s *Service) passages(ctx context.Context, q dbExecutor, sourceID uuid.UUID) ([]SourcePassageView, error) {
 	rows, err := q.Query(ctx, `
-		SELECT id, source_id, sequence_number, page_number, locator_ar, text_ar, created_at
+		SELECT id, source_id, source_file_id, sequence_number, page_number, locator_ar, start_offset, end_offset, text_ar, created_at
 		FROM source_passages WHERE source_id = $1 ORDER BY sequence_number
 	`, sourceID)
 	if err != nil {
@@ -560,17 +641,26 @@ func (s *Service) passages(ctx context.Context, q dbExecutor, sourceID uuid.UUID
 	items := make([]SourcePassageView, 0)
 	for rows.Next() {
 		var item SourcePassageView
-		var id, source pgtype.UUID
-		var page pgtype.Int4
+		var id, source, file pgtype.UUID
+		var page, startOffset, endOffset pgtype.Int4
 		var locator pgtype.Text
-		if err := rows.Scan(&id, &source, &item.SequenceNumber, &page, &locator, &item.TextAR, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&id, &source, &file, &item.SequenceNumber, &page, &locator, &startOffset, &endOffset, &item.TextAR, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.ID = uuidString(id)
 		item.SourceID = uuidString(source)
+		item.SourceFileID = uuidString(file)
 		if page.Valid {
 			value := int(page.Int32)
 			item.PageNumber = &value
+		}
+		if startOffset.Valid {
+			value := int(startOffset.Int32)
+			item.StartOffset = &value
+		}
+		if endOffset.Valid {
+			value := int(endOffset.Int32)
+			item.EndOffset = &value
 		}
 		item.LocatorAR = textValue(locator)
 		items = append(items, item)
@@ -580,7 +670,7 @@ func (s *Service) passages(ctx context.Context, q dbExecutor, sourceID uuid.UUID
 
 func (s *Service) statements(ctx context.Context, q dbExecutor, sourceID uuid.UUID) ([]SourceStatementView, error) {
 	rows, err := q.Query(ctx, `
-		SELECT id, source_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status, created_by, created_at
+		SELECT id, source_id, source_file_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status, created_by, created_at
 		FROM source_statements WHERE source_id = $1 ORDER BY created_at
 	`, sourceID)
 	if err != nil {
@@ -590,13 +680,14 @@ func (s *Service) statements(ctx context.Context, q dbExecutor, sourceID uuid.UU
 	items := make([]SourceStatementView, 0)
 	for rows.Next() {
 		var item SourceStatementView
-		var id, source, passage, createdBy pgtype.UUID
+		var id, source, file, passage, createdBy pgtype.UUID
 		var locator pgtype.Text
-		if err := rows.Scan(&id, &source, &passage, &item.StatementTextAR, &locator, &item.ExtractionMethod, &item.ReviewStatus, &createdBy, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&id, &source, &file, &passage, &item.StatementTextAR, &locator, &item.ExtractionMethod, &item.ReviewStatus, &createdBy, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.ID = uuidString(id)
 		item.SourceID = uuidString(source)
+		item.SourceFileID = uuidString(file)
 		item.SourcePassageID = uuidString(passage)
 		item.LocatorAR = textValue(locator)
 		item.CreatedBy = uuidString(createdBy)
@@ -613,7 +704,7 @@ func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]Evide
 		LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = ce.source_passage_id
 		LEFT JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
-		WHERE ce.claim_id = $1
+		WHERE ce.claim_id = $1 AND (s.id IS NULL OR s.visibility = 'public')
 		UNION ALL
 		SELECT cce.id, 'contradicts', cce.note_ar, cce.source_statement_id, cce.source_passage_id,
 		       s.title_ar, ss.statement_text_ar, sp.text_ar
@@ -621,7 +712,7 @@ func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]Evide
 		LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = cce.source_passage_id
 		LEFT JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
-		WHERE cce.claim_id = $1
+		WHERE cce.claim_id = $1 AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY 1
 	`, claimID)
 	if err != nil {
@@ -655,7 +746,22 @@ func canManageSource(ctx context.Context, q dbExecutor, sourceID, actorID uuid.U
 			SELECT 1 FROM sources s
 			WHERE s.id = $1 AND (
 				s.created_by = $2
-				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))
+				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
+			)
+		)
+	`, sourceID, actorID).Scan(&allowed)
+	return allowed, err
+}
+
+func canViewSource(ctx context.Context, q dbExecutor, sourceID, actorID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM sources s
+			WHERE s.id = $1 AND (
+				s.visibility = 'public'
+				OR s.created_by = $2
+				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
 			)
 		)
 	`, sourceID, actorID).Scan(&allowed)
@@ -669,7 +775,7 @@ func canManageClaim(ctx context.Context, q dbExecutor, claimID, actorID uuid.UUI
 			SELECT 1 FROM claims c
 			WHERE c.id = $1 AND (
 				c.created_by = $2
-				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))
+				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
 			)
 		)
 	`, claimID, actorID).Scan(&allowed)

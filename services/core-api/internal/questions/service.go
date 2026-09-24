@@ -616,7 +616,7 @@ func (s *Service) questionClaims(ctx context.Context, q dbExecutor, questionID u
 }
 
 func (s *Service) questionSources(ctx context.Context, q dbExecutor, questionID uuid.UUID) ([]QuestionSourceView, error) {
-	rows, err := q.Query(ctx, `SELECT qs.source_id, qs.role, s.title_ar FROM question_sources qs JOIN sources s ON s.id = qs.source_id WHERE qs.question_id = $1 ORDER BY s.title_ar`, questionID)
+	rows, err := q.Query(ctx, `SELECT qs.source_id, qs.role, s.title_ar FROM question_sources qs JOIN sources s ON s.id = qs.source_id WHERE qs.question_id = $1 AND s.visibility = 'public' ORDER BY s.title_ar`, questionID)
 	if err != nil {
 		return nil, err
 	}

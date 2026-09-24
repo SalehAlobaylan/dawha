@@ -9,8 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/httpapi"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 )
 
@@ -27,6 +30,13 @@ func main() {
 	if pool != nil {
 		defer pool.Close()
 	}
+	jobsService := jobs.NewService(pool)
+	sourceStore, err := storage.NewLocal(environmentValue("SOURCE_STORAGE_DIR", "../../.data/source-storage"))
+	if err != nil {
+		logger.Error("source storage initialization failed", "error", err)
+		os.Exit(1)
+	}
+	aiClient := ai.NewHTTPClient(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 
 	port := os.Getenv("CORE_API_PORT")
 	if port == "" {
@@ -39,6 +49,9 @@ func main() {
 			Logger:        logger,
 			WebOrigin:     os.Getenv("WEB_ORIGIN"),
 			SecureCookies: os.Getenv("APP_ENV") == "production",
+			Jobs:          jobsService,
+			AI:            aiClient,
+			SourceStorage: sourceStore,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -68,6 +81,14 @@ func environment() string {
 	value := os.Getenv("APP_ENV")
 	if value == "" {
 		return "development"
+	}
+	return value
+}
+
+func environmentValue(name, fallback string) string {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
 	}
 	return value
 }

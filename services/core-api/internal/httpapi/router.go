@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
@@ -20,8 +21,10 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,6 +33,9 @@ type Dependencies struct {
 	Logger        *slog.Logger
 	WebOrigin     string
 	SecureCookies bool
+	Jobs          *jobs.Service
+	AI            ai.Provider
+	SourceStorage storage.Store
 }
 
 type normalizeNameRequest struct {
@@ -62,8 +68,13 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	geographyHandler := geographyHandler{Service: geographyService}
 	searchService := search.NewService(dependencies.DB)
 	searchHandler := searchHandler{Service: searchService}
-	jobsService := jobs.NewService(dependencies.DB)
+	jobsService := dependencies.Jobs
+	if jobsService == nil {
+		jobsService = jobs.NewService(dependencies.DB)
+	}
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
+	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewTextExtractor())
+	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
 	suggestionService := suggestions.NewService(dependencies.DB)
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
@@ -105,6 +116,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/sources", evidenceHandler.listSources)
 	mux.HandleFunc("POST /api/v1/sources", evidenceHandler.createSource)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}", evidenceHandler.getSource)
+	mux.HandleFunc("POST /api/v1/sources/{sourceID}/files", sourceProcessingHandler.uploadFile)
+	mux.HandleFunc("GET /api/v1/sources/{sourceID}/processing", sourceProcessingHandler.getProcessing)
+	mux.HandleFunc("PATCH /api/v1/source-candidates/{candidateID}/review", sourceProcessingHandler.reviewCandidate)
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/passages", evidenceHandler.createPassage)
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/statements", evidenceHandler.createStatement)
 	mux.HandleFunc("GET /api/v1/claims", evidenceHandler.listClaims)

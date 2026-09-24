@@ -13,7 +13,19 @@ type evidenceHandler struct {
 }
 
 func (h evidenceHandler) listSources(w http.ResponseWriter, r *http.Request) {
-	items, err := h.Service.ListSources(r.Context())
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	var items []evidence.SourceView
+	var err error
+	if actorID == "" {
+		items, err = h.Service.ListSources(r.Context())
+	} else {
+		items, err = h.Service.ListSourcesForActor(r.Context(), actorID)
+	}
 	if err != nil {
 		writeEvidenceError(w, err)
 		return
@@ -22,7 +34,19 @@ func (h evidenceHandler) listSources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h evidenceHandler) getSource(w http.ResponseWriter, r *http.Request) {
-	result, err := h.Service.GetSource(r.Context(), r.PathValue("sourceID"))
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	var result evidence.SourceDetail
+	var err error
+	if actorID == "" {
+		result, err = h.Service.GetSource(r.Context(), r.PathValue("sourceID"))
+	} else {
+		result, err = h.Service.GetSourceForActor(r.Context(), r.PathValue("sourceID"), actorID)
+	}
 	if err != nil {
 		writeEvidenceError(w, err)
 		return

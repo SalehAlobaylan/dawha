@@ -33,8 +33,11 @@ import type {
   ReviewSuggestionInput,
   ResearchClaim,
   SearchResponse,
-  SourceDetail,
-  SourceMetadata,
+   SourceCandidate,
+   SourceDetail,
+   SourceFile,
+   SourceMetadata,
+   SourceProcessing,
   SuggestionRecord,
   SubmitSuggestionInput,
   TreeActivity,
@@ -669,7 +672,7 @@ export async function fetchSources(): Promise<SourceMetadata[]> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لعرض مكتبة المصادر.", 503);
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/sources`, { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
@@ -681,11 +684,58 @@ export async function fetchSource(sourceId: string): Promise<SourceDetail> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لعرض المصدر.", 503);
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}`, { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as SourceDetail;
+}
+
+export async function fetchSourceProcessing(sourceId: string): Promise<SourceProcessing> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض معالجة المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/processing`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceProcessing;
+}
+
+export async function uploadSourceFile(sourceId: string, file: File): Promise<SourceFile> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لرفع الملف.", 503);
+  }
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/files`, {
+    method: "POST",
+    credentials: "include",
+    body,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceFile;
+}
+
+export async function reviewSourceCandidate(candidateId: string, decision: "accepted" | "rejected", noteAr?: string): Promise<SourceCandidate> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لمراجعة المرشح.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-candidates/${candidateId}/review`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision, note_ar: noteAr }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceCandidate;
 }
 
 export async function createSource(input: CreateSourceInput): Promise<SourceDetail> {

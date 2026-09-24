@@ -186,6 +186,7 @@ func (s *Service) searchSources(ctx context.Context, query string, input Input) 
 		       GREATEST(CASE WHEN s.title_ar = $1 THEN 100 ELSE 0 END, similarity(s.title_ar, $1) * 70, CASE WHEN COALESCE(s.author_ar, '') ILIKE '%' || $1 || '%' THEN 60 ELSE 0 END) AS score
 		FROM sources s
 		WHERE ($1 = '' OR s.title_ar ILIKE '%' || $1 || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || $1 || '%' OR COALESCE(s.citation_ar, '') ILIKE '%' || $1 || '%')
+		  AND s.visibility = 'public'
 		  AND ($2 = '' OR s.source_type = $2) AND ($3 = '' OR s.id = $3::uuid)
 		ORDER BY score DESC, s.title_ar LIMIT $4
 	`, query, input.Status, input.SourceID, input.Limit)
@@ -221,6 +222,18 @@ func (s *Service) searchClaims(ctx context.Context, query string, input Input) (
 		  AND ($5 = '' OR EXISTS (SELECT 1 FROM claim_evidence ce WHERE ce.claim_id = c.id AND ce.source_statement_id IN (SELECT ss.id FROM source_statements ss WHERE ss.source_id = $5::uuid)))
 		  AND ($6 = 0 OR c.time_from IS NULL OR EXTRACT(YEAR FROM c.time_from) <= $7)
 		  AND ($7 = 0 OR c.time_to IS NULL OR EXTRACT(YEAR FROM c.time_to) >= $6)
+		  AND NOT EXISTS (
+			SELECT 1 FROM claim_evidence ce
+			JOIN source_statements ss ON ss.id = ce.source_statement_id
+			JOIN sources sx ON sx.id = ss.source_id
+			WHERE ce.claim_id = c.id AND sx.visibility = 'private'
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM claim_counter_evidence cce
+			JOIN source_statements ss ON ss.id = cce.source_statement_id
+			JOIN sources sx ON sx.id = ss.source_id
+			WHERE cce.claim_id = c.id AND sx.visibility = 'private'
+		  )
 		ORDER BY score DESC, c.updated_at DESC LIMIT $8
 	`, query, input.Status, input.PersonID, input.PlaceID, input.SourceID, input.FromYear, input.ToYear, input.Limit)
 	if err != nil {
@@ -248,6 +261,7 @@ func (s *Service) searchPassages(ctx context.Context, query string, input Input)
 		SELECT sp.id, s.title_ar, sp.text_ar, sp.locator_ar, GREATEST(CASE WHEN sp.normalized_text_ar = $1 THEN 100 ELSE 0 END, similarity(sp.normalized_text_ar, $1) * 80, CASE WHEN sp.normalized_text_ar ILIKE '%' || $1 || '%' THEN 65 ELSE 0 END) AS score
 		FROM source_passages sp JOIN sources s ON s.id = sp.source_id
 		WHERE ($1 = '' OR sp.normalized_text_ar ILIKE '%' || $1 || '%' OR sp.text_ar ILIKE '%' || $1 || '%')
+		  AND s.visibility = 'public'
 		  AND ($2 = '' OR sp.source_id = $2::uuid)
 		ORDER BY score DESC, sp.created_at DESC LIMIT $3
 	`, query, input.SourceID, input.Limit)
@@ -303,7 +317,7 @@ func (s *Service) semanticPassages(ctx context.Context, vector pgvector.Vector, 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT sp.id, s.title_ar, sp.text_ar, sp.locator_ar, 1 - (sp.embedding <=> $1) AS score
 		FROM source_passages sp JOIN sources s ON s.id = sp.source_id
-		WHERE sp.embedding IS NOT NULL
+		WHERE sp.embedding IS NOT NULL AND s.visibility = 'public'
 		ORDER BY sp.embedding <=> $1 LIMIT $2
 	`, vector, limit)
 	if err != nil {

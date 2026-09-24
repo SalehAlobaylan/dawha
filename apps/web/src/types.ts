@@ -86,6 +86,7 @@ export interface SourceMetadata {
   citationAr?: string;
   locationAr?: string;
   dependencyStatus: "unknown" | "independent" | "derived" | "likely_dependent";
+  visibility: "public" | "private";
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -96,9 +97,12 @@ export interface SourceMetadata {
 export interface SourcePassage {
   id: string;
   sourceId: string;
+  sourceFileId?: string;
   sequenceNumber: number;
   pageNumber?: number;
   locatorAr?: string;
+  startOffset?: number;
+  endOffset?: number;
   textAr: string;
   createdAt: string;
 }
@@ -106,6 +110,7 @@ export interface SourcePassage {
 export interface SourceStatement {
   id: string;
   sourceId: string;
+  sourceFileId?: string;
   sourcePassageId?: string;
   statementTextAr: string;
   locatorAr?: string;
@@ -119,6 +124,90 @@ export interface SourceDetail {
   source: SourceMetadata;
   passages: SourcePassage[];
   statements: SourceStatement[];
+}
+
+export interface SourceFile {
+  id: string;
+  sourceId: string;
+  originalFilenameAr: string;
+  mimeType: string;
+  byteSize: number;
+  checksumSha256: string;
+  processingStatus: "queued" | "running" | "succeeded" | "failed";
+  processingError?: string;
+  processedAt?: string;
+  createdAt: string;
+}
+
+export interface SourceProcessingRun {
+  id: string;
+  sourceId: string;
+  sourceFileId: string;
+  jobId?: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  stage: string;
+  pageCount: number;
+  passageCount: number;
+  candidateCount: number;
+  modelVersion?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CandidateReview {
+  id: string;
+  reviewerId: string;
+  decision: "accepted" | "rejected";
+  noteAr?: string;
+  createdAt: string;
+}
+
+export interface SourceCandidate {
+  id: string;
+  sourceId: string;
+  sourceFileId: string;
+  sourcePassageId: string;
+  sourceStatementId?: string;
+  candidateType: "entity" | "claim";
+  rawTextAr: string;
+  normalizedTextAr: string;
+  subjectTextAr?: string;
+  predicateAr?: string;
+  objectTextAr?: string;
+  proposedEntityType?: string;
+  proposedEntityId?: string;
+  proposedEntityNameAr?: string;
+  proposedMatchScore?: number;
+  proposedMatchMatchedOn?: string;
+  subjectEntityType?: string;
+  subjectEntityId?: string;
+  objectEntityType?: string;
+  objectEntityId?: string;
+  confidence: number;
+  rationaleAr: string;
+  pageNumber?: number;
+  passageTextAr: string;
+  locatorAr?: string;
+  modelVersion?: string;
+  status: "unreviewed" | "accepted" | "rejected" | "needs_review";
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  acceptedRecordType?: string;
+  acceptedRecordId?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews: CandidateReview[];
+}
+
+export interface SourceProcessing {
+  sourceId: string;
+  files: SourceFile[];
+  runs: SourceProcessingRun[];
+  candidates: SourceCandidate[];
 }
 
 export interface ClaimEvidence {

@@ -376,6 +376,52 @@ type Source struct {
 	CreatedBy           pgtype.UUID
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	Visibility          string
+}
+
+type SourceCandidate struct {
+	ID                     pgtype.UUID
+	SourceID               pgtype.UUID
+	SourceFileID           pgtype.UUID
+	SourcePassageID        pgtype.UUID
+	SourceStatementID      pgtype.UUID
+	CandidateType          string
+	RawTextAr              string
+	NormalizedTextAr       string
+	SubjectTextAr          pgtype.Text
+	PredicateAr            pgtype.Text
+	ObjectTextAr           pgtype.Text
+	ProposedEntityType     pgtype.Text
+	ProposedEntityID       pgtype.UUID
+	ProposedEntityNameAr   pgtype.Text
+	ProposedMatchScore     pgtype.Float8
+	ProposedMatchMatchedOn pgtype.Text
+	SubjectEntityType      pgtype.Text
+	SubjectEntityID        pgtype.UUID
+	ObjectEntityType       pgtype.Text
+	ObjectEntityID         pgtype.UUID
+	Confidence             float64
+	RationaleAr            string
+	Payload                []byte
+	ModelVersion           pgtype.Text
+	DedupeKey              string
+	Status                 string
+	ReviewedBy             pgtype.UUID
+	ReviewedAt             pgtype.Timestamptz
+	ReviewNoteAr           pgtype.Text
+	AcceptedRecordType     pgtype.Text
+	AcceptedRecordID       pgtype.UUID
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+type SourceCandidateReview struct {
+	ID          pgtype.UUID
+	CandidateID pgtype.UUID
+	ReviewerID  pgtype.UUID
+	Decision    string
+	NoteAr      pgtype.Text
+	CreatedAt   pgtype.Timestamptz
 }
 
 type SourceDependency struct {
@@ -397,6 +443,9 @@ type SourceFile struct {
 	ByteSize           pgtype.Int8
 	ChecksumSha256     pgtype.Text
 	CreatedAt          pgtype.Timestamptz
+	ProcessingStatus   string
+	ProcessingError    pgtype.Text
+	ProcessedAt        pgtype.Timestamptz
 }
 
 type SourcePassage struct {
@@ -409,6 +458,27 @@ type SourcePassage struct {
 	NormalizedTextAr string
 	Embedding        pgvector.Vector
 	CreatedAt        pgtype.Timestamptz
+	SourceFileID     pgtype.UUID
+	StartOffset      pgtype.Int4
+	EndOffset        pgtype.Int4
+}
+
+type SourceProcessingRun struct {
+	ID             pgtype.UUID
+	SourceID       pgtype.UUID
+	SourceFileID   pgtype.UUID
+	JobID          pgtype.UUID
+	Status         string
+	Stage          string
+	PageCount      int32
+	PassageCount   int32
+	CandidateCount int32
+	ModelVersion   pgtype.Text
+	Error          pgtype.Text
+	StartedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type SourceStatement struct {
@@ -422,6 +492,7 @@ type SourceStatement struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	SourceFileID     pgtype.UUID
 }
 
 type SpatialEvidence struct {

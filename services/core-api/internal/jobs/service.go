@@ -33,6 +33,7 @@ type EnqueueInput struct {
 
 type ClaimInput struct {
 	WorkerID string `json:"worker_id"`
+	Type     string `json:"type"`
 }
 
 type CompleteInput struct {
@@ -95,6 +96,17 @@ func (s *Service) Enqueue(ctx context.Context, input EnqueueInput) (EnqueueResul
 	if err := s.ready(); err != nil {
 		return EnqueueResult{}, err
 	}
+	return s.enqueue(ctx, s.Pool, input)
+}
+
+func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, input EnqueueInput) (EnqueueResult, error) {
+	if s == nil || s.Pool == nil || tx == nil {
+		return EnqueueResult{}, ErrDatabaseUnavailable
+	}
+	return s.enqueue(ctx, tx, input)
+}
+
+func (s *Service) enqueue(ctx context.Context, q dbExecutor, input EnqueueInput) (EnqueueResult, error) {
 	input, err := validateEnqueue(input)
 	if err != nil {
 		return EnqueueResult{}, err
@@ -107,7 +119,7 @@ func (s *Service) Enqueue(ctx context.Context, input EnqueueInput) (EnqueueResul
 	if input.IdempotencyKey != "" {
 		key = input.IdempotencyKey
 	}
-	row := s.Pool.QueryRow(ctx, `
+	row := q.QueryRow(ctx, `
 		INSERT INTO jobs (type, payload, status, priority, run_at, idempotency_key, max_attempts)
 		VALUES ($1, $2, 'queued', $3, $4, $5, $6)
 		ON CONFLICT (idempotency_key) DO NOTHING
@@ -120,7 +132,7 @@ func (s *Service) Enqueue(ctx context.Context, input EnqueueInput) (EnqueueResul
 	if !errors.Is(err, pgx.ErrNoRows) || input.IdempotencyKey == "" {
 		return EnqueueResult{}, err
 	}
-	job, err = s.byIdempotencyKey(ctx, s.Pool, input.IdempotencyKey)
+	job, err = s.byIdempotencyKey(ctx, q, input.IdempotencyKey)
 	if err != nil {
 		return EnqueueResult{}, err
 	}
@@ -178,10 +190,14 @@ func (s *Service) Claim(ctx context.Context, input ClaimInput) (JobView, error) 
 		return JobView{}, err
 	}
 	input.WorkerID = workerID
+	input.Type, err = validateJobType(input.Type)
+	if err != nil {
+		return JobView{}, err
+	}
 	row := s.Pool.QueryRow(ctx, `
 		WITH candidate AS (
 			SELECT id FROM jobs
-			WHERE status = 'queued' AND run_at <= now()
+			WHERE status = 'queued' AND run_at <= now() AND ($2 = '' OR type = $2)
 			ORDER BY priority DESC, run_at, created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
@@ -189,7 +205,7 @@ func (s *Service) Claim(ctx context.Context, input ClaimInput) (JobView, error) 
 		UPDATE jobs AS j SET status = 'running', locked_at = now(), locked_by = $1, updated_at = now()
 		FROM candidate AS c WHERE j.id = c.id
 		RETURNING j.id, j.type, j.payload, j.status, j.priority, j.attempts, j.max_attempts, j.run_at, j.locked_at, j.locked_by, j.last_error, j.idempotency_key, j.created_at, j.updated_at
-	`, input.WorkerID)
+	`, input.WorkerID, input.Type)
 	job, err := scanJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JobView{}, ErrNotFound
@@ -248,13 +264,13 @@ func (s *Service) Fail(ctx context.Context, jobID string, input FailInput) (JobV
 	if status != "running" || lockedBy != workerID {
 		return JobView{}, ErrConflict
 	}
-	attempts++
+	nextAttempts := attempts + 1
 	status = "queued"
 	runAt := time.Now().UTC()
-	if attempts >= maxAttempts {
+	if nextAttempts >= maxAttempts {
 		status = "dead"
 	} else {
-		runAt = runAt.Add(backoff(attempts))
+		runAt = runAt.Add(backoff(nextAttempts))
 	}
 	job, err := scanJob(tx.QueryRow(ctx, failJobQuery, status, runAt, input.Error, id))
 	if err != nil {
@@ -397,6 +413,14 @@ func validateEnqueue(input EnqueueInput) (EnqueueInput, error) {
 		return EnqueueInput{}, ErrValidation
 	}
 	return input, nil
+}
+
+func validateJobType(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) > 100 {
+		return "", ErrValidation
+	}
+	return value, nil
 }
 
 func validateWorker(value string) (string, error) {
