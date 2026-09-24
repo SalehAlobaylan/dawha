@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.vite/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.pyc
+*.egg-info/
+services/core-api/bin/
+tmp/

@@ -1,0 +1,15 @@
+FROM postgis/postgis:16-3.5-alpine
+
+USER root
+
+RUN apk add --no-cache build-base clang git llvm postgresql16-dev \
+    && ln -s "$(command -v clang)" /usr/bin/clang-21 \
+    && mkdir -p /usr/lib/llvm21/bin \
+    && ln -s /usr/lib/llvm22/bin/llvm-lto /usr/lib/llvm21/bin/llvm-lto \
+    && git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && make -C /tmp/pgvector \
+    && make -C /tmp/pgvector install \
+    && rm -rf /tmp/pgvector \
+    && apk del build-base clang git llvm postgresql16-dev
+
+USER postgres

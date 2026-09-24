@@ -1,0 +1,154 @@
+INSERT INTO users (id, email, display_name_ar)
+VALUES ('00000000-0000-0000-0000-000000000001', 'demo@dawha.local', 'باحث دَوْحة')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO user_roles (user_id, role)
+VALUES ('00000000-0000-0000-0000-000000000001', 'registered')
+ON CONFLICT (user_id, role) DO NOTHING;
+
+INSERT INTO people (id, canonical_name_ar, normalized_name_ar, gender, birth_date_from, birth_date_to, death_date_from, death_date_to, identity_status, notes_ar, created_by)
+VALUES
+  ('10000000-0000-0000-0000-000000000001', 'عبدالله بن محمد', 'عبدالله بن محمد', 'male', '1120-01-01', '1185-12-31', '1188-01-01', '1210-12-31', 'reviewed', 'شخصية تركيبية للعرض، وليست سجلاً موثقاً.', '00000000-0000-0000-0000-000000000001'),
+  ('10000000-0000-0000-0000-000000000002', 'محمد بن سعد', 'محمد بن سعد', 'male', '1080-01-01', '1140-12-31', '1150-01-01', '1170-12-31', 'reviewed', NULL, '00000000-0000-0000-0000-000000000001'),
+  ('10000000-0000-0000-0000-000000000003', 'سعد بن عامر', 'سعد بن عامر', 'male', '1040-01-01', '1100-12-31', '1110-01-01', '1150-12-31', 'disputed', 'هوية مرشحة للمراجعة بين مصدرين.', '00000000-0000-0000-0000-000000000001'),
+  ('10000000-0000-0000-0000-000000000004', 'أم عبدالله', 'أم عبدالله', 'female', '1125-01-01', '1180-12-31', NULL, NULL, 'unreviewed', NULL, '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO person_aliases (person_id, value_ar, normalized_value_ar, alias_type)
+VALUES
+  ('10000000-0000-0000-0000-000000000001', 'أبو بكر', 'ابو بكر', 'kunyah'),
+  ('10000000-0000-0000-0000-000000000001', 'عبد الله', 'عبد الله', 'source_spelling')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry)
+VALUES
+  ('20000000-0000-0000-0000-000000000001', 'الرياض', 'الرياض', 'city', ST_SetSRID(ST_MakePoint(46.6753, 24.7136), 4326)),
+  ('20000000-0000-0000-0000-000000000002', 'الأحساء', 'الاحساء', 'region', ST_SetSRID(ST_MakePoint(49.5658, 25.3647), 4326)),
+  ('20000000-0000-0000-0000-000000000003', 'حجاز', 'حجاز', 'region', ST_SetSRID(ST_MakePoint(39.1925, 21.4858), 4326)),
+  ('20000000-0000-0000-0000-000000000004', 'العلا', 'العلا', 'historical_settlement', ST_SetSRID(ST_MakePoint(38.1333, 26.6084), 4326))
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO sources (id, title_ar, author_ar, source_type, publication_date_from, citation_ar, location_ar, metadata)
+VALUES
+  ('30000000-0000-0000-0000-000000000001', 'مجموع المصادر الجينية', 'مؤلف تجريبي', 'manuscript', '1180-01-01', 'الجزء الثاني، صفحة 121', 'مخطوط تجريبي', '{"synthetic":true}'),
+  ('30000000-0000-0000-0000-000000000002', 'تاريخ قبائل نجد', 'مؤلف تجريبي', 'book', '1310-01-01', 'المجلد الأول، صفحة 84', 'طبعة تجريبية', '{"synthetic":true}'),
+  ('30000000-0000-0000-0000-000000000003', 'شجرة منشورة تجريبية', NULL, 'published_tree', NULL, 'نسخة منشورة v2', 'دَوْحة', '{"synthetic":true}'),
+  ('30000000-0000-0000-0000-000000000004', 'رسالة عن المواضع في نجد', 'مؤلف تجريبي', 'book', '1240-01-01', 'صفحة 19', 'مخطوط تجريبي', '{"synthetic":true}')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO source_passages (id, source_id, sequence_number, page_number, locator_ar, text_ar, normalized_text_ar)
+VALUES
+  ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1, 121, 'ص 121', 'يذكر النص أن عبدالله يتصل بمحمد بن سعد، مع إشارات إلى رواية أخرى.', 'يذكر النص ان عبدالله يتصل بمحمد بن سعد مع اشاره الى روايه اخري'),
+  ('40000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', 1, 84, 'ص 84', 'يروي النص أن والد عبدالله صالح، ويضع الملاحظة في موضع مختلف.', 'يروي النص ان والد عبدالله صالح ويضع الملاحظه في موضع مختلف'),
+  ('40000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000003', 1, NULL, NULL, 'النشر يعرض علاقة الأبوة بين محمد وعبدالله.', 'النشر يعرض علاقه الابوه بين محمد وعبدالله')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO source_statements (id, source_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status, created_by)
+VALUES
+  ('50000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'يقول المصدر إن عبدالله ابن محمد بن سعد.', 'الجزء الثاني، ص 121', 'manual', 'accepted', '00000000-0000-0000-0000-000000000001'),
+  ('50000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', 'يروي المصدر أن والد عبدالله صالح.', 'المجلد الأول، ص 84', 'manual', 'accepted', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO claims (id, subject_type, subject_id, predicate, object_type, object_id, place_id, status, notes_ar, created_by)
+VALUES
+  ('60000000-0000-0000-0000-000000000001', 'person', '10000000-0000-0000-0000-000000000001', 'father_of', 'person', '10000000-0000-0000-0000-000000000002', NULL, 'supported', 'ادعاء مستند إلى المصدر الأول، مع رواية منافسة.', '00000000-0000-0000-0000-000000000001'),
+  ('60000000-0000-0000-0000-000000000002', 'person', '10000000-0000-0000-0000-000000000001', 'father_of', 'person', '10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000002', 'disputed', 'ادعاء منافس يحتاج إلى مراجعة المصادر المشتقة.', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO geographic_associations (id, entity_type, entity_id, place_id, relation_type, time_from, time_to, status, certainty, source_id, created_by)
+VALUES ('a0000000-0000-0000-0000-000000000001', 'person', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'documented_in', '1180-01-01', '1210-12-31', 'documented', 'approximate', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO migration_events (id, subject_type, subject_id, from_place_id, to_place_id, time_from, time_to, status, certainty, source_id, notes_ar, created_by)
+VALUES ('a1000000-0000-0000-0000-000000000001', 'person', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000001', '1200-01-01', '1210-12-31', 'platform_inferred', 'uncertain', '30000000-0000-0000-0000-000000000004', 'مسار استنتاجي يحتاج إلى مراجعة المصدر.', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO spatial_evidence (id, migration_event_id, evidence_text_ar, review_status, created_by)
+VALUES ('a2000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'إشارة موضع تقريبية إلى انتقال محتمل.', 'needs_review', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO disputes (id, title_ar, description_ar, status, created_by)
+VALUES ('90000000-0000-0000-0000-000000000001', 'تعارض روايات والد عبدالله', 'روابتان تذكران اسمين مختلفين، ولا تكفي الأدلة الحالية لحسم العلاقة بينهما.', 'under_review', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO dispute_claims (dispute_id, claim_id, position)
+VALUES
+  ('90000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 'concerns'),
+  ('90000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000002', 'concerns')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO claim_evidence (claim_id, source_statement_id, relation, evidence_note_ar, created_by)
+VALUES
+  ('60000000-0000-0000-0000-000000000001', '50000000-0000-0000-0000-000000000001', 'supports', 'المصدر يذكر الصلة صراحة.', '00000000-0000-0000-0000-000000000001'),
+  ('60000000-0000-0000-0000-000000000002', '50000000-0000-0000-0000-000000000002', 'supports', 'العبارة واردة في مصدر آخر.', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO platform_findings (id, finding_type, title_ar, explanation_ar, status, signals, algorithm_version)
+VALUES
+  ('70000000-0000-0000-0000-000000000001', 'possible_contradiction', 'تعارض في والد عبدالله', 'تظهر روايتان مختلفتان في موضعين مرتبطين بنفس الشخص؛ يلزم فحص الاعتماد بين المصادر قبل استبعاد إحداهما.', 'needs_review', '{"relationship":"father_of","candidate_count":2}', 'deterministic-v1')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO finding_claims (finding_id, claim_id, relation)
+VALUES
+  ('70000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 'concerns'),
+  ('70000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000002', 'concerns')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO open_questions (id, title_ar, description_ar, status, priority, created_by)
+VALUES
+  ('80000000-0000-0000-0000-000000000001', 'من كان والد عبدالله في هذه الروايات؟', 'المصادر المتاحة لا تحسم اسم الأب. هل توجد علاقة اعتماد بين المصدرين، أم روايتان مستقلتان؟', 'under_investigation', 'high', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO question_claims (question_id, claim_id, role)
+VALUES
+  ('80000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 'concerns'),
+  ('80000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000002', 'concerns')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO question_disputes (question_id, dispute_id)
+VALUES ('80000000-0000-0000-0000-000000000001', '90000000-0000-0000-0000-000000000001')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO question_sources (question_id, source_id, role)
+VALUES
+  ('80000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'supporting'),
+  ('80000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', 'counter_evidence')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO question_findings (question_id, finding_id)
+VALUES ('80000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO source_dependencies (source_id, depends_on_source_id, dependency_type, evidence_ar, status)
+VALUES ('30000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', 'unknown', 'تشابه الصياغة يحتاج إلى مراجعة بشرية.', 'needs_review')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO trees (id, name_ar, description_ar, visibility, owner_id)
+VALUES
+  ('b0000000-0000-0000-0000-000000000001', 'شجرة بيت العنبر', 'تفسير تجريبي لعلاقات محفوظة.', 'public', '00000000-0000-0000-0000-000000000001'),
+  ('b0000000-0000-0000-0000-000000000002', 'شجرة الرواية البديلة', 'تفسير متفرع تجريبي، لا يمثل الحقيقة النهائية.', 'public', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO tree_versions (id, tree_id, version_number, state, publication_note_ar, published_by, published_at)
+VALUES
+  ('b1000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001', 1, 'published', 'النسخة الأولى من التفسير.', '00000000-0000-0000-0000-000000000001', '2026-01-10T00:00:00Z'),
+  ('b1000000-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-000000000001', 2, 'published', 'إضافة علاقة جديدة مع إبقاء الخلاف.', '00000000-0000-0000-0000-000000000001', '2026-02-14T00:00:00Z'),
+  ('b1000000-0000-0000-0000-000000000003', 'b0000000-0000-0000-0000-000000000001', 3, 'published', 'النسخة الحالية، مع علاقات غير محسومة.', '00000000-0000-0000-0000-000000000001', '2026-03-20T00:00:00Z')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar, sort_order)
+VALUES
+  ('b2000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000001', 'محمد بن سعد', 1),
+  ('b2000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000002', 'عبدالله بن محمد', 2),
+  ('b2000000-0000-0000-0000-000000000003', 'b1000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000004', 'أم عبدالله', 3)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, source_id, created_by)
+VALUES
+  ('b3000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000003', 'b2000000-0000-0000-0000-000000000001', 'b2000000-0000-0000-0000-000000000002', 'parent_of', 'interpreted', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
+  ('b3000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000003', 'b2000000-0000-0000-0000-000000000002', 'b2000000-0000-0000-0000-000000000003', 'parent_of', 'disputed', '30000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO tree_forks (id, tree_id, parent_tree_id, parent_version_id, forked_by)
+VALUES ('b4000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;

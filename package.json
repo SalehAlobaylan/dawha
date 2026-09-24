@@ -1,0 +1,22 @@
+{
+  "name": "dawha",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "predev": "docker compose up -d db",
+    "dev": "concurrently --kill-others-on-fail --names web,api,ai \"npm:dev:web\" \"npm:dev:api\" \"npm:dev:ai\"",
+    "dev:web": "VITE_API_URL=${VITE_API_URL:-http://localhost:8080} npm --workspace apps/web run dev",
+    "dev:api": "cd services/core-api && DATABASE_URL=${DATABASE_URL:-postgres://dawha:dawha_local@localhost:55432/dawha} go run ./cmd/api",
+    "dev:ai": "cd services/ai-research && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
+    "build": "npm --workspace apps/web run build",
+    "lint": "npm --workspace apps/web run lint",
+    "typecheck": "npm --workspace apps/web run typecheck",
+    "test": "npm --workspace apps/web run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,128 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Dependencies struct {
+	DB            *pgxpool.Pool
+	Logger        *slog.Logger
+	WebOrigin     string
+	SecureCookies bool
+}
+
+type normalizeNameRequest struct {
+	Value string `json:"value"`
+}
+
+type normalizeNameResponse struct {
+	Original          string `json:"original"`
+	Normalized        string `json:"normalized"`
+	Method            string `json:"method"`
+	PreservesOriginal bool   `json:"preserves_original"`
+}
+
+func NewRouter(dependencies Dependencies) http.Handler {
+	mux := http.NewServeMux()
+	healthHandler := health.Handler{Pool: dependencies.DB}
+	authService := auth.NewService(dependencies.DB)
+	authHandler := auth.Handler{Service: authService, SecureCookies: dependencies.SecureCookies}
+	mux.HandleFunc("GET /healthz", healthHandler.Live)
+	mux.HandleFunc("GET /readyz", healthHandler.Ready)
+	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, dashboard.Demo())
+	})
+	mux.HandleFunc("GET /api/v1/trees", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mode":  "demo",
+			"items": []map[string]any{{"id": "tree-demo", "title_ar": "شجرة بيت العنبر", "state": "published", "version": "v3"}},
+		})
+	})
+	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mode": "demo",
+			"layers": []map[string]string{
+				{"id": string(research.SourceStatement), "label_ar": "عبارة المصدر", "role": "source_text"},
+				{"id": string(research.ResearchClaim), "label_ar": "ادعاء الباحث", "role": "research_proposition"},
+				{"id": string(research.TreeInterpretation), "label_ar": "تفسير الشجرة", "role": "published_interpretation"},
+				{"id": string(research.PlatformFinding), "label_ar": "ملاحظة النظام", "role": "analytical_output"},
+				{"id": string(research.OpenQuestion), "label_ar": "سؤال مفتوح", "role": "unresolved_research"},
+			},
+		})
+	})
+	mux.HandleFunc("POST /api/v1/normalize-name", normalizeName)
+	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
+	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+	mux.HandleFunc("GET /api/v1/auth/me", authHandler.Me)
+	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
+
+	return withRequestID(withCORS(mux, dependencies.WebOrigin))
+}
+
+func normalizeName(w http.ResponseWriter, r *http.Request) {
+	var request normalizeNameRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.Value) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "value is required"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, normalizeNameResponse{
+		Original:          request.Value,
+		Normalized:        identity.NormalizeArabicName(request.Value),
+		Method:            "deterministic_arabic_normalization",
+		PreservesOriginal: true,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func withCORS(next http.Handler, allowedOrigin string) http.Handler {
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:5173"
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin == allowedOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Add("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = time.Now().UTC().Format("20060102150405.000000000")
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		next.ServeHTTP(w, r)
+	})
+}
