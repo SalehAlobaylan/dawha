@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Focus, GitCompareArrows, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree, updateRelationship } from "../lib/api";
@@ -9,10 +9,14 @@ import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
 import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, UpdateRelationshipInput } from "../types";
 
-export function TreePage() {
+export type TreePageProps = {
+  routeTreeId?: string;
+  routeVersionId?: string;
+};
+
+export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const queryClient = useQueryClient();
-  const [activeTreeId, setActiveTreeId] = useState<string | null>(null);
-  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const navigate = useNavigate();
   const [selectedPersonId, setSelectedPersonId] = useState("");
   const [focusedPersonId, setFocusedPersonId] = useState<string | null>(null);
   const [showUnresolved, setShowUnresolved] = useState(true);
@@ -36,20 +40,31 @@ export function TreePage() {
 
   const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
   const availableTrees = treesQuery.data ?? [];
-  const treeId = activeTreeId ?? availableTrees[0]?.id ?? "tree-demo";
+  const treeId = routeTreeId ?? availableTrees[0]?.id ?? "";
   const latestQuery = useQuery({
     queryKey: ["tree", treeId],
     queryFn: () => fetchTree(treeId),
-    enabled: Boolean(treeId),
+    enabled: Boolean(treeId && !routeVersionId),
   });
   const latestDetail = latestQuery.data;
-  const requestedVersionId = selectedVersionId || latestDetail?.selectedVersion.id || "";
   const versionQuery = useQuery({
-    queryKey: ["tree", treeId, "version", requestedVersionId],
-    queryFn: () => fetchTreeVersion(treeId, requestedVersionId),
-    enabled: Boolean(requestedVersionId && requestedVersionId !== latestDetail?.selectedVersion.id),
+    queryKey: ["tree", treeId, "version", routeVersionId ?? ""],
+    queryFn: () => fetchTreeVersion(treeId, routeVersionId ?? ""),
+    enabled: Boolean(routeTreeId && routeVersionId),
   });
-  const detail = versionQuery.data ?? latestDetail ?? demoTreeDetail;
+  const loadedDetail = routeVersionId ? versionQuery.data : latestDetail;
+  const detail = loadedDetail ?? demoTreeDetail;
+  const resourcePending = routeTreeId
+    ? routeVersionId
+      ? versionQuery.isPending
+      : latestQuery.isPending
+    : treesQuery.isPending || (Boolean(treeId) && latestQuery.isPending);
+  const resourceError = routeTreeId
+    ? routeVersionId
+      ? versionQuery.error
+      : latestQuery.error
+    : treesQuery.error ?? latestQuery.error;
+  const emptyResource = !routeTreeId && !resourcePending && !resourceError && !treeId;
   const selectedVersion = detail.selectedVersion;
   const graphNodes = useMemo(() => toGraphNodes(detail), [detail]);
   const statusRelationships = useMemo(() => filterUnresolvedRelationships(detail.relationships, showUnresolved), [detail.relationships, showUnresolved]);
@@ -58,10 +73,12 @@ export function TreePage() {
   const visibleRelationships = lineageFocus ? statusRelationships.filter((relationship) => lineageFocus.relationshipIds.has(relationship.id)) : statusRelationships;
   const selected = visibleGraphNodes.find((node) => node.personId === selectedPersonId) ?? visibleGraphNodes[0];
   const selectedRelationships = selected ? detail.relationships.filter((relationship) => relationship.subjectNodeId === selected.id || relationship.objectNodeId === selected.id) : [];
-  const versionReady = !versionQuery.isFetching && !versionQuery.isError && (!selectedVersionId || selectedVersion.id === requestedVersionId);
-  const canEdit = versionReady && detail.permissions.canEdit && selectedVersion.state === "draft";
-  const canPublish = versionReady && detail.permissions.canPublish && selectedVersion.state === "draft";
-  const queryError = treesQuery.error ?? latestQuery.error ?? versionQuery.error;
+  const versionReady = !resourcePending && !resourceError && loadedDetail !== undefined;
+  const currentDraft = selectedVersion.state === "draft" && selectedVersion.id === detail.tree.latestVersionId;
+  const canEdit = versionReady && currentDraft && detail.permissions.canEdit;
+  const canPublish = versionReady && currentDraft && detail.permissions.canPublish;
+  const queryError = resourceError;
+  const showResource = !resourcePending && !resourceError && !emptyResource && loadedDetail !== undefined;
 
   useEffect(() => {
     if (selectedPersonId && !detail.nodes.some((node) => node.personId === selectedPersonId)) {
@@ -76,6 +93,10 @@ export function TreePage() {
     setRelationshipEdits({});
   }, [selectedVersion.id, treeId]);
 
+  const navigateToTreeVersion = (nextTreeId: string, nextVersionId: string) => {
+    void navigate({ to: "/tree/$treeId/versions/$versionId", params: { treeId: nextTreeId, versionId: nextVersionId } });
+  };
+
   const updateDetail = async (updated: TreeDetail) => {
     queryClient.setQueryData(["tree", updated.tree.id], updated);
     queryClient.setQueryData(["tree", updated.tree.id, "version", updated.selectedVersion.id], updated);
@@ -85,8 +106,7 @@ export function TreePage() {
   const createMutation = useMutation({
     mutationFn: createTree,
     onSuccess: async (created) => {
-      setActiveTreeId(created.tree.id);
-      setSelectedVersionId(created.selectedVersion.id);
+      navigateToTreeVersion(created.tree.id, created.selectedVersion.id);
       setSelectedPersonId("");
       setFocusedPersonId(null);
       queryClient.setQueryData(["tree", created.tree.id], created);
@@ -105,7 +125,7 @@ export function TreePage() {
     mutationFn: (input: AddPersonInput) => addPerson(detail.tree.id, input),
     onSuccess: async (updated) => {
       await updateDetail(updated);
-      setSelectedVersionId(updated.selectedVersion.id);
+      navigateToTreeVersion(updated.tree.id, updated.selectedVersion.id);
       setSelectedPersonId(updated.nodes[updated.nodes.length - 1]?.personId ?? "");
       setFocusedPersonId(null);
       setPersonName("");
@@ -122,7 +142,7 @@ export function TreePage() {
     mutationFn: (input: AddRelationshipInput) => addRelationship(detail.tree.id, input),
     onSuccess: async (updated) => {
       await updateDetail(updated);
-      setSelectedVersionId(updated.selectedVersion.id);
+      navigateToTreeVersion(updated.tree.id, updated.selectedVersion.id);
       setParentNodeId("");
       setChildNodeId("");
       setMessage("أُضيفت العلاقة إلى تفسير المسودة.");
@@ -134,7 +154,7 @@ export function TreePage() {
     mutationFn: ({ relationshipId, input }: { relationshipId: string; input: UpdateRelationshipInput }) => updateRelationship(detail.tree.id, relationshipId, input),
     onSuccess: async (updated) => {
       await updateDetail(updated);
-      setSelectedVersionId(updated.selectedVersion.id);
+      navigateToTreeVersion(updated.tree.id, updated.selectedVersion.id);
       setRelationshipEdits({});
       setMessage("حُدّثت حالة العلاقة داخل تفسير المسودة.");
     },
@@ -145,7 +165,7 @@ export function TreePage() {
     mutationFn: () => publishTree(detail.tree.id, "نشر نسخة جديدة من التفسير"),
     onSuccess: async (published) => {
       await updateDetail(published);
-      setSelectedVersionId(published.selectedVersion.id);
+      navigateToTreeVersion(published.tree.id, published.selectedVersion.id);
       setMessage(`نُشرت النسخة ${published.selectedVersion.number}، وفُتحت مسودة جديدة للتعديل.`);
     },
     onError: (error) => setMessage(authMessage(error)),
@@ -201,30 +221,23 @@ export function TreePage() {
   };
 
   const selectTree = (nextTreeId: string) => {
-    setActiveTreeId(nextTreeId);
-    setSelectedVersionId("");
     setSelectedPersonId("");
     setFocusedPersonId(null);
     setMessage("");
-  };
-
-  const selectVersion = (versionId: string) => {
-    setSelectedVersionId(versionId);
-    setEditOpen(false);
-    setMessage("");
+    void navigate({ to: "/tree/$treeId", params: { treeId: nextTreeId } });
   };
 
   return (
     <div className="page-stack">
       <TopBar
         eyebrow="شجرة بحث / تفسير محفوظ"
-        title={detail.tree.name}
-        description={detail.tree.description || "افتح علاقة لترى من أين جاءت، وما الذي ما زال غير محسوم."}
+        title={loadedDetail?.tree.name ?? (resourcePending ? "جارٍ فتح الشجرة" : "شجرة بحث")}
+        description={loadedDetail?.tree.description || "افتح علاقة لترى من أين جاءت، وما الذي ما زال غير محسوم."}
       />
       <div className="tree-page-toolbar">
-        <div className="toolbar-breadcrumb"><span>الأشجار</span><b>/</b><strong>{detail.tree.name}</strong></div>
+        <div className="toolbar-breadcrumb"><span>الأشجار</span><b>/</b><strong>{loadedDetail?.tree.name ?? (resourcePending ? "جارٍ الفتح" : "شجرة بحث")}</strong></div>
         <label className="tree-selector-label">الملف الحالي<select className="tree-selector" aria-label="اختيار الشجرة" value={treeId} onChange={(event) => selectTree(event.target.value)}>
-          {availableTrees.length > 0 ? availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>) : <option value={treeId}>{detail.tree.name}</option>}
+          {availableTrees.length > 0 ? availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>) : <option value={treeId}>{loadedDetail?.tree.name ?? "شجرة بحث"}</option>}
         </select></label>
         <div className="toolbar-button-group">
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
@@ -240,6 +253,7 @@ export function TreePage() {
       {queryError ? <div className="tree-action-message tree-action-error" role="alert">{authMessage(queryError)}</div> : null}
       {message ? <div className="tree-action-message" role="status">{message}{message.includes("تسجيل الدخول") ? <Link to="/login">فتح تسجيل الدخول</Link> : null}</div> : null}
 
+      {showResource ? <>
       {createOpen ? (
         <form className="tree-create-panel" onSubmit={submitCreate}>
           <div className="tree-create-head"><div><div className="eyebrow">مسودة جديدة</div><h2>ابدأ شجرة تفسيرية</h2></div><StatusBadge tone="claim">غير محسومة بعد</StatusBadge></div>
@@ -345,14 +359,21 @@ export function TreePage() {
             {detail.versions.map((version) => {
               const current = version.id === selectedVersion.id;
               const latest = version.id === detail.tree.latestVersionId;
-              return <button type="button" className={`version-item${current ? " version-item-current" : ""}`} key={version.id} onClick={() => selectVersion(version.id)} aria-current={current ? "true" : undefined} role="listitem">
+              return <Link to="/tree/$treeId/versions/$versionId" params={{ treeId, versionId: version.id }} className={`version-item${current ? " version-item-current" : ""}`} key={version.id} onClick={() => { setEditOpen(false); setMessage(""); }} aria-current={current ? "true" : undefined} role="listitem">
                 <span>v{version.number}</span><div><strong>{version.state === "draft" ? "مسودة حالية" : current ? "نسخة معاينة" : latest ? "النشر الحالي" : "نسخة منشورة"}</strong><small>{version.publicationNote || "دون ملاحظة نشر"}</small></div>
-              </button>;
+              </Link>;
             })}
           </div>
           <div className="version-readonly-note"><History size={13} /> {selectedVersion.state === "draft" ? "المسودة الحالية قابلة للتحرير من صاحبها." : "هذه النسخة للقراءة فقط."}</div>
         </div>
       </section>
+      </> : (
+        <div className="tree-load-state" role={resourceError ? "alert" : "status"}>
+          <strong>{resourcePending ? "جارٍ فتح الشجرة…" : resourceError ? "تعذر فتح هذه الشجرة" : "لا توجد أشجار متاحة"}</strong>
+          <span>{resourcePending ? "يتم الآن تحميل النسخة المطلوبة من العنوان." : resourceError ? authMessage(resourceError) : "أنشئ شجرة جديدة أو اطلب من صاحبها مشاركة رابطها."}</span>
+          {resourceError instanceof ApiError && resourceError.status === 401 ? <Link to="/login">فتح تسجيل الدخول</Link> : null}
+        </div>
+      )}
     </div>
   );
 }

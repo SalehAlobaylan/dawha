@@ -1,0 +1,24 @@
+import { createMemoryHistory } from "@tanstack/history";
+import { createRouter } from "@tanstack/react-router";
+import { describe, expect, it } from "vitest";
+import { routeTree } from "./route-tree";
+
+function makeRouter(path: string) {
+  return createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: [path] }),
+  });
+}
+
+describe("tree routes", () => {
+  it("builds addressable tree and version URLs", () => {
+    const router = makeRouter("/tree");
+    expect(router.buildLocation({ to: "/tree/$treeId", params: { treeId: "tree-1" } }).href).toBe("/tree/tree-1");
+    expect(router.buildLocation({ to: "/tree/$treeId/versions/$versionId", params: { treeId: "tree-1", versionId: "version-2" } }).href).toBe("/tree/tree-1/versions/version-2");
+  });
+
+  it("keeps the static tree route separate from dynamic resources", () => {
+    const router = makeRouter("/tree/tree-1/versions/version-2");
+    expect(router.state.location.pathname).toBe("/tree/tree-1/versions/version-2");
+  });
+});

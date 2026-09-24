@@ -123,8 +123,11 @@ export async function fetchPublicTrees(): Promise<TreeSummary[]> {
 }
 
 export async function fetchTree(treeId: string): Promise<TreeDetail> {
-  if (!apiBaseUrl || treeId === demoTreeId) {
+  if (treeId === demoTreeId) {
     return demoTreeDetail;
+  }
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لفتح هذه الشجرة.", 503);
   }
 
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}`, {
@@ -139,7 +142,7 @@ export async function fetchTree(treeId: string): Promise<TreeDetail> {
 }
 
 export async function fetchTreeVersion(treeId: string, versionId: string): Promise<TreeDetail> {
-  if (!apiBaseUrl || treeId === demoTreeId) {
+  if (treeId === demoTreeId) {
     const version = demoTreeDetail.versions.find((candidate) => candidate.id === versionId);
     if (!version) {
       throw new ApiError("النسخة التجريبية غير موجودة.", 404);
@@ -154,6 +157,9 @@ export async function fetchTreeVersion(treeId: string, versionId: string): Promi
       nodes,
       relationships,
     };
+  }
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لفتح هذه النسخة.", 503);
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/versions/${versionId}`, {
     credentials: "include",

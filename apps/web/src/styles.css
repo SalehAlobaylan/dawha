@@ -2079,6 +2079,31 @@ a {
   color: var(--red);
 }
 
+.tree-load-state {
+  display: grid;
+  min-height: 280px;
+  margin-bottom: 48px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--rule);
+  background: rgba(243, 235, 221, 0.42);
+  color: var(--muted);
+  text-align: center;
+}
+
+.tree-load-state strong {
+  color: var(--ink);
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 15px;
+}
+
+.tree-load-state span {
+  max-width: 420px;
+  font-size: 10px;
+  line-height: 1.8;
+}
+
 .tree-page-toolbar,
 .places-toolbar {
   justify-content: space-between;

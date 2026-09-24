@@ -59,7 +59,7 @@ export function AppShell() {
         <div className="sidebar-section-label">مساحة العمل</div>
         <nav className="primary-nav" aria-label="التنقل الرئيسي">
           {navigation.map(({ to, label, icon: Icon }) => {
-            const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
+            const active = to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
             return (
               <Link
                 key={to}
