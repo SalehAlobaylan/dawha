@@ -13,6 +13,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geography"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
@@ -55,6 +56,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	questionHandler := questionHandler{Service: questionService, Auth: authService}
 	dictionaryService := dictionary.NewService(dependencies.DB)
 	dictionaryHandler := dictionaryHandler{Service: dictionaryService}
+	geographyService := geography.NewService(dependencies.DB)
+	geographyHandler := geographyHandler{Service: geographyService}
 	suggestionService := suggestions.NewService(dependencies.DB)
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
@@ -117,6 +120,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/disputes/{disputeID}/claims", questionHandler.linkDisputeClaim)
 	mux.HandleFunc("GET /api/v1/dictionary", dictionaryHandler.index)
 	mux.HandleFunc("GET /api/v1/dictionary/{kind}/{id}", dictionaryHandler.detail)
+	mux.HandleFunc("GET /api/v1/map", geographyHandler.mapFeatures)
+	mux.HandleFunc("GET /api/v1/map/places/{placeID}", geographyHandler.placeMap)
 	mux.HandleFunc("POST /api/v1/suggestions", suggestionHandler.submit)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/suggestions", suggestionHandler.list)
 	mux.HandleFunc("PATCH /api/v1/suggestions/{suggestionID}", suggestionHandler.review)

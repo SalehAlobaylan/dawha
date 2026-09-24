@@ -21,6 +21,7 @@ import type {
   DictionaryKind,
   ForkTreeInput,
   InvitationCreated,
+  MapResponse,
   OpenQuestionRecord,
   QuestionClaimInput,
   QuestionDetail,
@@ -323,6 +324,23 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchMapFeatures(filters: { fromYear?: number; toYear?: number; status?: string; placeId?: string } = {}): Promise<MapResponse> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض طبقات الخريطة.", 503);
+  }
+  const params = new URLSearchParams();
+  if (filters.fromYear !== undefined) params.set("from_year", String(filters.fromYear));
+  if (filters.toYear !== undefined) params.set("to_year", String(filters.toYear));
+  if (filters.status) params.set("status", filters.status);
+  if (filters.placeId) params.set("place_id", filters.placeId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/map${suffix}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as MapResponse;
 }
 
 export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Promise<DictionaryIndexResponse> {

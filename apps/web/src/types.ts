@@ -458,6 +458,39 @@ export interface DictionaryDetail {
   migrations: DictionaryReference[];
 }
 
+export interface MapFeature {
+  id: string;
+  kind: "place" | "association" | "migration" | "region";
+  placeId?: string;
+  placeName?: string;
+  entityType?: string;
+  entityId?: string;
+  entityName?: string;
+  relationType?: string;
+  status: "documented" | "interpreted" | "platform_inferred" | "disputed" | "unresolved";
+  certainty?: string;
+  timeFrom?: string;
+  timeTo?: string;
+  sourceId?: string;
+  sourceTitle?: string;
+  evidenceId?: string;
+  evidenceText?: string;
+  evidenceStatus?: string;
+  longitude?: number;
+  latitude?: number;
+  fromLongitude?: number;
+  fromLatitude?: number;
+  toLongitude?: number;
+  toLatitude?: number;
+}
+
+export interface MapResponse {
+  fromYear?: number;
+  toYear?: number;
+  status?: string;
+  features: MapFeature[];
+}
+
 export interface TreeSummary {
   id: string;
   name: string;
