@@ -1,5 +1,5 @@
 import { demoDashboard, treeNodes } from "../data/demo";
-import type { AddPersonInput, AddRelationshipInput, CreateTreeInput, DashboardData, TreeDetail, TreeSummary } from "../types";
+import type { AddPersonInput, AddRelationshipInput, CreateTreeInput, DashboardData, TreeDetail, TreeSummary, UpdateRelationshipInput } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
 const demoTreeId = "tree-demo";
@@ -203,6 +203,22 @@ export async function addRelationship(treeId: string, input: AddRelationshipInpu
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/relationships`, {
     method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TreeDetail;
+}
+
+export async function updateRelationship(treeId: string, relationshipId: string, input: UpdateRelationshipInput): Promise<TreeDetail> {
+  if (!apiBaseUrl || treeId === demoTreeId) {
+    throw new ApiError("هذه النسخة للقراءة فقط ولا تقبل تعديل الحالة.", 409);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/relationships/${relationshipId}`, {
+    method: "PATCH",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

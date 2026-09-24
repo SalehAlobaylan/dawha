@@ -20,6 +20,7 @@ var (
 	ErrForbidden             = errors.New("tree access is forbidden")
 	ErrNoDraft               = errors.New("tree has no draft version")
 	ErrDuplicateRelationship = errors.New("relationship already exists in this draft")
+	ErrStaleVersion          = errors.New("tree draft version is stale")
 	ErrValidation            = errors.New("tree input is invalid")
 )
 
@@ -44,6 +45,12 @@ type AddRelationshipInput struct {
 	ObjectNodeID  string `json:"object_node_id"`
 	Predicate     string `json:"predicate"`
 	Status        string `json:"status"`
+}
+
+type UpdateRelationshipInput struct {
+	Status            string `json:"status"`
+	ExpectedVersionID string `json:"expected_version_id"`
+	ReasonAR          string `json:"reason_ar"`
 }
 
 type TreeSummary struct {
@@ -342,6 +349,97 @@ func (s *Service) AddRelationship(ctx context.Context, treeID, ownerID string, i
 		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
 		VALUES ($1, 'relationship_added', 'tree_relationship', $2, $3)
 	`, ownerUUID, relationshipID, auditValue); err != nil {
+		return TreeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TreeDetail{}, err
+	}
+	return s.GetTree(ctx, treeID, ownerID)
+}
+
+func (s *Service) UpdateRelationship(ctx context.Context, treeID, relationshipID, ownerID string, input UpdateRelationshipInput) (TreeDetail, error) {
+	if s == nil || s.Pool == nil {
+		return TreeDetail{}, ErrDatabaseUnavailable
+	}
+	treeUUID, err := uuid.Parse(treeID)
+	if err != nil {
+		return TreeDetail{}, ErrNotFound
+	}
+	relationshipUUID, err := uuid.Parse(relationshipID)
+	if err != nil {
+		return TreeDetail{}, ErrNotFound
+	}
+	ownerUUID, err := uuid.Parse(ownerID)
+	if err != nil {
+		return TreeDetail{}, ErrForbidden
+	}
+	input, err = validateUpdateRelationshipInput(input)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	expectedVersionUUID, err := uuid.Parse(input.ExpectedVersionID)
+	if err != nil {
+		return TreeDetail{}, ErrValidation
+	}
+	tree, err := s.treeSummary(ctx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if tree.OwnerID != ownerID {
+		return TreeDetail{}, ErrForbidden
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if expectedVersionUUID.String() != uuidString(versionID) {
+		return TreeDetail{}, ErrStaleVersion
+	}
+	var previousStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT status
+		FROM tree_relationships
+		WHERE tree_version_id = $1 AND id = $2
+		FOR UPDATE
+	`, versionID, relationshipUUID).Scan(&previousStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TreeDetail{}, ErrNotFound
+		}
+		return TreeDetail{}, err
+	}
+	if previousStatus == input.Status {
+		if err := tx.Commit(ctx); err != nil {
+			return TreeDetail{}, err
+		}
+		return s.GetTree(ctx, treeID, ownerID)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tree_relationships
+		SET status = $1
+		WHERE tree_version_id = $2 AND id = $3
+	`, input.Status, versionID, relationshipUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE trees SET updated_at = now() WHERE id = $1`, treeUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	auditValue, _ := json.Marshal(map[string]any{
+		"tree_id":         treeID,
+		"version_id":      uuidString(versionID),
+		"relationship_id": relationshipUUID.String(),
+		"before_status":   previousStatus,
+		"after_status":    input.Status,
+	})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value, reason_ar)
+		VALUES ($1, 'relationship_changed', 'tree_relationship', $2, $3, $4)
+	`, ownerUUID, relationshipUUID, auditValue, input.ReasonAR); err != nil {
 		return TreeDetail{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -934,6 +1032,19 @@ func validateRelationshipInput(input AddRelationshipInput) (AddRelationshipInput
 	}
 	if input.Status != "interpreted" && input.Status != "disputed" && input.Status != "unresolved" {
 		return AddRelationshipInput{}, ErrValidation
+	}
+	return input, nil
+}
+
+func validateUpdateRelationshipInput(input UpdateRelationshipInput) (UpdateRelationshipInput, error) {
+	input.Status = strings.TrimSpace(input.Status)
+	input.ExpectedVersionID = strings.TrimSpace(input.ExpectedVersionID)
+	input.ReasonAR = strings.TrimSpace(input.ReasonAR)
+	if input.Status != "interpreted" && input.Status != "disputed" && input.Status != "unresolved" {
+		return UpdateRelationshipInput{}, ErrValidation
+	}
+	if input.ExpectedVersionID == "" || input.ReasonAR == "" || len([]rune(input.ReasonAR)) > 1000 {
+		return UpdateRelationshipInput{}, ErrValidation
 	}
 	return input, nil
 }

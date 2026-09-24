@@ -2,12 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Focus, GitCompareArrows, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree } from "../lib/api";
+import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree, updateRelationship } from "../lib/api";
 import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
-import type { AddPersonInput, AddRelationshipInput, TreeDetail, TreeNode } from "../types";
+import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, UpdateRelationshipInput } from "../types";
 
 export function TreePage() {
   const queryClient = useQueryClient();
@@ -30,7 +30,8 @@ export function TreePage() {
   const [deathDateTo, setDeathDateTo] = useState("");
   const [parentNodeId, setParentNodeId] = useState("");
   const [childNodeId, setChildNodeId] = useState("");
-  const [relationshipStatus, setRelationshipStatus] = useState<"interpreted" | "disputed" | "unresolved">("interpreted");
+  const [relationshipStatus, setRelationshipStatus] = useState<RelationshipStatus>("interpreted");
+  const [relationshipEdits, setRelationshipEdits] = useState<Record<string, { status: RelationshipStatus; reason: string }>>({});
   const [message, setMessage] = useState("");
 
   const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
@@ -56,6 +57,7 @@ export function TreePage() {
   const visibleGraphNodes = lineageFocus ? graphNodes.filter((node) => lineageFocus.nodeIds.has(node.id)) : graphNodes;
   const visibleRelationships = lineageFocus ? statusRelationships.filter((relationship) => lineageFocus.relationshipIds.has(relationship.id)) : statusRelationships;
   const selected = visibleGraphNodes.find((node) => node.personId === selectedPersonId) ?? visibleGraphNodes[0];
+  const selectedRelationships = selected ? detail.relationships.filter((relationship) => relationship.subjectNodeId === selected.id || relationship.objectNodeId === selected.id) : [];
   const versionReady = !versionQuery.isFetching && !versionQuery.isError && (!selectedVersionId || selectedVersion.id === requestedVersionId);
   const canEdit = versionReady && detail.permissions.canEdit && selectedVersion.state === "draft";
   const canPublish = versionReady && detail.permissions.canPublish && selectedVersion.state === "draft";
@@ -69,6 +71,10 @@ export function TreePage() {
       setFocusedPersonId(null);
     }
   }, [detail.nodes, focusedPersonId, selectedPersonId]);
+
+  useEffect(() => {
+    setRelationshipEdits({});
+  }, [selectedVersion.id, treeId]);
 
   const updateDetail = async (updated: TreeDetail) => {
     queryClient.setQueryData(["tree", updated.tree.id], updated);
@@ -124,6 +130,17 @@ export function TreePage() {
     onError: (error) => setMessage(authMessage(error)),
   });
 
+  const updateRelationshipMutation = useMutation({
+    mutationFn: ({ relationshipId, input }: { relationshipId: string; input: UpdateRelationshipInput }) => updateRelationship(detail.tree.id, relationshipId, input),
+    onSuccess: async (updated) => {
+      await updateDetail(updated);
+      setSelectedVersionId(updated.selectedVersion.id);
+      setRelationshipEdits({});
+      setMessage("حُدّثت حالة العلاقة داخل تفسير المسودة.");
+    },
+    onError: (error) => setMessage(authMessage(error)),
+  });
+
   const publishMutation = useMutation({
     mutationFn: () => publishTree(detail.tree.id, "نشر نسخة جديدة من التفسير"),
     onSuccess: async (published) => {
@@ -166,6 +183,20 @@ export function TreePage() {
       object_node_id: childNodeId,
       predicate: "parent_of",
       status: relationshipStatus,
+    });
+  };
+
+  const submitRelationshipStatus = (event: FormEvent<HTMLFormElement>, relationshipId: string, fallbackStatus: RelationshipStatus) => {
+    event.preventDefault();
+    const edit = relationshipEdits[relationshipId] ?? { status: fallbackStatus, reason: "" };
+    if (!edit.reason.trim()) {
+      setMessage("اكتب سبب تغيير حالة العلاقة قبل الحفظ.");
+      return;
+    }
+    setMessage("");
+    updateRelationshipMutation.mutate({
+      relationshipId,
+      input: { status: edit.status, expected_version_id: selectedVersion.id, reason_ar: edit.reason },
     });
   };
 
@@ -286,6 +317,19 @@ export function TreePage() {
             </div>
             <div className="node-detail-alert"><StatusBadge tone={selected.tone}>{selected.tone === "disputed" ? "في مركز سؤال" : "ضمن التفسير"}</StatusBadge><span>{selected.sourceCount} إشارات مرتبطة</span></div>
             <div className="node-detail-actions"><button className="secondary-button" type="button" onClick={() => setFocusedPersonId(selected.personId)}><Focus size={14} /> ركّز السلالة</button>{focusedPersonId ? <button className="secondary-button" type="button" onClick={() => setFocusedPersonId(null)}><Maximize2 size={14} /> عرض الكل</button> : null}</div>
+            <div className="relationship-list">
+              <div className="detail-label">العلاقات في هذه النسخة</div>
+              <p className="relationship-scope-note">تغيير الحالة يخص تفسير هذه الشجرة، ولا يحسم ادعاءً أو مصدراً عالمياً.</p>
+              {selectedRelationships.length > 0 ? selectedRelationships.map((relationship) => {
+                const relationshipEdit = relationshipEdits[relationship.id] ?? { status: relationship.status, reason: "" };
+                const subject = detail.nodes.find((node) => node.id === relationship.subjectNodeId)?.displayName ?? "—";
+                const object = detail.nodes.find((node) => node.id === relationship.objectNodeId)?.displayName ?? "—";
+                return <form className="relationship-item" key={relationship.id} onSubmit={(event) => submitRelationshipStatus(event, relationship.id, relationship.status)}>
+                  <div className="relationship-item-head"><div><strong>{subject} <ArrowLeft size={11} /> {object}</strong><small>{relationshipPredicateLabel(relationship.predicate)}</small></div><StatusBadge tone={relationship.status === "disputed" ? "disputed" : relationship.status === "unresolved" ? "question" : "interpretation"}>{relationshipStatusLabel(relationship.status)}</StatusBadge></div>
+                  {canEdit ? <div className="relationship-editor"><select aria-label="حالة العلاقة" value={relationshipEdit.status} onChange={(event) => setRelationshipEdits((current) => ({ ...current, [relationship.id]: { status: event.target.value as RelationshipStatus, reason: current[relationship.id]?.reason ?? "" } }))}><option value="interpreted">مفسر</option><option value="disputed">متنازع عليه</option><option value="unresolved">غير محسوم</option></select><input required aria-label="سبب تغيير الحالة" value={relationshipEdit.reason} onChange={(event) => setRelationshipEdits((current) => ({ ...current, [relationship.id]: { status: current[relationship.id]?.status ?? relationship.status, reason: event.target.value } }))} placeholder="سبب تغيير التفسير" /><button className="primary-button" type="submit" disabled={updateRelationshipMutation.isPending}>{updateRelationshipMutation.isPending ? "جارٍ الحفظ…" : "احفظ الحالة"}</button></div> : <small className="relationship-readonly">النسخة الحالية للقراءة فقط؛ لا يمكن تغيير حالة العلاقة هنا.</small>}
+                </form>;
+              }) : <p className="relationship-empty">لا توجد علاقات مرتبطة بهذا الشخص في النسخة المختارة.</p>}
+            </div>
             <div className="detail-block"><div className="detail-label">ملاحظة الباحث</div><p>{selected.note}</p></div>
             <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافات طبقة كما هي.</p></div>
             <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList sourceCount={selected.sourceCount} /></div>
@@ -328,9 +372,24 @@ function toGraphNodes(detail: TreeDetail): TreeNode[] {
   }));
 }
 
+function relationshipStatusLabel(status: RelationshipStatus): string {
+  if (status === "disputed") return "متنازع عليه";
+  if (status === "unresolved") return "غير محسوم";
+  return "مفسر";
+}
+
+function relationshipPredicateLabel(predicate: string): string {
+  if (predicate === "spouse_of") return "علاقة زواج";
+  if (predicate === "sibling_of") return "علاقة إخوة";
+  return "علاقة أبوة";
+}
+
 function authMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 401) {
     return "سجّل الدخول أولًا لإنشاء أو تعديل أو نشر شجرة.";
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    return "تغيرت نسخة الشجرة. حدّث الصفحة ثم أعد المحاولة.";
   }
   return error instanceof Error ? error.message : "تعذر إكمال العملية.";
 }

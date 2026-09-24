@@ -1176,6 +1176,7 @@ GET    /api/v1/trees/{treeID}
 POST   /api/v1/trees
 POST   /api/v1/trees/{treeID}/people
 POST   /api/v1/trees/{treeID}/relationships
+PATCH  /api/v1/trees/{treeID}/relationships/{relationshipID}
 POST   /api/v1/trees/{treeID}/publish
 POST   /api/v1/trees/{treeID}/fork
 GET    /api/v1/trees/{treeID}/versions

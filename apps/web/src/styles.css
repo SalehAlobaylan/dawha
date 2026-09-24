@@ -2460,6 +2460,91 @@ a {
   font-size: 9px;
 }
 
+.relationship-list {
+  padding: 15px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.relationship-scope-note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.7;
+}
+
+.relationship-item {
+  padding: 9px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(233, 223, 201, 0.28);
+}
+
+.relationship-item + .relationship-item {
+  margin-top: 7px;
+}
+
+.relationship-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.relationship-item-head > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.relationship-item-head strong {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.relationship-item-head small,
+.relationship-readonly {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+.relationship-editor {
+  display: grid;
+  grid-template-columns: 0.8fr 1.4fr auto;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.relationship-editor input,
+.relationship-editor select {
+  min-width: 0;
+  min-height: 31px;
+  padding: 0 7px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  outline: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 9px;
+}
+
+.relationship-editor .primary-button {
+  min-height: 31px;
+  padding-inline: 8px;
+  font-size: 8px;
+}
+
+.relationship-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
 .detail-block {
   padding: 15px 0;
   border-top: 1px solid var(--rule);
@@ -4906,6 +4991,14 @@ a {
 
   .node-detail-panel {
     padding: 17px;
+  }
+
+  .relationship-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .relationship-editor .primary-button {
+    width: 100%;
   }
 
   .version-strip {

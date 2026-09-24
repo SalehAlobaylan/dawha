@@ -64,6 +64,16 @@ func TestTreeVersionRouteUsesSelectedVersionService(t *testing.T) {
 	}
 }
 
+func TestUpdateRelationshipRouteRequiresAuthentication(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/trees/00000000-0000-0000-0000-000000000001/relationships/00000000-0000-0000-0000-000000000002", strings.NewReader(`{"status":"disputed","expected_version_id":"00000000-0000-0000-0000-000000000003","reason_ar":"مراجعة"}`))
+	request.Header.Set("Content-Type", "application/json")
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
 func TestTreeErrorMapping(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -74,6 +84,7 @@ func TestTreeErrorMapping(t *testing.T) {
 		{trees.ErrForbidden, http.StatusForbidden},
 		{trees.ErrNoDraft, http.StatusConflict},
 		{trees.ErrDuplicateRelationship, http.StatusConflict},
+		{trees.ErrStaleVersion, http.StatusConflict},
 		{trees.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {

@@ -119,6 +119,24 @@ func (h treeHandler) addRelationship(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, detail)
 }
 
+func (h treeHandler) updateRelationship(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.UserFromRequest(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	var input trees.UpdateRelationshipInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	detail, err := h.Service.UpdateRelationship(r.Context(), r.PathValue("treeID"), r.PathValue("relationshipID"), user.ID, input)
+	if err != nil {
+		writeTreeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
 func (h treeHandler) publish(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.UserFromRequest(r.Context(), r)
 	if err != nil {
@@ -177,6 +195,9 @@ func writeTreeError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 		message = err.Error()
 	case trees.ErrDuplicateRelationship:
+		status = http.StatusConflict
+		message = err.Error()
+	case trees.ErrStaleVersion:
 		status = http.StatusConflict
 		message = err.Error()
 	case trees.ErrDatabaseUnavailable:

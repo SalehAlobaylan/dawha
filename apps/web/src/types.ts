@@ -111,12 +111,14 @@ export interface TreeNodeRecord {
   note: string;
 }
 
+export type RelationshipStatus = "interpreted" | "disputed" | "unresolved";
+
 export interface TreeRelationshipRecord {
   id: string;
   subjectNodeId: string;
   objectNodeId: string;
   predicate: string;
-  status: "interpreted" | "disputed" | "unresolved";
+  status: RelationshipStatus;
 }
 
 export interface TreePermissions {
@@ -160,7 +162,13 @@ export interface AddRelationshipInput {
   subject_node_id: string;
   object_node_id: string;
   predicate: "parent_of" | "spouse_of" | "sibling_of";
-  status: "interpreted" | "disputed" | "unresolved";
+  status: RelationshipStatus;
+}
+
+export interface UpdateRelationshipInput {
+  status: RelationshipStatus;
+  expected_version_id: string;
+  reason_ar: string;
 }
 
 export interface PlaceRecord {

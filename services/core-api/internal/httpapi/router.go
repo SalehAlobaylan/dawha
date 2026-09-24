@@ -54,6 +54,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions/{versionID}", treeHandler.version)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/people", treeHandler.addPerson)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/relationships", treeHandler.addRelationship)
+	mux.HandleFunc("PATCH /api/v1/trees/{treeID}/relationships/{relationshipID}", treeHandler.updateRelationship)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/publish", treeHandler.publish)
 	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{

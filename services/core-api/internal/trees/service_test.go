@@ -110,3 +110,24 @@ func TestParsePersonDatesRejectsInvertedRange(t *testing.T) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
 }
+
+func TestValidateUpdateRelationshipInput(t *testing.T) {
+	input, err := validateUpdateRelationshipInput(UpdateRelationshipInput{
+		Status:            " disputed ",
+		ExpectedVersionID: " version-id ",
+		ReasonAR:          "  رواية جديدة  ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if input.Status != "disputed" || input.ExpectedVersionID != "version-id" || input.ReasonAR != "رواية جديدة" {
+		t.Fatalf("unexpected normalized input: %+v", input)
+	}
+}
+
+func TestValidateUpdateRelationshipInputRequiresReason(t *testing.T) {
+	_, err := validateUpdateRelationshipInput(UpdateRelationshipInput{Status: "disputed", ExpectedVersionID: "version-id"})
+	if err != ErrValidation {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
