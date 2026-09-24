@@ -104,6 +104,7 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	}
 	graphPaths := make([]GraphPath, 0)
 	graphStats := GraphStats{}
+	graphPassageCount := 0
 	if input.GraphOperation != "" {
 		graphResult, graphErr := s.retrieveGraph(ctx, input, actorID)
 		if graphErr != nil {
@@ -114,12 +115,15 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 		}
 		graphPaths = graphResult.Paths
 		graphStats = graphResult.Stats
+		graphCitations := graphPassageCitations(graphPaths, retrieval.Passages)
+		graphPassageCount = len(graphCitations)
+		retrieval.Passages = append(retrieval.Passages, graphCitations...)
 	}
 	evidence := evidencePackage(retrieval)
 	if err := evidence.Validate(); err != nil {
 		return QueryResult{}, ErrValidation
 	}
-	routing, err := s.routeResearch(ctx, input, passages)
+	routing, err := s.routeResearch(ctx, input, retrieval.Passages)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -128,37 +132,34 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	}
 	retrieval.QueryType = routing.QueryType
 	conflicts := claimConflicts(retrieval.Claims)
-	if len(passages) > 0 && (routing.Route == ai.RoutingRouteDeep || routing.PotentialContradiction) {
+	if len(retrieval.Passages) > 0 && (routing.Route == ai.RoutingRouteDeep || routing.PotentialContradiction) {
 		detected, detectErr := s.detectStatementConflicts(ctx, retrieval.Passages)
 		if detectErr != nil {
 			return QueryResult{}, researchAIError(detectErr)
 		}
 		conflicts = append(conflicts, detected...)
 	}
-	graphEvidenceTotal := graphEvidenceCount(graphPaths)
-	hasGraphEvidence := graphEvidenceTotal > 0
-	insufficient := len(passages) == 0 && !hasGraphEvidence
+	hasGraphEvidence := graphPassageCount > 0
+	insufficient := len(retrieval.Passages) == 0 && !hasGraphEvidence
 	answer := safeInsufficientAnswer
 	synthesisModel := ""
 	synthesisAttempted := false
-	if hasGraphEvidence && len(passages) == 0 {
-		answer = "توجد أدلة قابلة للتتبع داخل مسار رسومي؛ راجع المسار والعبارات المرتبطة به."
-	} else if !insufficient {
+	if !insufficient {
 		switch routing.Route {
 		case ai.RoutingRouteDeep:
 			synthesisAttempted = true
-			contexts := make([]ai.SourceContext, 0, min(len(passages), 20))
-			for _, passage := range passages {
+			contexts := make([]ai.SourceContext, 0, min(len(retrieval.Passages), 20))
+			for _, passage := range retrieval.Passages {
 				if len(contexts) == 20 {
 					break
 				}
-				contexts = append(contexts, ai.SourceContext{ID: passage.PassageID, Title: passage.Title, Text: passage.Excerpt})
+				contexts = append(contexts, ai.SourceContext{ID: citationContextID(passage), Title: passage.Title, Text: passage.Excerpt})
 			}
 			response, researchErr := s.AI.ResearchQuery(ctx, ai.ResearchQueryRequest{Query: input.Question, Contexts: contexts})
 			if researchErr != nil {
 				return QueryResult{}, researchAIError(researchErr)
 			}
-			if validCitationSet(response.Citations, passages) {
+			if validCitationSet(response.Citations, retrieval.Passages) {
 				answer = response.Answer
 				synthesisModel = response.Model
 			} else {
@@ -179,7 +180,7 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	allCitations = append(allCitations, retrieval.Trees...)
 	allCitations = append(allCitations, retrieval.Findings...)
 	allCitations = append(allCitations, retrieval.Questions...)
-	stats.EvidenceCount = len(allCitations) + graphEvidenceTotal
+	stats.EvidenceCount = len(allCitations)
 	return QueryResult{
 		Query:                input.Question,
 		NormalizedQuery:      normalized,
@@ -542,10 +543,25 @@ func layeredEvidence(retrieval retrievalContext) LayeredEvidence {
 	return LayeredEvidence{SourceStatements: retrieval.Passages, ResearchClaims: retrieval.Claims, TreeInterpretations: retrieval.Trees, PlatformFindings: retrieval.Findings, OpenQuestions: retrieval.Questions}
 }
 
+func citationContextID(citation Citation) string {
+	if citation.PassageID != "" {
+		return citation.PassageID
+	}
+	if citation.StatementID != "" {
+		return citation.StatementID
+	}
+	if citation.ClaimID != "" {
+		return citation.ClaimID
+	}
+	return citation.ID
+}
+
 func validCitationSet(citations []ai.ResearchCitation, passages []Citation) bool {
 	allowed := make(map[string]struct{}, len(passages))
 	for _, passage := range passages {
-		allowed[passage.PassageID] = struct{}{}
+		if contextID := citationContextID(passage); contextID != "" {
+			allowed[contextID] = struct{}{}
+		}
 	}
 	if len(citations) == 0 {
 		return false

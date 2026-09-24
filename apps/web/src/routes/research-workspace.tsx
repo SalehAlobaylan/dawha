@@ -3,10 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, BookOpen, Check, CircleHelp, FileSearch, GitBranch, Link2, Map, MessageCircleQuestion, Plus, RefreshCw, ShieldQuestion, Sparkles, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { demoDashboard, sources } from "../data/demo";
-import { ApiError, addClaimEvidence, createClaim, createDispute, createQuestion, fetchResearchWorkspace, linkDisputeClaim, linkQuestionClaim, linkQuestionDispute, linkQuestionEntity, linkQuestionFinding, queryResearch, reviewEntityResolutionCandidate } from "../lib/api";
-import type { CreateClaimInput, EntityResolutionReviewInput, EpistemicTone, ResearchQueryResult, ResearchWorkspaceSnapshot, WorkspaceClaim, WorkspaceFinding, WorkspaceIdentityCandidate, WorkspaceTimelineEvent } from "../types";
+import { ApiError, addClaimEvidence, createClaim, createDispute, createQuestion, fetchResearchRun, fetchResearchWorkspace, linkDisputeClaim, linkQuestionClaim, linkQuestionDispute, linkQuestionEntity, linkQuestionFinding, queryResearch, reviewEntityResolutionCandidate } from "../lib/api";
+import type { CreateClaimInput, EntityResolutionReviewInput, EpistemicTone, GraphStats, ResearchQueryResult, ResearchRunDetail, ResearchWorkspaceSnapshot, WorkspaceClaim, WorkspaceFinding, WorkspaceIdentityCandidate, WorkspaceTimelineEvent } from "../types";
 import { demoTreeDetail } from "../lib/api";
-import { ResearchResultPanel } from "./research";
+import { GraphPathsPanel, ResearchResultPanel } from "./research";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
@@ -21,6 +21,9 @@ export function ResearchWorkspacePage() {
   const [result, setResult] = useState<ResearchQueryResult | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [graphEnhanced, setGraphEnhanced] = useState(false);
+  const [historyDetail, setHistoryDetail] = useState<ResearchRunDetail | null>(null);
+  const [historyLoadingID, setHistoryLoadingID] = useState("");
   const [claimDraft, setClaimDraft] = useState({ predicate: "", objectId: "", notes: "" });
   const [evidenceClaimId, setEvidenceClaimId] = useState("");
   const [evidenceStatementId, setEvidenceStatementId] = useState("");
@@ -45,7 +48,7 @@ export function ResearchWorkspacePage() {
     mutationFn: async () => {
       if (!snapshot) throw new Error("مساحة البحث غير جاهزة.");
       const entityType = normalizeEntityType(snapshot.context.entityType);
-      const graphContext = entityType && isUuid(snapshot.context.entityId);
+      const graphContext = graphEnhanced && entityType && isUuid(snapshot.context.entityId);
       return queryResearch({ question: snapshot.context.questionTitleAr, question_id: isUuid(questionId) ? questionId : undefined, entity_type: entityType, entity_id: graphContext ? snapshot.context.entityId : undefined, tree_id: isUuid(snapshot.context.treeId) ? snapshot.context.treeId : undefined, tree_version_id: isUuid(snapshot.context.treeVersionId) ? snapshot.context.treeVersionId : undefined, graph_operation: graphContext ? "branch_claims" : undefined, graph_start_type: graphContext ? entityType : undefined, graph_start_id: graphContext ? snapshot.context.entityId : undefined, graph_max_depth: graphContext ? 2 : undefined });
     },
     onSuccess: (value) => { setResult(value); setMessage("حُفظ التحقيق في السجل."); setError(""); void invalidate(); },
@@ -104,11 +107,25 @@ export function ResearchWorkspacePage() {
     onError: (value) => setError(actionError(value, "تعذر تحديث المرشح.")),
   });
 
+  const openHistory = async (runID: string) => {
+    setHistoryLoadingID(runID);
+    setError("");
+    try {
+      setHistoryDetail(await fetchResearchRun(runID));
+    } catch (value) {
+      setError(actionError(value, "تعذر فتح سجل التحقيق."));
+    } finally {
+      setHistoryLoadingID("");
+    }
+  };
+
   if (workspaceQuery.isPending) return <WorkspaceState title="جارٍ فتح مساحة البحث…" description="تُجمع مكونات السؤال والسياق من مصادره." />;
   if (workspaceQuery.error || !snapshot) return <WorkspaceState title="تعذر فتح مساحة البحث" description={actionError(workspaceQuery.error, "تحقق من Core API ثم أعد المحاولة.")} error />;
   const permissions = snapshot.permissions;
   const entityLabel = snapshot.context.entityNameAr || "سياق السؤال";
+  const graphAvailable = Boolean(snapshot.context.entityType && isUuid(snapshot.context.entityId));
   const evidenceClaims = snapshot.claims.filter((claim) => claim.id === evidenceClaimId);
+  const historyStats: GraphStats | undefined = historyDetail ? graphStatsForRun(historyDetail) : undefined;
 
   return <div className="page-stack workspace-page">
     <TopBar eyebrow="مكتب البحث / مساحة موحدة" title={snapshot.context.questionTitleAr} description={snapshot.context.questionDetailAr || "اجمع الشجرة والأدلة والخلاف والسؤال في مسار واحد قابل للتتبع."} />
@@ -119,8 +136,11 @@ export function ResearchWorkspacePage() {
     {snapshot.context.entityAliasesAr?.length ? <div className="workspace-alias-line"><span>أسماء أخرى:</span>{snapshot.context.entityAliasesAr.map((alias) => <span className="workspace-alias" key={alias}>{alias}</span>)}</div> : null}
     {message ? <div className="workspace-feedback workspace-feedback-success" role="status"><Check size={15} />{message}</div> : null}
     {error ? <div className="workspace-feedback workspace-feedback-error" role="alert"><AlertTriangle size={15} />{error}<button type="button" aria-label="إغلاق الرسالة" onClick={() => setError("")}><X size={13} /></button></div> : null}
-    <div className="workspace-action-strip"><div><Sparkles size={15} /><span>كل تعديل يبقى داخل سياق السؤال، ولا يغير المصادر التاريخية.</span></div><div className="workspace-action-links"><Link to="/contradictions">مراجعة التعارضات</Link><Link to="/entity-resolution">مطابقة الهوية</Link><Link to="/questions">كل الأسئلة</Link></div></div>
+    <div className="workspace-action-strip"><div><Sparkles size={15} /><span>كل تعديل يبقى داخل سياق السؤال، ولا يغير المصادر التاريخية.</span></div><div className="workspace-action-links"><button className="text-button" type="button" aria-pressed={graphEnhanced} disabled={!graphAvailable} onClick={() => setGraphEnhanced((value) => !value)}><GitBranch size={13} /> {graphEnhanced ? "إيقاف مسار العلاقات" : "تفعيل مسار العلاقات"}</button><Link to="/contradictions">مراجعة التعارضات</Link><Link to="/entity-resolution">مطابقة الهوية</Link><Link to="/questions">كل الأسئلة</Link></div></div>
+
     {result ? <ResearchResultPanel result={result} /> : null}
+    {historyDetail ? <section className="workspace-history-detail"><div className="workspace-history-detail-head"><div><div className="eyebrow">سجل محفوظ</div><strong>{historyDetail.query}</strong><small>{historyDetail.answerAr || "لا توجد إجابة نصية محفوظة."}</small></div><button className="icon-button" type="button" aria-label="إغلاق سجل التحقيق" onClick={() => setHistoryDetail(null)}><X size={14} /></button></div><GraphPathsPanel paths={historyDetail.graphPaths} stats={historyStats} /></section> : null}
+
     <div className="workspace-grid">
       <main className="workspace-main">
         <ClaimsPanel snapshot={snapshot} claimDraft={claimDraft} setClaimDraft={setClaimDraft} onCreateClaim={() => claimMutation.mutate()} claimPending={claimMutation.isPending} evidenceClaimId={evidenceClaimId} setEvidenceClaimId={setEvidenceClaimId} evidenceStatementId={evidenceStatementId} setEvidenceStatementId={setEvidenceStatementId} evidenceClaims={evidenceClaims} onLinkEvidence={() => evidenceMutation.mutate()} evidencePending={evidenceMutation.isPending} onDispute={(claim) => disputeMutation.mutate(claim)} disputePending={disputeMutation.isPending} canCreate={permissions.canCreateClaim} canLink={permissions.canLinkEvidence} canDispute={permissions.canDisputeClaim} />
@@ -133,7 +153,7 @@ export function ResearchWorkspacePage() {
         <QuestionsPanel snapshot={snapshot} context={workspaceContext} onCreate={() => questionMutation.mutate()} canCreate={permissions.canCreateQuestion} pending={questionMutation.isPending} />
         <IdentityPanel snapshot={snapshot} onReview={(candidate, decision) => identityMutation.mutate({ candidate, decision })} canReview={permissions.canReviewIdentityCandidate} pending={identityMutation.isPending} />
         <NotesPanel snapshot={snapshot} />
-        <HistoryPanel snapshot={snapshot} />
+        <HistoryPanel snapshot={snapshot} onOpen={openHistory} loadingID={historyLoadingID} />
       </aside>
     </div>
   </div>;
@@ -175,8 +195,23 @@ function NotesPanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
   return <section className="workspace-panel"><SectionHeading eyebrow="الذاكرة" title="ملاحظات السؤال" description="ملاحظات مربوطة بالسجل الحالي." /><div className="workspace-list">{snapshot.notes.length ? snapshot.notes.map((note) => <div className="workspace-note-row" key={note.id}><span>{note.noteAr}</span><small>{formatDate(note.createdAt)}</small></div>) : <EmptyWorkspace label="لا توجد ملاحظات بعد." />}</div></section>;
 }
 
-function HistoryPanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
-  return <section className="workspace-panel"><SectionHeading eyebrow="السجل" title="مسار التحقيق" description="كل تشغيل يبقى قابلاً للعودة." /><div className="workspace-list">{snapshot.history.length ? snapshot.history.map((run) => <div className="workspace-history-row" key={run.id}><div><strong>{run.query}</strong><small>{formatDate(run.createdAt)} · {run.status}</small></div><div><StatusBadge tone={run.insufficientEvidence ? "question" : "source"}>{run.insufficientEvidence ? "أدلة غير كافية" : "مدعوم"}{run.route ? ` · ${run.route}` : ""}</StatusBadge><small>{run.citationCount} مادة{run.graphPathCount ? ` · ${run.graphPathCount} مسار` : ""}</small></div></div>) : <EmptyWorkspace label="لم يُشغل تحقيق في هذا السؤال بعد." />}</div></section>;
+function HistoryPanel({ snapshot, onOpen, loadingID }: { snapshot: ResearchWorkspaceSnapshot; onOpen: (runID: string) => void; loadingID: string }) {
+  return <section className="workspace-panel"><SectionHeading eyebrow="السجل" title="مسار التحقيق" description="كل تشغيل يبقى قابلاً للعودة." /><div className="workspace-list">{snapshot.history.length ? snapshot.history.map((run) => <button className="workspace-history-row workspace-history-button" type="button" key={run.id} onClick={() => onOpen(run.id)} disabled={loadingID === run.id}><div><strong>{run.query}</strong><small>{formatDate(run.createdAt)} · {run.status}</small></div><div><StatusBadge tone={run.insufficientEvidence ? "question" : "source"}>{run.insufficientEvidence ? "أدلة غير كافية" : "مدعوم"}{run.route ? ` · ${run.route}` : ""}</StatusBadge><small>{run.citationCount} مادة{run.graphPathCount ? ` · ${run.graphPathCount} مسار` : ""}</small></div></button>) : <EmptyWorkspace label="لم يُشغل تحقيق في هذا السؤال بعد." />}</div></section>;
+}
+
+function graphStatsForRun(detail: ResearchRunDetail): GraphStats {
+  return {
+    operation: detail.graphOperation,
+    pathCount: detail.graphPathCount,
+    nodeCount: detail.graphPaths.reduce((total, path) => total + path.nodes.length, 0),
+    edgeCount: detail.graphPaths.reduce((total, path) => total + path.edges.length, 0),
+    evidenceCount: detail.graphPaths.reduce((total, path) => total + path.evidenceRefs.length, 0),
+    truncated: detail.graphTruncated,
+    pathsTruncated: detail.graphTruncated,
+    edgesTruncated: detail.graphPaths.some((path) => path.truncated && path.edges.length > 0),
+    maxDepth: detail.graphMaxDepth ?? 0,
+    algorithmVersion: detail.graphPaths[0]?.algorithmVersion,
+  };
 }
 
 function EvidenceLine({ evidence }: { evidence: WorkspaceClaim["evidence"][number] }) {

@@ -215,7 +215,7 @@ func runGraphPaths(ctx context.Context, executor historyExecutor, runID uuid.UUI
 
 func runGraphEdges(ctx context.Context, executor historyExecutor, runID, pathID uuid.UUID) ([]GraphEdge, error) {
 	rows, err := executor.Query(ctx, `
-		SELECT id, edge_reference_id, edge_type, from_node_id, to_node_id, COALESCE(predicate, ''), COALESCE(status, ''), COALESCE(certainty, ''),
+		SELECT id, edge_reference_id, edge_type, from_node_id, to_node_id, path_from_node_id, path_to_node_id, COALESCE(predicate, ''), COALESCE(status, ''), COALESCE(certainty, ''),
 		       COALESCE(source_id::text, ''), COALESCE(claim_id::text, ''), COALESCE(statement_id::text, ''), COALESCE(passage_id::text, ''),
 		       COALESCE(tree_relationship_id::text, ''), COALESCE(migration_event_id::text, ''), COALESCE(from_place_id::text, ''), COALESCE(to_place_id::text, ''), ordinal
 		FROM research_graph_edges
@@ -230,15 +230,17 @@ func runGraphEdges(ctx context.Context, executor historyExecutor, runID, pathID 
 	items := make([]GraphEdge, 0)
 	for rows.Next() {
 		var item GraphEdge
-		var id, referenceID pgtype.UUID
+		var id, referenceID, pathFromNodeID, pathToNodeID pgtype.UUID
 		var ordinal int32
-		if err := rows.Scan(&id, &referenceID, &item.Type, &item.FromNodeID, &item.ToNodeID, &item.Predicate, &item.Status, &item.Certainty, &item.SourceID, &item.ClaimID, &item.StatementID, &item.PassageID, &item.TreeRelationshipID, &item.MigrationEventID, &item.FromPlaceID, &item.ToPlaceID, &ordinal); err != nil {
+		if err := rows.Scan(&id, &referenceID, &item.Type, &item.FromNodeID, &item.ToNodeID, &pathFromNodeID, &pathToNodeID, &item.Predicate, &item.Status, &item.Certainty, &item.SourceID, &item.ClaimID, &item.StatementID, &item.PassageID, &item.TreeRelationshipID, &item.MigrationEventID, &item.FromPlaceID, &item.ToPlaceID, &ordinal); err != nil {
 			return nil, err
 		}
 		item.ID = uuidText(referenceID)
 		if item.ID == "" {
 			item.ID = uuidText(id)
 		}
+		item.PathFromNodeID = uuidText(pathFromNodeID)
+		item.PathToNodeID = uuidText(pathToNodeID)
 		item.Position = int(ordinal - 1)
 		items = append(items, item)
 	}

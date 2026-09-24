@@ -73,3 +73,40 @@ func TestGraphPersistenceAgainstDatabase(t *testing.T) {
 		t.Fatalf("unexpected graph run detail: %+v", detail)
 	}
 }
+
+func TestGraphPersistenceAllowsSharedEvidenceAcrossClaims(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	pool, err := db.NewPool(context.Background(), db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	defer pool.Close()
+	claimID := uuid.MustParse("69000000-0000-0000-0000-000000009001")
+	defer pool.Exec(context.Background(), `DELETE FROM claims WHERE id = $1`, claimID)
+	if _, err := pool.Exec(context.Background(), `INSERT INTO claims (id, subject_type, subject_id, predicate, object_type, object_id, status, created_by) VALUES ($1, 'person', '10000000-0000-0000-0000-000000000001', 'father_of', 'person', '10000000-0000-0000-0000-000000000002', 'supported', '00000000-0000-0000-0000-000000000001')`, claimID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO claim_evidence (claim_id, source_statement_id, relation, created_by) VALUES ($1, '50000000-0000-0000-0000-000000000001', 'supports', '00000000-0000-0000-0000-000000000001')`, claimID); err != nil {
+		t.Fatal(err)
+	}
+	input, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationBranchClaims, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Pool: pool}
+	result, err := service.retrieveGraph(context.Background(), input, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDText, _, err := service.startRun(context.Background(), input, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM research_runs WHERE id = $1`, runIDText)
+	if err := service.persistRun(context.Background(), runIDText, QueryResult{Answer: "إجابة", GraphPaths: result.Paths, GraphStats: result.Stats}); err != nil {
+		t.Fatal(err)
+	}
+}

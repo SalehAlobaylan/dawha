@@ -74,6 +74,9 @@ func normalizeGraphInput(input QueryInput) (QueryInput, error) {
 	if input.GraphMaxDepth > GraphMaxDepth {
 		input.GraphMaxDepth = GraphMaxDepth
 	}
+	if input.GraphOperation == GraphOperationSourceEntities {
+		input.GraphMaxDepth = 3
+	}
 	if input.GraphStartID == "" {
 		switch input.GraphOperation {
 		case GraphOperationSourceEntities:
@@ -221,7 +224,11 @@ func (s *Service) retrieveGraph(ctx context.Context, input QueryInput, actorID s
 	case GraphOperationSourceEntities:
 		rows, err = tx.Query(queryCtx, sourceEntitiesGraphQuery, input.GraphStartID, nullableUUID(actorUUID), GraphMaxPaths, GraphMaxEdges, input.GraphMaxDepth)
 	case GraphOperationGeographic:
-		rows, err = tx.Query(queryCtx, geographicGraphQuery, input.GraphStartID, input.GraphStartType, nullableUUID(optionalUUID(input.GraphEndID)), nullableUUID(actorUUID), input.FromYear, input.ToYear, GraphMaxPaths, GraphMaxEdges, input.GraphMaxDepth)
+		geographicQuery := geographicGraphQuery
+		if input.GraphStartType == "place" {
+			geographicQuery = geographicPlaceGraphQuery
+		}
+		rows, err = tx.Query(queryCtx, geographicQuery, input.GraphStartID, input.GraphStartType, nullableUUID(optionalUUID(input.GraphEndID)), nullableUUID(actorUUID), input.FromYear, input.ToYear, GraphMaxPaths, GraphMaxEdges, input.GraphMaxDepth)
 	default:
 		return graphRetrievalResult{}, ErrValidation
 	}
@@ -309,6 +316,9 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 	}
 	if status == "contested" {
 		return "مسار أدلة يتضمن ادعاءات متنافسة؛ لا يحسم الحقيقة التاريخية."
+	}
+	if status == "partial" {
+		return "مسار جزئي أو غير محسوم؛ اعرض حالته قبل الاعتماد عليه."
 	}
 	return "مسار قابل للتتبع إلى أدلة وادعاءات مقبولة؛ ضمن الأدلة ولا يمثل حقيقة نهائية."
 }
@@ -467,9 +477,9 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 			}
 			edgeID := uuid.New()
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO research_graph_edges (id, run_id, path_id, ordinal, edge_reference_id, edge_type, from_node_id, to_node_id, predicate, status, certainty, source_id, claim_id, statement_id, passage_id, tree_relationship_id, migration_event_id, from_place_id, to_place_id, metadata)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18, $19, $20)
-			`, edgeID, runID, pathID, edgeIndex+1, nullableUUID(optionalUUID(edge.ID)), edge.Type, fromNodeID, toNodeID, nullableString(edge.Predicate), nullableString(edge.Status), nullableString(edge.Certainty), nullableUUID(optionalUUID(edge.SourceID)), nullableUUID(optionalUUID(edge.ClaimID)), nullableUUID(optionalUUID(edge.StatementID)), nullableUUID(optionalUUID(edge.PassageID)), nullableUUID(optionalUUID(edge.TreeRelationshipID)), nullableUUID(optionalUUID(edge.MigrationEventID)), nullableUUID(optionalUUID(edge.FromPlaceID)), nullableUUID(optionalUUID(edge.ToPlaceID)), mustJSON(map[string]any{"position": edge.Position})); err != nil {
+				INSERT INTO research_graph_edges (id, run_id, path_id, ordinal, edge_reference_id, edge_type, from_node_id, to_node_id, path_from_node_id, path_to_node_id, predicate, status, certainty, source_id, claim_id, statement_id, passage_id, tree_relationship_id, migration_event_id, from_place_id, to_place_id, metadata)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			`, edgeID, runID, pathID, edgeIndex+1, nullableUUID(optionalUUID(edge.ID)), edge.Type, fromNodeID, toNodeID, nullableUUID(optionalUUID(edge.PathFromNodeID)), nullableUUID(optionalUUID(edge.PathToNodeID)), nullableString(edge.Predicate), nullableString(edge.Status), nullableString(edge.Certainty), nullableUUID(optionalUUID(edge.SourceID)), nullableUUID(optionalUUID(edge.ClaimID)), nullableUUID(optionalUUID(edge.StatementID)), nullableUUID(optionalUUID(edge.PassageID)), nullableUUID(optionalUUID(edge.TreeRelationshipID)), nullableUUID(optionalUUID(edge.MigrationEventID)), nullableUUID(optionalUUID(edge.FromPlaceID)), nullableUUID(optionalUUID(edge.ToPlaceID)), mustJSON(map[string]any{"position": edge.Position})); err != nil {
 				return err
 			}
 		}
@@ -484,6 +494,7 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO research_graph_path_evidence (run_id, path_id, ordinal, reference_id, reference_type, relation, source_id, claim_id, statement_id, passage_id, review_status, status, certainty, title_ar, excerpt_ar, locator_ar, page_number, metadata)
 				VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17, $18)
+				ON CONFLICT DO NOTHING
 			`, runID, pathID, evidenceIndex+1, referenceID, evidence.Type, nullableString(evidence.Relation), nullableUUID(optionalUUID(evidence.SourceID)), nullableUUID(optionalUUID(evidence.ClaimID)), nullableUUID(optionalUUID(evidence.StatementID)), nullableUUID(optionalUUID(evidence.PassageID)), nullableString(evidence.ReviewStatus), nullableString(evidence.Status), nullableString(evidence.Certainty), nullableString(boundedText(evidence.Title, 1000)), nullableString(boundedText(evidence.Excerpt, 4000)), nullableString(boundedText(evidence.LocatorAR, 1000)), pageNumberValue(evidence.PageNumber), mustJSON(map[string]any{"layer": evidence.Layer})); err != nil {
 				return err
 			}
@@ -514,12 +525,55 @@ func boundedText(value string, limit int) string {
 	return string(runes[:limit])
 }
 
-func graphEvidenceCount(paths []GraphPath) int {
-	count := 0
-	for _, path := range paths {
-		count += len(path.EvidenceRefs)
+func graphPassageCitations(paths []GraphPath, existing []Citation) []Citation {
+	seen := make(map[string]struct{}, len(existing)*2)
+	for _, citation := range existing {
+		if citation.PassageID != "" {
+			seen["passage:"+citation.PassageID] = struct{}{}
+		}
+		if citation.StatementID != "" {
+			seen["statement:"+citation.StatementID] = struct{}{}
+		}
 	}
-	return count
+	items := make([]Citation, 0)
+	for _, path := range paths {
+		for _, evidence := range path.EvidenceRefs {
+			if evidence.SourceID == "" || (evidence.PassageID == "" && evidence.StatementID == "") {
+				continue
+			}
+			keys := make([]string, 0, 2)
+			if evidence.PassageID != "" {
+				keys = append(keys, "passage:"+evidence.PassageID)
+			}
+			if evidence.StatementID != "" {
+				keys = append(keys, "statement:"+evidence.StatementID)
+			}
+			duplicate := false
+			for _, key := range keys {
+				if _, exists := seen[key]; exists {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
+			citationType := "source_passage"
+			citationID := evidence.ID
+			if evidence.StatementID != "" {
+				citationType = "source_statement"
+				citationID = evidence.StatementID
+			}
+			items = append(items, Citation{Layer: SourceStatement, Type: citationType, ID: citationID, SourceID: evidence.SourceID, PassageID: evidence.PassageID, StatementID: evidence.StatementID, Title: boundedText(evidence.Title, 1000), Excerpt: boundedText(evidence.Excerpt, 4000), LocatorAR: boundedText(evidence.LocatorAR, 1000), PageNumber: evidence.PageNumber, ReviewStatus: evidence.ReviewStatus, Status: evidence.Status, Score: Score{Combined: 0.5, Rerank: 0.5}})
+			for _, key := range keys {
+				seen[key] = struct{}{}
+			}
+		}
+	}
+	for index := range items {
+		items[index].Rank = len(existing) + index + 1
+	}
+	return items
 }
 
 func graphStatsForPaths(operation string, maxDepth int, paths []GraphPath) GraphStats {
@@ -603,7 +657,7 @@ visible_versions AS (
   WHERE tv.state = 'published'
     AND (p.tree_id IS NULL OR t.id = p.tree_id)
     AND (p.tree_version_id IS NULL OR tv.id = p.tree_version_id)
-    AND (t.visibility = 'public' OR (p.actor_id IS NOT NULL AND (t.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = p.actor_id) OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
+    AND (t.visibility = 'public' OR (p.actor_id IS NOT NULL AND (t.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = p.actor_id))))
 ),
 start_nodes AS (
   SELECT v.tree_version_id, v.tree_id, v.version_number, v.state, v.name_ar, tn.id AS node_id, tn.person_id, tn.display_name_ar
@@ -620,18 +674,21 @@ end_nodes AS (
   WHERE tn.person_id = p.end_person_id
 ),
 start_walk (
-  tree_version_id, tree_id, version_number, version_state, tree_name, node_id, person_id, display_name_ar, depth, node_ids, visited_ids, edge_ids
+  tree_version_id, tree_id, version_number, version_state, tree_name, node_id, person_id, display_name_ar, depth, node_ids, visited_ids, edge_ids, saturated
 ) AS (
-  SELECT tree_version_id, tree_id, version_number, state, name_ar, node_id, person_id, display_name_ar, 0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], ARRAY[]::uuid[]
+  SELECT tree_version_id, tree_id, version_number, state, name_ar, node_id, person_id, display_name_ar, 0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], ARRAY[]::uuid[], false
   FROM start_nodes
   UNION ALL
-  SELECT next_walk.tree_version_id, next_walk.tree_id, next_walk.version_number, next_walk.version_state, next_walk.tree_name, next_walk.next_node_id, next_walk.person_id, next_walk.display_name_ar, next_walk.next_depth, next_walk.next_node_ids, next_walk.next_visited_ids, next_walk.next_edge_ids
+  SELECT next_walk.tree_version_id, next_walk.tree_id, next_walk.version_number, next_walk.version_state, next_walk.tree_name, next_walk.next_node_id, next_walk.person_id, next_walk.display_name_ar, next_walk.next_depth, next_walk.next_node_ids, next_walk.next_visited_ids, next_walk.next_edge_ids, next_walk.next_saturated
   FROM (
     SELECT sw.tree_version_id, sw.tree_id, sw.version_number, sw.version_state, sw.tree_name,
       tr.subject_node_id AS next_node_id, tn.person_id, tn.display_name_ar,
       sw.depth + 1 AS next_depth, sw.node_ids || tr.subject_node_id AS next_node_ids,
-      sw.visited_ids || tr.subject_node_id AS next_visited_ids, sw.edge_ids || tr.id AS next_edge_ids
-    FROM start_walk sw
+       sw.visited_ids || tr.subject_node_id AS next_visited_ids, sw.edge_ids || tr.id AS next_edge_ids,
+       (sw.saturated OR count(*) OVER () > 200) AS next_saturated,
+       row_number() OVER (ORDER BY sw.tree_version_id, sw.node_ids, tr.id) AS expansion_rank
+     FROM start_walk sw
+
      JOIN tree_relationships tr ON tr.tree_version_id = sw.tree_version_id AND tr.object_node_id = sw.node_id AND tr.predicate = 'parent_of'
      JOIN tree_nodes tn ON tn.id = tr.subject_node_id AND tn.tree_version_id = tr.tree_version_id
      LEFT JOIN sources edge_source ON edge_source.id = tr.source_id
@@ -639,23 +696,26 @@ start_walk (
      WHERE sw.depth < p.max_depth AND NOT tr.subject_node_id = ANY(sw.visited_ids)
        AND (edge_source.id IS NULL OR edge_source.visibility = 'public' OR (p.actor_id IS NOT NULL AND (edge_source.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR EXISTS (SELECT 1 FROM trees tree_owner WHERE tree_owner.id = sw.tree_id AND tree_owner.owner_id = p.actor_id) OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = sw.tree_id AND tc.user_id = p.actor_id))))
 
-    ORDER BY sw.tree_version_id, sw.node_ids, tr.id
-    LIMIT 200
-  ) next_walk
+   ) next_walk
+   WHERE next_walk.expansion_rank <= 200
+
 ),
 end_walk (
-  tree_version_id, tree_id, version_number, version_state, tree_name, node_id, person_id, display_name_ar, depth, node_ids, visited_ids, edge_ids
+  tree_version_id, tree_id, version_number, version_state, tree_name, node_id, person_id, display_name_ar, depth, node_ids, visited_ids, edge_ids, saturated
 ) AS (
-  SELECT tree_version_id, tree_id, version_number, state, name_ar, node_id, person_id, display_name_ar, 0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], ARRAY[]::uuid[]
+  SELECT tree_version_id, tree_id, version_number, state, name_ar, node_id, person_id, display_name_ar, 0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], ARRAY[]::uuid[], false
   FROM end_nodes
   UNION ALL
-  SELECT next_walk.tree_version_id, next_walk.tree_id, next_walk.version_number, next_walk.version_state, next_walk.tree_name, next_walk.next_node_id, next_walk.person_id, next_walk.display_name_ar, next_walk.next_depth, next_walk.next_node_ids, next_walk.next_visited_ids, next_walk.next_edge_ids
+  SELECT next_walk.tree_version_id, next_walk.tree_id, next_walk.version_number, next_walk.version_state, next_walk.tree_name, next_walk.next_node_id, next_walk.person_id, next_walk.display_name_ar, next_walk.next_depth, next_walk.next_node_ids, next_walk.next_visited_ids, next_walk.next_edge_ids, next_walk.next_saturated
   FROM (
     SELECT ew.tree_version_id, ew.tree_id, ew.version_number, ew.version_state, ew.tree_name,
       tr.subject_node_id AS next_node_id, tn.person_id, tn.display_name_ar,
       ew.depth + 1 AS next_depth, ew.node_ids || tr.subject_node_id AS next_node_ids,
-      ew.visited_ids || tr.subject_node_id AS next_visited_ids, ew.edge_ids || tr.id AS next_edge_ids
-    FROM end_walk ew
+       ew.visited_ids || tr.subject_node_id AS next_visited_ids, ew.edge_ids || tr.id AS next_edge_ids,
+       (ew.saturated OR count(*) OVER () > 200) AS next_saturated,
+       row_number() OVER (ORDER BY ew.tree_version_id, ew.node_ids, tr.id) AS expansion_rank
+     FROM end_walk ew
+
      JOIN tree_relationships tr ON tr.tree_version_id = ew.tree_version_id AND tr.object_node_id = ew.node_id AND tr.predicate = 'parent_of'
      JOIN tree_nodes tn ON tn.id = tr.subject_node_id AND tn.tree_version_id = tr.tree_version_id
      LEFT JOIN sources edge_source ON edge_source.id = tr.source_id
@@ -663,9 +723,9 @@ end_walk (
      WHERE ew.depth < p.max_depth AND NOT tr.subject_node_id = ANY(ew.visited_ids)
        AND (edge_source.id IS NULL OR edge_source.visibility = 'public' OR (p.actor_id IS NOT NULL AND (edge_source.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR EXISTS (SELECT 1 FROM trees tree_owner WHERE tree_owner.id = ew.tree_id AND tree_owner.owner_id = p.actor_id) OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = ew.tree_id AND tc.user_id = p.actor_id))))
 
-    ORDER BY ew.tree_version_id, ew.node_ids, tr.id
-    LIMIT 200
-  ) next_walk
+   ) next_walk
+   WHERE next_walk.expansion_rank <= 200
+
 ),
 reversed_end AS (
   SELECT ew.*, (SELECT array_agg(ordered.node_id ORDER BY ordered.ordinality DESC) FROM unnest(ew.node_ids) WITH ORDINALITY AS ordered(node_id, ordinality)) AS reversed_node_ids
@@ -676,8 +736,10 @@ common_paths AS (
     sw.tree_version_id, sw.tree_id, sw.version_number, sw.version_state, sw.tree_name,
     sw.node_id AS common_node_id, sw.node_ids AS start_node_ids, ew.reversed_node_ids AS end_node_ids,
     sw.node_ids || COALESCE(ew.reversed_node_ids[2:cardinality(ew.reversed_node_ids)], ARRAY[]::uuid[]) AS node_ids,
-    sw.depth + ew.depth AS path_depth,
-    sw.node_ids[1] AS start_node_id,
+     sw.depth + ew.depth AS path_depth,
+     sw.saturated OR ew.saturated AS saturated,
+     sw.node_ids[1] AS start_node_id,
+
     ew.node_ids[1] AS end_node_id
   FROM start_walk sw
   JOIN reversed_end ew ON ew.tree_version_id = sw.tree_version_id AND ew.node_id = sw.node_id
@@ -694,8 +756,9 @@ limited_paths AS (
   SELECT * FROM ranked_paths WHERE path_order <= $7
 ),
 path_edges AS (
-  SELECT lp.path_order, n.node_order, tr.id AS edge_id, n.node_id AS from_node_id,
-    (SELECT n2.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n2(node_id, ordinality) WHERE n2.ordinality = n.node_order + 1) AS to_node_id,
+  SELECT lp.path_order, n.node_order, tr.id AS edge_id, tr.subject_node_id AS from_node_id, tr.object_node_id AS to_node_id,
+    n.node_id AS path_from_node_id,
+    (SELECT n2.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n2(node_id, ordinality) WHERE n2.ordinality = n.node_order + 1) AS path_to_node_id,
      tr.predicate, tr.status, tr.source_id,
      CASE WHEN tr.source_id IS NULL OR tr.visibility = 'public' OR ($3::uuid IS NOT NULL AND (tr.created_by = $3 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $3 AND ur.role IN ('researcher', 'moderator', 'admin')) OR EXISTS (SELECT 1 FROM trees tree_owner WHERE tree_owner.id = lp.tree_id AND tree_owner.owner_id = $3) OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = lp.tree_id AND tc.user_id = $3))) THEN tr.source_id::text ELSE NULL END AS visible_source_id,
      CASE WHEN tr.source_id IS NULL OR tr.visibility = 'public' OR ($3::uuid IS NOT NULL AND (tr.created_by = $3 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $3 AND ur.role IN ('researcher', 'moderator', 'admin')) OR EXISTS (SELECT 1 FROM trees tree_owner WHERE tree_owner.id = lp.tree_id AND tree_owner.owner_id = $3) OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = lp.tree_id AND tc.user_id = $3))) THEN tr.source_title ELSE NULL END AS visible_source_title
@@ -725,7 +788,10 @@ path_nodes AS (
   GROUP BY lp.path_order
 ),
 path_edges_json AS (
-  SELECT path_order, jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'parent_of', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'predicate', predicate, 'status', status, 'sourceId', visible_source_id, 'treeRelationshipId', edge_id::text, 'position', node_order - 1) ORDER BY node_order) AS edges
+  SELECT path_order,
+    jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'parent_of', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'pathFromNodeId', path_from_node_id::text, 'pathToNodeId', path_to_node_id::text, 'predicate', predicate, 'status', status, 'sourceId', visible_source_id, 'treeRelationshipId', edge_id::text, 'position', node_order - 1) ORDER BY node_order) AS edges,
+    bool_or(status IN ('disputed', 'contested', 'contradicted')) AS contested,
+    bool_or(status = 'unresolved') AS partial
   FROM path_edges
   WHERE edge_id IS NOT NULL
   GROUP BY path_order
@@ -736,10 +802,10 @@ path_evidence AS (
   WHERE edge_id IS NOT NULL AND visible_source_id IS NOT NULL
   GROUP BY path_order
 )
-SELECT 'common_ancestor_path', CASE WHEN jsonb_array_length(COALESCE(pev.refs, '[]'::jsonb)) > 0 THEN 'evidence_backed' ELSE 'structural' END, lp.version_number::integer,
+SELECT 'common_ancestor_path', CASE WHEN COALESCE(pe.contested, false) THEN 'contested' WHEN COALESCE(pe.partial, false) THEN 'partial' WHEN jsonb_array_length(COALESCE(pev.refs, '[]'::jsonb)) > 0 THEN 'evidence_backed' ELSE 'structural' END, lp.version_number::integer,
   lp.tree_id::text, lp.tree_version_id::text, lp.version_state,
   lp.path_depth::integer,
-  (lp.candidate_count > $7 OR lp.path_depth >= $6),
+  (lp.candidate_count > $7 OR lp.path_depth >= $6 OR lp.saturated),
   jsonb_array_length(COALESCE(pev.refs, '[]'::jsonb)) > 0, jsonb_array_length(COALESCE(pev.refs, '[]'::jsonb)) = 0,
   pn.nodes, COALESCE(pe.edges, '[]'::jsonb), COALESCE(pev.refs, '[]'::jsonb)
 FROM limited_paths lp
@@ -755,28 +821,30 @@ parameters AS (
   SELECT $1::uuid AS start_id, $2::uuid AS end_id, $3::text AS endpoint_type, $4::uuid AS actor_id, $5::integer AS max_depth, $6::integer AS max_paths, $7::integer AS max_edges
 ),
 visible_support AS (
-  SELECT ce.claim_id, ss.id AS reference_id, ce.relation, ss.id AS statement_id, sp.id AS passage_id,
+  SELECT ce.claim_id, COALESCE(ss.id, ce.id) AS reference_id, ce.relation, ss.id AS statement_id, sp.id AS passage_id,
     COALESCE(ss.source_id, sp.source_id) AS source_id, s.title_ar,
     COALESCE(ss.statement_text_ar, sp.text_ar, '') AS excerpt,
-    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, ss.review_status
+    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, COALESCE(ss.review_status, 'unreviewed') AS review_status
   FROM claim_evidence ce
-  JOIN source_statements ss ON ss.id = ce.source_statement_id AND ss.review_status = 'accepted'
+  LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id AND ss.review_status = 'accepted'
   LEFT JOIN source_passages sp ON sp.id = COALESCE(ce.source_passage_id, ss.source_passage_id)
   JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
   CROSS JOIN parameters p
-  WHERE s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin'))))
+  WHERE (ss.id IS NOT NULL OR sp.id IS NOT NULL)
+    AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
 ),
 visible_counter AS (
-  SELECT cce.claim_id, ss.id AS reference_id, 'counter_evidence'::text AS relation, ss.id AS statement_id, sp.id AS passage_id,
+  SELECT cce.claim_id, COALESCE(ss.id, cce.id) AS reference_id, 'counter_evidence'::text AS relation, ss.id AS statement_id, sp.id AS passage_id,
     COALESCE(ss.source_id, sp.source_id) AS source_id, s.title_ar,
     COALESCE(ss.statement_text_ar, sp.text_ar, '') AS excerpt,
-    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, ss.review_status
+    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, COALESCE(ss.review_status, 'unreviewed') AS review_status
   FROM claim_counter_evidence cce
-  JOIN source_statements ss ON ss.id = cce.source_statement_id AND ss.review_status = 'accepted'
+  LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id AND ss.review_status = 'accepted'
   LEFT JOIN source_passages sp ON sp.id = COALESCE(cce.source_passage_id, ss.source_passage_id)
   JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
   CROSS JOIN parameters p
-  WHERE s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin'))))
+  WHERE (ss.id IS NOT NULL OR sp.id IS NOT NULL)
+    AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
 ),
 visible_evidence AS (
   SELECT * FROM visible_support
@@ -816,37 +884,39 @@ oriented_start AS (
   WHERE c.subject_id = p.start_id OR c.object_id = p.start_id
 ),
 walk (
-  claim_id, to_id, predicate, status, notes_ar, depth, node_ids, visited_ids, claim_ids
+  claim_id, to_id, predicate, status, notes_ar, depth, node_ids, visited_ids, claim_ids, saturated
 ) AS (
   SELECT seed.id, seed.to_id, seed.predicate, seed.status, seed.notes_ar, 1,
-    ARRAY[p.start_id, seed.to_id]::uuid[], ARRAY[p.start_id, seed.to_id]::uuid[], ARRAY[seed.id]::uuid[]
+    ARRAY[p.start_id, seed.to_id]::uuid[], ARRAY[p.start_id, seed.to_id]::uuid[], ARRAY[seed.id]::uuid[], seed.saturated
   FROM (
-    SELECT oc.id, oc.to_id, oc.predicate, oc.status, oc.notes_ar
+    SELECT oc.id, oc.to_id, oc.predicate, oc.status, oc.notes_ar,
+      (count(*) OVER () > $7) AS saturated,
+      row_number() OVER (ORDER BY oc.id) AS expansion_rank
     FROM oriented_start oc
     CROSS JOIN parameters p
     WHERE oc.to_id <> p.start_id
-    ORDER BY oc.id
-    LIMIT $7
   ) seed
   CROSS JOIN parameters p
+  WHERE seed.expansion_rank <= $7
   UNION ALL
   SELECT next_step.id, next_step.next_id, next_step.predicate, next_step.status, next_step.notes_ar, next_step.depth + 1,
-    next_step.node_ids || next_step.next_id, next_step.visited_ids || next_step.next_id, next_step.claim_ids || next_step.id
+    next_step.node_ids || next_step.next_id, next_step.visited_ids || next_step.next_id, next_step.claim_ids || next_step.id, next_step.saturated
   FROM (
     SELECT c.id, n.next_id, c.predicate, c.status, c.notes_ar, w.depth,
-      w.node_ids, w.visited_ids, w.claim_ids
+      w.node_ids, w.visited_ids, w.claim_ids,
+      (w.saturated OR count(*) OVER () > $7) AS saturated,
+      row_number() OVER (ORDER BY c.id) AS expansion_rank
     FROM walk w
     JOIN eligible_claims c ON c.subject_id = w.to_id OR c.object_id = w.to_id
     CROSS JOIN parameters p
     CROSS JOIN LATERAL (SELECT CASE WHEN c.subject_id = w.to_id THEN c.object_id ELSE c.subject_id END AS next_id) n
     WHERE w.depth < p.max_depth AND c.subject_id <> c.object_id AND c.id <> ALL(w.claim_ids)
       AND n.next_id <> ALL(w.visited_ids)
-    ORDER BY c.id
-    LIMIT $7
   ) next_step
+  WHERE next_step.expansion_rank <= $7
 ),
 candidate_paths AS (
-  SELECT DISTINCT ON (claim_ids) claim_id, to_id, predicate, status, notes_ar, depth, node_ids, visited_ids, claim_ids
+  SELECT DISTINCT ON (claim_ids) claim_id, to_id, predicate, status, notes_ar, depth, node_ids, visited_ids, claim_ids, saturated
   FROM walk
   WHERE to_id = $2
   ORDER BY claim_ids, depth
@@ -867,8 +937,9 @@ path_nodes AS (
   GROUP BY lp.path_order
 ),
 path_edges AS (
-  SELECT lp.path_order, c.id AS edge_id, c.predicate, c.status, c.notes_ar, c.subject_type, c.subject_id, c.object_type, c.object_id, n2.node_id AS from_node_id,
-    (SELECT n2.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n2(node_id, node_order) WHERE n2.node_order = n.node_order + 1) AS to_node_id,
+  SELECT lp.path_order, c.id AS edge_id, c.predicate, c.status, c.notes_ar, c.subject_type, c.subject_id, c.object_type, c.object_id, c.subject_id AS from_node_id, c.object_id AS to_node_id,
+    n2.node_id AS path_from_node_id,
+    (SELECT n2.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n2(node_id, node_order) WHERE n2.node_order = n.node_order + 1) AS path_to_node_id,
     n.node_order - 1 AS position
   FROM limited_paths lp
   CROSS JOIN LATERAL unnest(lp.claim_ids) WITH ORDINALITY AS n(claim_id, node_order)
@@ -877,7 +948,7 @@ path_edges AS (
   WHERE n2.node_order = n.node_order
 ),
 path_edges_json AS (
-  SELECT path_order, jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'claim', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'predicate', predicate, 'status', status, 'claimId', edge_id::text, 'position', position) ORDER BY position) AS edges,
+  SELECT path_order, jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'claim', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'pathFromNodeId', path_from_node_id::text, 'pathToNodeId', path_to_node_id::text, 'predicate', predicate, 'status', status, 'claimId', edge_id::text, 'position', position) ORDER BY position) AS edges,
     bool_or(status IN ('contested', 'disputed', 'contradicted')) AS contested,
     bool_or(status IN ('inferred', 'platform_generated')) AS partial
   FROM path_edges
@@ -896,7 +967,7 @@ SELECT 'evidence_connection',
   0::integer,
   NULL::text, NULL::text, NULL::text,
   lp.depth::integer,
-  (lp.candidate_count > $6 OR lp.depth >= $5),
+  (lp.candidate_count > $6 OR lp.depth >= $5 OR lp.saturated),
   true, false,
   pn.nodes, COALESCE(pe.edges, '[]'::jsonb), COALESCE(pr.refs, '[]'::jsonb)
 FROM limited_paths lp
@@ -912,28 +983,30 @@ parameters AS (
   SELECT $1::uuid AS start_id, $2::text AS entity_type, $3::uuid AS actor_id, $4::integer AS max_edges
 ),
 visible_support AS (
-  SELECT ce.claim_id, ss.id AS reference_id, ce.relation, ss.id AS statement_id, sp.id AS passage_id,
+  SELECT ce.claim_id, COALESCE(ss.id, ce.id) AS reference_id, ce.relation, ss.id AS statement_id, sp.id AS passage_id,
     COALESCE(ss.source_id, sp.source_id) AS source_id, s.title_ar,
     COALESCE(ss.statement_text_ar, sp.text_ar, '') AS excerpt,
-    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, ss.review_status
+    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, COALESCE(ss.review_status, 'unreviewed') AS review_status
   FROM claim_evidence ce
-  JOIN source_statements ss ON ss.id = ce.source_statement_id AND ss.review_status = 'accepted'
+  LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id AND ss.review_status = 'accepted'
   LEFT JOIN source_passages sp ON sp.id = COALESCE(ce.source_passage_id, ss.source_passage_id)
   JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
   CROSS JOIN parameters p
-  WHERE s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin'))))
+  WHERE (ss.id IS NOT NULL OR sp.id IS NOT NULL)
+    AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
 ),
 visible_counter AS (
-  SELECT cce.claim_id, ss.id AS reference_id, 'counter_evidence'::text AS relation, ss.id AS statement_id, sp.id AS passage_id,
+  SELECT cce.claim_id, COALESCE(ss.id, cce.id) AS reference_id, 'counter_evidence'::text AS relation, ss.id AS statement_id, sp.id AS passage_id,
     COALESCE(ss.source_id, sp.source_id) AS source_id, s.title_ar,
     COALESCE(ss.statement_text_ar, sp.text_ar, '') AS excerpt,
-    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, ss.review_status
+    COALESCE(ss.locator_ar, sp.locator_ar) AS locator_ar, sp.page_number, COALESCE(ss.review_status, 'unreviewed') AS review_status
   FROM claim_counter_evidence cce
-  JOIN source_statements ss ON ss.id = cce.source_statement_id AND ss.review_status = 'accepted'
+  LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id AND ss.review_status = 'accepted'
   LEFT JOIN source_passages sp ON sp.id = COALESCE(cce.source_passage_id, ss.source_passage_id)
   JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
   CROSS JOIN parameters p
-  WHERE s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin'))))
+  WHERE (ss.id IS NOT NULL OR sp.id IS NOT NULL)
+    AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
 ),
 visible_evidence AS (
   SELECT * FROM visible_support
@@ -984,8 +1057,9 @@ path_nodes AS (
 ),
 path_edges AS (
   SELECT c.id AS edge_id, c.predicate, c.status, c.subject_type, c.subject_id, c.object_type, c.object_id,
-    p.start_id AS from_node_id,
-    CASE WHEN c.subject_type = p.entity_type AND c.subject_id = p.start_id THEN c.object_id ELSE c.subject_id END AS to_node_id,
+    c.subject_id AS from_node_id, c.object_id AS to_node_id,
+    p.start_id AS path_from_node_id,
+    CASE WHEN c.subject_type = p.entity_type AND c.subject_id = p.start_id THEN c.object_id ELSE c.subject_id END AS path_to_node_id,
     row_number() OVER (ORDER BY c.id) - 1 AS position
   FROM limited_claims c
   CROSS JOIN parameters p
@@ -1007,7 +1081,7 @@ SELECT 'branch_claims',
   (SELECT count(*) FROM eligible_claims) > $4,
   true, false,
   (SELECT nodes FROM path_nodes),
-  COALESCE((SELECT jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'claim', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'predicate', predicate, 'status', status, 'claimId', edge_id::text, 'position', position) ORDER BY position) FROM path_edges), '[]'::jsonb),
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'claim', 'fromNodeId', from_node_id::text, 'toNodeId', to_node_id::text, 'pathFromNodeId', path_from_node_id::text, 'pathToNodeId', path_to_node_id::text, 'predicate', predicate, 'status', status, 'claimId', edge_id::text, 'position', position) ORDER BY position) FROM path_edges), '[]'::jsonb),
   COALESCE((SELECT refs FROM path_refs), '[]'::jsonb)
 FROM limited_claims c
 LIMIT 1
@@ -1018,41 +1092,50 @@ WITH
 parameters AS (
   SELECT $1::uuid AS source_id, $2::uuid AS actor_id, $3::integer AS max_paths, $4::integer AS max_edges, $5::integer AS max_depth
 ),
-visible_statements AS (
-  SELECT ss.id AS statement_id, ss.source_id, ss.source_passage_id, ss.statement_text_ar, ss.locator_ar,
-    s.id AS source_record_id, s.title_ar
+visible_source_evidence AS (
+  SELECT ss.id AS evidence_id, ss.id AS statement_id, ss.source_id, ss.source_passage_id,
+    ss.statement_text_ar AS excerpt, ss.locator_ar, s.id AS source_record_id, s.title_ar
   FROM source_statements ss
   JOIN sources s ON s.id = ss.source_id
   CROSS JOIN parameters p
   WHERE ss.source_id = p.source_id AND ss.review_status = 'accepted'
     AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
-  ORDER BY ss.id
+  UNION ALL
+  SELECT ce.id, NULL::uuid, sp.source_id, sp.id,
+    sp.text_ar, sp.locator_ar, s.id, s.title_ar
+  FROM claim_evidence ce
+  JOIN source_passages sp ON sp.id = ce.source_passage_id
+  JOIN sources s ON s.id = sp.source_id
+  CROSS JOIN parameters p
+  WHERE ce.source_statement_id IS NULL AND sp.source_id = p.source_id
+    AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))
+  ORDER BY evidence_id
   LIMIT $4
 ),
 claim_links AS (
-  SELECT DISTINCT ON (c.id, vs.statement_id, side.side)
+  SELECT DISTINCT ON (c.id, vs.evidence_id, side.side)
     c.id AS claim_id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, c.notes_ar,
-    vs.statement_id, vs.source_record_id, vs.source_record_id AS source_id, vs.title_ar, vs.statement_text_ar, vs.locator_ar,
+    vs.evidence_id, vs.statement_id, vs.source_record_id, vs.source_record_id AS source_id, vs.source_passage_id, vs.title_ar, vs.excerpt, vs.locator_ar,
+    COALESCE(vs.statement_id, vs.source_passage_id) AS evidence_node_id,
     side.side AS entity_side, side.entity_type, side.entity_id
-  FROM visible_statements vs
+  FROM visible_source_evidence vs
   JOIN claim_evidence ce ON ce.source_statement_id = vs.statement_id OR ce.source_passage_id = vs.source_passage_id
   JOIN claims c ON c.id = ce.claim_id
   CROSS JOIN LATERAL (VALUES ('subject', c.subject_type, c.subject_id), ('object', c.object_type, c.object_id)) AS side(side, entity_type, entity_id)
   WHERE c.status NOT IN ('rejected', 'superseded', 'unknown', 'unresolved')
-  ORDER BY c.id, vs.statement_id, side.side
+  ORDER BY c.id, vs.evidence_id, side.side
 ),
 ranked_source_evidence AS (
-  SELECT c.id AS claim_id, ss.statement_id, ss.source_id, ss.source_passage_id, ce.relation, s.title_ar, ss.statement_text_ar, ss.locator_ar,
-    row_number() OVER (PARTITION BY c.id ORDER BY ce.relation, ss.statement_id) AS evidence_rank
-  FROM visible_statements ss
-  JOIN claim_evidence ce ON ce.source_statement_id = ss.statement_id OR ce.source_passage_id = ss.source_passage_id
+  SELECT c.id AS claim_id, vs.evidence_id, vs.statement_id, vs.source_id, vs.source_passage_id, ce.relation, vs.title_ar, vs.excerpt, vs.locator_ar,
+    row_number() OVER (PARTITION BY c.id ORDER BY ce.relation, vs.evidence_id) AS evidence_rank
+  FROM visible_source_evidence vs
+  JOIN claim_evidence ce ON ce.source_statement_id = vs.statement_id OR ce.source_passage_id = vs.source_passage_id
   JOIN claims c ON c.id = ce.claim_id
-  JOIN sources s ON s.id = ss.source_id
   WHERE c.id IN (SELECT claim_id FROM claim_links)
 ),
 claim_refs AS (
   SELECT claim_id,
-    jsonb_agg(jsonb_build_object('id', statement_id::text, 'type', 'source_statement', 'layer', 'source_statement', 'relation', relation, 'sourceId', source_id::text, 'claimId', claim_id::text, 'statementId', statement_id::text, 'passageId', source_passage_id::text, 'reviewStatus', 'accepted', 'title', title_ar, 'excerpt', statement_text_ar, 'locatorAr', locator_ar) ORDER BY relation, statement_id) AS refs
+    jsonb_agg(jsonb_build_object('id', evidence_id::text, 'type', CASE WHEN statement_id IS NOT NULL THEN 'source_statement' ELSE 'source_passage' END, 'layer', CASE WHEN statement_id IS NOT NULL THEN 'source_statement' ELSE 'source_passage' END, 'relation', relation, 'sourceId', source_id::text, 'claimId', claim_id::text, 'statementId', statement_id::text, 'passageId', source_passage_id::text, 'reviewStatus', CASE WHEN statement_id IS NOT NULL THEN 'accepted' ELSE 'unreviewed' END, 'title', title_ar, 'excerpt', excerpt, 'locatorAr', locator_ar) ORDER BY relation, evidence_id) AS refs
   FROM ranked_source_evidence
   WHERE evidence_rank <= 50
   GROUP BY claim_id
@@ -1065,7 +1148,7 @@ entity_labels AS (
   UNION ALL SELECT 'place', id, canonical_name_ar FROM places
 ),
 ranked_links AS (
-  SELECT cl.*, row_number() OVER (ORDER BY cl.claim_id, cl.statement_id, cl.entity_side) AS path_order,
+  SELECT cl.*, row_number() OVER (ORDER BY cl.claim_id, cl.evidence_id, cl.entity_side) AS path_order,
     count(*) OVER () AS candidate_count
   FROM claim_links cl
   WHERE cl.entity_id IS NOT NULL
@@ -1076,7 +1159,7 @@ limited_links AS (
 path_nodes AS (
   SELECT p.path_order, jsonb_build_array(
     jsonb_build_object('id', p.source_id::text, 'type', 'source', 'label', p.title_ar, 'position', 0),
-    jsonb_build_object('id', p.statement_id::text, 'type', 'source_statement', 'label', p.statement_text_ar, 'position', 1),
+    jsonb_build_object('id', p.evidence_node_id::text, 'type', CASE WHEN p.statement_id IS NULL THEN 'source_passage' ELSE 'source_statement' END, 'label', p.excerpt, 'position', 1),
     jsonb_build_object('id', p.claim_id::text, 'type', 'claim', 'label', p.predicate, 'position', 2),
     jsonb_build_object('id', p.entity_id::text, 'type', p.entity_type, 'label', COALESCE(el.label, ''), 'position', 3)
   ) AS nodes
@@ -1085,15 +1168,15 @@ path_nodes AS (
 ),
 path_edges AS (
   SELECT p.path_order, jsonb_build_array(
-      jsonb_build_object('id', p.statement_id::text, 'type', 'contains_statement', 'fromNodeId', p.source_record_id::text, 'toNodeId', p.statement_id::text, 'sourceId', p.source_id::text, 'statementId', p.statement_id::text, 'position', 0),
-      jsonb_build_object('id', p.claim_id::text, 'type', 'supports_claim', 'fromNodeId', p.statement_id::text, 'toNodeId', p.claim_id::text, 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'statementId', p.statement_id::text, 'status', p.status, 'position', 1),
-      jsonb_build_object('id', p.claim_id::text, 'type', 'claim_entity', 'fromNodeId', p.claim_id::text, 'toNodeId', p.entity_id::text, 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'status', p.status, 'position', 2)
+      jsonb_build_object('id', p.evidence_node_id::text, 'type', 'contains_source', 'fromNodeId', p.source_record_id::text, 'toNodeId', p.evidence_node_id::text, 'pathFromNodeId', p.source_record_id::text, 'pathToNodeId', p.evidence_node_id::text, 'sourceId', p.source_id::text, 'statementId', p.statement_id::text, 'passageId', p.source_passage_id::text, 'position', 0),
+      jsonb_build_object('id', p.claim_id::text, 'type', 'supports_claim', 'fromNodeId', p.evidence_node_id::text, 'toNodeId', p.claim_id::text, 'pathFromNodeId', p.evidence_node_id::text, 'pathToNodeId', p.claim_id::text, 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'statementId', p.statement_id::text, 'passageId', p.source_passage_id::text, 'status', p.status, 'position', 1),
+      jsonb_build_object('id', p.claim_id::text, 'type', 'claim_entity', 'fromNodeId', p.claim_id::text, 'toNodeId', p.entity_id::text, 'pathFromNodeId', p.claim_id::text, 'pathToNodeId', p.entity_id::text, 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'status', p.status, 'position', 2)
     ) AS edges
   FROM limited_links p
 ),
 path_refs AS (
   SELECT p.path_order, COALESCE(cr.refs, jsonb_build_array(
-    jsonb_build_object('id', p.statement_id::text, 'type', 'source_statement', 'layer', 'source_statement', 'relation', 'supports', 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'statementId', p.statement_id::text, 'title', p.title_ar, 'excerpt', p.statement_text_ar, 'locatorAr', p.locator_ar)
+    jsonb_build_object('id', p.evidence_node_id::text, 'type', CASE WHEN p.statement_id IS NULL THEN 'source_passage' ELSE 'source_statement' END, 'layer', CASE WHEN p.statement_id IS NULL THEN 'source_passage' ELSE 'source_statement' END, 'relation', 'supports', 'sourceId', p.source_id::text, 'claimId', p.claim_id::text, 'statementId', p.statement_id::text, 'passageId', p.source_passage_id::text, 'title', p.title_ar, 'excerpt', p.excerpt, 'locatorAr', p.locator_ar)
   )) AS refs
   FROM limited_links p
   LEFT JOIN claim_refs cr ON cr.claim_id = p.claim_id
@@ -1107,6 +1190,116 @@ JOIN path_nodes pn ON pn.path_order = l.path_order
 JOIN path_edges pe ON pe.path_order = l.path_order
 JOIN path_refs pr ON pr.path_order = l.path_order
 ORDER BY l.path_order
+`
+
+const geographicPlaceGraphQuery = `
+WITH RECURSIVE
+parameters AS (
+  SELECT $1::uuid AS start_place_id, $2::text AS subject_type, $3::uuid AS end_place_id, $4::uuid AS actor_id, $5::integer AS from_year, $6::integer AS to_year, $7::integer AS max_paths, $8::integer AS max_edges, $9::integer AS max_depth
+),
+eligible_events AS (
+  SELECT me.*
+  FROM migration_events me
+  CROSS JOIN parameters p
+  WHERE (p.from_year = 0 OR me.time_to IS NULL OR EXTRACT(YEAR FROM me.time_to)::integer >= p.from_year)
+    AND (p.to_year = 0 OR me.time_from IS NULL OR EXTRACT(YEAR FROM me.time_from)::integer <= p.to_year)
+    AND (me.source_id IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = me.source_id AND (s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')))))))
+),
+place_walk (event_id, from_place_id, to_place_id, event_ids, depth, saturated) AS (
+  SELECT seed.event_id, seed.from_place_id, seed.to_place_id, seed.event_ids, seed.depth, seed.saturated
+  FROM (
+    SELECT me.id AS event_id, me.from_place_id, me.to_place_id,
+      ARRAY[me.id]::uuid[] AS event_ids, 1 AS depth,
+      (count(*) OVER () > p.max_edges) AS saturated,
+      row_number() OVER (ORDER BY me.id) AS expansion_rank
+    FROM eligible_events me
+    CROSS JOIN parameters p
+    WHERE me.from_place_id = p.start_place_id
+      AND me.to_place_id IS NOT NULL
+  ) seed
+  CROSS JOIN parameters p
+  WHERE seed.expansion_rank <= p.max_edges
+  UNION ALL
+  SELECT next_step.event_id, next_step.from_place_id, next_step.to_place_id, next_step.event_ids, next_step.depth + 1, next_step.saturated
+  FROM (
+    SELECT next_event.id AS event_id, next_event.from_place_id, next_event.to_place_id,
+      w.event_ids || next_event.id AS event_ids, w.depth,
+      (w.saturated OR count(*) OVER () > p.max_edges) AS saturated,
+      row_number() OVER (ORDER BY w.event_ids::text, next_event.id) AS expansion_rank
+    FROM place_walk w
+    JOIN eligible_events next_event ON next_event.from_place_id = w.to_place_id
+    CROSS JOIN parameters p
+    WHERE w.depth < LEAST(p.max_depth, p.max_edges)
+      AND next_event.to_place_id IS NOT NULL
+      AND NOT next_event.id = ANY(w.event_ids)
+  ) next_step
+  CROSS JOIN parameters p
+  WHERE next_step.expansion_rank <= p.max_edges
+),
+ranked_paths AS (
+  SELECT w.*, row_number() OVER (ORDER BY depth, event_ids::text) AS path_order,
+    count(*) OVER () AS candidate_count
+  FROM place_walk w
+),
+limited_paths AS (
+  SELECT rp.*
+  FROM ranked_paths rp
+  CROSS JOIN parameters p
+  WHERE rp.path_order <= $7
+    AND (p.end_place_id IS NULL OR rp.to_place_id = p.end_place_id)
+),
+path_events AS (
+  SELECT lp.path_order, lp.event_ids, lp.depth, lp.candidate_count, lp.saturated,
+    e.id AS event_id, e.from_place_id, e.to_place_id, e.status, e.certainty, e.source_id, e.claim_id, e.notes_ar,
+    ids.ordinality::integer AS edge_position
+  FROM limited_paths lp
+  CROSS JOIN LATERAL unnest(lp.event_ids) WITH ORDINALITY AS ids(event_id, ordinality)
+  JOIN eligible_events e ON e.id = ids.event_id
+),
+path_summary AS (
+  SELECT path_order, max(depth) AS depth, max(candidate_count) AS candidate_count,
+    bool_or(saturated) AS saturated,
+    bool_or(status IN ('contested', 'disputed')) AS contested,
+    bool_or(status IN ('interpreted', 'platform_inferred', 'unresolved')) AS partial,
+    bool_or(source_id IS NOT NULL OR claim_id IS NOT NULL) AS evidence_backed
+  FROM path_events
+  GROUP BY path_order
+),
+first_event AS (
+  SELECT DISTINCT ON (path_order) path_order, from_place_id
+  FROM path_events
+  ORDER BY path_order, edge_position
+),
+path_nodes AS (
+  SELECT fe.path_order,
+    jsonb_build_array(
+      jsonb_build_object('id', fe.from_place_id::text, 'type', 'place', 'label', COALESCE(start_place.canonical_name_ar, ''), 'position', 0)
+    ) || COALESCE((SELECT jsonb_agg(jsonb_build_object('id', pe.to_place_id::text, 'type', 'place', 'label', COALESCE(next_place.canonical_name_ar, ''), 'position', pe.edge_position) ORDER BY pe.edge_position) FROM path_events pe LEFT JOIN places next_place ON next_place.id = pe.to_place_id WHERE pe.path_order = fe.path_order), '[]'::jsonb) AS nodes
+  FROM first_event fe
+  LEFT JOIN places start_place ON start_place.id = fe.from_place_id
+),
+path_edges AS (
+  SELECT pe.path_order,
+    jsonb_agg(jsonb_build_object('id', pe.event_id::text, 'type', 'migration_event', 'fromNodeId', pe.from_place_id::text, 'toNodeId', pe.to_place_id::text, 'pathFromNodeId', pe.from_place_id::text, 'pathToNodeId', pe.to_place_id::text, 'predicate', 'migrated_to', 'status', pe.status, 'certainty', pe.certainty, 'sourceId', pe.source_id::text, 'claimId', pe.claim_id::text, 'migrationEventId', pe.event_id::text, 'fromPlaceId', pe.from_place_id::text, 'toPlaceId', pe.to_place_id::text, 'position', pe.edge_position - 1) ORDER BY pe.edge_position) AS edges
+  FROM path_events pe
+  GROUP BY pe.path_order
+),
+path_evidence AS (
+  SELECT pe.path_order,
+    jsonb_agg(jsonb_build_object('id', pe.event_id::text, 'type', 'migration_event', 'layer', 'geographic_event', 'relation', 'event', 'sourceId', pe.source_id::text, 'claimId', pe.claim_id::text, 'status', pe.status, 'certainty', pe.certainty, 'title', 'حدث انتقال', 'excerpt', COALESCE(pe.notes_ar, '')) ORDER BY pe.edge_position) AS refs
+  FROM path_events pe
+  WHERE pe.source_id IS NOT NULL OR pe.claim_id IS NOT NULL
+  GROUP BY pe.path_order
+)
+SELECT 'geographic_path', CASE WHEN ps.contested THEN 'contested' WHEN ps.partial THEN 'partial' WHEN ps.evidence_backed THEN 'evidence_backed' ELSE 'structural' END,
+  0::integer, NULL::text, NULL::text, NULL::text, ps.depth::integer,
+  (ps.candidate_count > $7 OR ps.depth >= $9 OR ps.saturated), ps.evidence_backed, NOT ps.evidence_backed,
+  pn.nodes, pe.edges, COALESCE(pv.refs, '[]'::jsonb)
+FROM path_summary ps
+JOIN path_nodes pn ON pn.path_order = ps.path_order
+JOIN path_edges pe ON pe.path_order = ps.path_order
+LEFT JOIN path_evidence pv ON pv.path_order = ps.path_order
+ORDER BY ps.path_order
 `
 
 const geographicGraphQuery = `
@@ -1150,7 +1343,7 @@ SELECT 'geographic_path', CASE WHEN pr.status IN ('contested', 'disputed') THEN 
     jsonb_build_object('id', COALESCE(pr.from_place_id, pr.id)::text, 'type', CASE WHEN pr.from_place_id IS NULL THEN 'unknown_place' ELSE 'place' END, 'label', COALESCE(from_label.label, ''), 'position', 1),
     jsonb_build_object('id', COALESCE(pr.to_place_id, pr.id)::text, 'type', CASE WHEN pr.to_place_id IS NULL THEN 'unknown_place' ELSE 'place' END, 'label', COALESCE(to_label.label, ''), 'position', 2)
   ),
-  jsonb_build_array(jsonb_build_object('id', pr.id::text, 'type', 'migration_event', 'fromNodeId', COALESCE(pr.from_place_id, pr.id)::text, 'toNodeId', COALESCE(pr.to_place_id, pr.id)::text, 'predicate', 'migrated_to', 'status', pr.status, 'certainty', pr.certainty, 'sourceId', pr.source_id::text, 'claimId', pr.claim_id::text, 'migrationEventId', pr.id::text, 'fromPlaceId', pr.from_place_id::text, 'toPlaceId', pr.to_place_id::text, 'position', 0)),
+  jsonb_build_array(jsonb_build_object('id', pr.id::text, 'type', 'migration_event', 'fromNodeId', COALESCE(pr.from_place_id, pr.id)::text, 'toNodeId', COALESCE(pr.to_place_id, pr.id)::text, 'pathFromNodeId', COALESCE(pr.from_place_id, pr.id)::text, 'pathToNodeId', COALESCE(pr.to_place_id, pr.id)::text, 'predicate', 'migrated_to', 'status', pr.status, 'certainty', pr.certainty, 'sourceId', pr.source_id::text, 'claimId', pr.claim_id::text, 'migrationEventId', pr.id::text, 'fromPlaceId', pr.from_place_id::text, 'toPlaceId', pr.to_place_id::text, 'position', 0)),
   CASE WHEN pr.source_id IS NOT NULL OR pr.claim_id IS NOT NULL THEN jsonb_build_array(jsonb_build_object('id', pr.id::text, 'type', 'migration_event', 'layer', 'geographic_event', 'relation', 'event', 'sourceId', pr.source_id::text, 'claimId', pr.claim_id::text, 'status', pr.status, 'certainty', pr.certainty, 'title', 'حدث انتقال', 'excerpt', COALESCE(pr.notes_ar, ''))) ELSE '[]'::jsonb END
 FROM path_rows pr
 LEFT JOIN entity_labels subject_label ON subject_label.type = pr.subject_type AND subject_label.id = pr.subject_id

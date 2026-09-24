@@ -84,6 +84,9 @@ func TestValidCitationSet(t *testing.T) {
 	if validCitationSet([]ai.ResearchCitation{{SourceID: "passage-3"}}, passages) {
 		t.Fatal("expected unknown passage citation to fail")
 	}
+	if !validCitationSet([]ai.ResearchCitation{{SourceID: "statement-1"}}, []Citation{{StatementID: "statement-1"}}) {
+		t.Fatal("expected known statement citation to pass")
+	}
 	if validCitationSet(nil, passages) {
 		t.Fatal("expected empty citations to fail")
 	}

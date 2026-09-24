@@ -308,6 +308,8 @@ export interface GraphEdge {
   type: string;
   fromNodeId: string;
   toNodeId: string;
+  pathFromNodeId?: string;
+  pathToNodeId?: string;
   predicate?: string;
   status?: string;
   certainty?: string;

@@ -3649,7 +3649,7 @@ a {
 }
 
 .research-graph-edges > div,
-.research-graph-evidence > div {
+.research-graph-evidence > details {
   gap: 6px;
   min-width: 0;
   color: var(--muted);
@@ -3657,15 +3657,51 @@ a {
 }
 
 .research-graph-edges > div > span,
-.research-graph-evidence > div > span {
+.research-graph-evidence > details > summary > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .research-graph-edges > div > small,
-.research-graph-evidence > div > small {
+.research-graph-evidence > details > summary > small {
   margin-inline-start: auto;
+}
+
+.research-graph-evidence > details {
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--rule);
+}
+
+.research-graph-evidence > details:last-child {
+  border-bottom: 0;
+}
+
+.research-graph-evidence > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.research-graph-evidence > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.research-graph-evidence > details > p {
+  margin: 7px 18px 3px 0;
+  color: var(--ink);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.research-graph-evidence > details > small {
+  display: block;
+  margin-inline-start: 18px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 7px;
 }
 
 .research-graph-warning,
@@ -10282,6 +10318,56 @@ a {
 
 .workspace-history-row {
   align-items: flex-start;
+}
+
+.workspace-history-button {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px dashed var(--rule);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+.workspace-history-button:hover:not(:disabled) {
+  color: var(--red);
+}
+
+.workspace-history-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.workspace-history-detail {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--rule);
+  background: rgba(243, 235, 221, 0.38);
+}
+
+.workspace-history-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-history-detail-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.workspace-history-detail-head strong {
+  font-size: 11px;
+}
+
+.workspace-history-detail-head small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
 }
 
 .workspace-history-row > div:last-child {

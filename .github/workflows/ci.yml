@@ -55,6 +55,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
       - run: docker compose build db
       - run: make db-migrate
+      - run: make db-seed
       - run: docker compose exec -T db psql -U dawha -d dawha -c "SELECT extname FROM pg_extension WHERE extname IN ('postgis', 'vector') ORDER BY extname;"
+      - run: go test ./internal/research -run 'TestGraph'
+        working-directory: services/core-api
+        env:
+          DATABASE_URL: postgres://dawha:dawha_local@localhost:55432/dawha

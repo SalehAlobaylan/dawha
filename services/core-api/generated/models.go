@@ -518,6 +518,8 @@ type ResearchGraphEdge struct {
 	ToPlaceID          pgtype.UUID
 	Metadata           []byte
 	CreatedAt          pgtype.Timestamptz
+	PathFromNodeID     pgtype.UUID
+	PathToNodeID       pgtype.UUID
 }
 
 type ResearchGraphPath struct {

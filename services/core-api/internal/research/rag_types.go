@@ -110,6 +110,8 @@ type GraphEdge struct {
 	Type               string `json:"type"`
 	FromNodeID         string `json:"fromNodeId"`
 	ToNodeID           string `json:"toNodeId"`
+	PathFromNodeID     string `json:"pathFromNodeId,omitempty"`
+	PathToNodeID       string `json:"pathToNodeId,omitempty"`
 	Predicate          string `json:"predicate,omitempty"`
 	Status             string `json:"status,omitempty"`
 	Certainty          string `json:"certainty,omitempty"`

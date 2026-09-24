@@ -334,14 +334,10 @@ func (s *Service) retrieveTreeInterpretations(ctx context.Context, retrieval ret
 		JOIN tree_nodes object_node ON object_node.id = tr.object_node_id
 		LEFT JOIN sources s ON s.id = tr.source_id
 		WHERE (sn.display_name_ar ILIKE '%' || $1 || '%' OR object_node.display_name_ar ILIKE '%' || $1 || '%' OR tr.predicate ILIKE '%' || $1 || '%' OR word_similarity($1, sn.display_name_ar) > 0.15 OR word_similarity($1, object_node.display_name_ar) > 0.15)
-		  AND (t.visibility = 'public' OR ($2 = '' AND t.visibility = 'public') OR t.owner_id = NULLIF($2, '')::uuid OR EXISTS (
+		  AND (t.visibility = 'public' OR t.owner_id = NULLIF($2, '')::uuid OR EXISTS (
 			SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = NULLIF($2, '')::uuid
-		  ) OR EXISTS (
-			SELECT 1 FROM user_roles ur WHERE ur.user_id = NULLIF($2, '')::uuid AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin')
 		  ))
 		  AND (s.id IS NULL OR ($2 = '' AND s.visibility = 'public') OR s.created_by = NULLIF($2, '')::uuid OR EXISTS (
-			SELECT 1 FROM user_roles ur WHERE ur.user_id = NULLIF($2, '')::uuid AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin')
-		  ) OR EXISTS (
 			SELECT 1 FROM trees tree_owner WHERE tree_owner.id = t.id AND tree_owner.owner_id = NULLIF($2, '')::uuid
 		  ) OR EXISTS (
 			SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = NULLIF($2, '')::uuid
