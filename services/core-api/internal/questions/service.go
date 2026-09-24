@@ -53,6 +53,28 @@ type QuestionDisputeInput struct {
 	DisputeID string `json:"dispute_id"`
 }
 
+type QuestionEntityInput struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+}
+
+type QuestionFindingInput struct {
+	FindingID string `json:"finding_id"`
+}
+
+type QuestionEntityView struct {
+	EntityType string `json:"entityType"`
+	EntityID   string `json:"entityId"`
+	NameAR     string `json:"nameAr"`
+}
+
+type QuestionFindingView struct {
+	FindingID   string `json:"findingId"`
+	FindingType string `json:"findingType"`
+	TitleAR     string `json:"titleAr"`
+	Status      string `json:"status"`
+}
+
 type CreateDisputeInput struct {
 	TitleAR       string `json:"title_ar"`
 	DescriptionAR string `json:"description_ar"`
@@ -127,6 +149,8 @@ type QuestionDetail struct {
 	Claims   []QuestionClaimView   `json:"claims"`
 	Sources  []QuestionSourceView  `json:"sources"`
 	Disputes []QuestionDisputeView `json:"disputes"`
+	Entities []QuestionEntityView  `json:"entities"`
+	Findings []QuestionFindingView `json:"findings"`
 	Notes    []QuestionNoteView    `json:"notes"`
 	Activity []QuestionActivity    `json:"activity"`
 }
@@ -194,6 +218,29 @@ func (s *Service) ListQuestions(ctx context.Context) ([]QuestionSummary, error) 
 }
 
 func (s *Service) GetQuestion(ctx context.Context, questionID string) (QuestionDetail, error) {
+	return s.getQuestion(ctx, questionID, false)
+}
+
+func (s *Service) GetQuestionForActor(ctx context.Context, questionID, actorID string) (QuestionDetail, error) {
+	if err := s.ready(); err != nil {
+		return QuestionDetail{}, err
+	}
+	actorUUID, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return QuestionDetail{}, ErrForbidden
+	}
+	questionUUID, err := uuid.Parse(strings.TrimSpace(questionID))
+	if err != nil {
+		return QuestionDetail{}, ErrNotFound
+	}
+	var includeFindings bool
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM open_questions q WHERE q.id = $1 AND (q.created_by = $2 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))))`, questionUUID, actorUUID).Scan(&includeFindings); err != nil {
+		return QuestionDetail{}, err
+	}
+	return s.getQuestion(ctx, questionID, includeFindings)
+}
+
+func (s *Service) getQuestion(ctx context.Context, questionID string, includeFindings bool) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
 	}
@@ -217,6 +264,17 @@ func (s *Service) GetQuestion(ctx context.Context, questionID string) (QuestionD
 	if err != nil {
 		return QuestionDetail{}, err
 	}
+	entities, err := s.questionEntities(ctx, s.Pool, questionUUID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	findings := make([]QuestionFindingView, 0)
+	if includeFindings {
+		findings, err = s.questionFindings(ctx, s.Pool, questionUUID)
+		if err != nil {
+			return QuestionDetail{}, err
+		}
+	}
 	notes, err := s.questionNotes(ctx, s.Pool, questionUUID)
 	if err != nil {
 		return QuestionDetail{}, err
@@ -225,7 +283,7 @@ func (s *Service) GetQuestion(ctx context.Context, questionID string) (QuestionD
 	if err != nil {
 		return QuestionDetail{}, err
 	}
-	return QuestionDetail{Question: question, Claims: claims, Sources: sources, Disputes: disputes, Notes: notes, Activity: activity}, nil
+	return QuestionDetail{Question: question, Claims: claims, Sources: sources, Disputes: disputes, Entities: entities, Findings: findings, Notes: notes, Activity: activity}, nil
 }
 
 func (s *Service) CreateQuestion(ctx context.Context, actorID string, input CreateQuestionInput) (QuestionDetail, error) {
@@ -416,6 +474,92 @@ func (s *Service) LinkDispute(ctx context.Context, questionID, actorID string, i
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
+}
+
+func (s *Service) LinkEntity(ctx context.Context, questionID, actorID string, input QuestionEntityInput) (QuestionDetail, error) {
+	if err := s.ready(); err != nil {
+		return QuestionDetail{}, err
+	}
+	questionUUID, actorUUID, err := parseActorResource(questionID, actorID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	allowed, err := canManageQuestion(ctx, s.Pool, questionUUID, actorUUID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	if !allowed {
+		return QuestionDetail{}, ErrForbidden
+	}
+	entityType := strings.ToLower(strings.TrimSpace(input.EntityType))
+	entityUUID, err := validateEntityLink(entityType, input.EntityID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	var name pgtype.Text
+	var query string
+	switch entityType {
+	case "person":
+		query = `SELECT canonical_name_ar FROM people WHERE id = $1`
+	case "family":
+		query = `SELECT canonical_name_ar FROM families WHERE id = $1`
+	case "branch":
+		query = `SELECT canonical_name_ar FROM branches WHERE id = $1`
+	case "tribe":
+		query = `SELECT canonical_name_ar FROM tribes WHERE id = $1`
+	case "place":
+		query = `SELECT canonical_name_ar FROM places WHERE id = $1`
+	default:
+		return QuestionDetail{}, ErrValidation
+	}
+	if err := s.Pool.QueryRow(ctx, query, entityUUID).Scan(&name); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return QuestionDetail{}, ErrNotFound
+		}
+		return QuestionDetail{}, err
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_entities (question_id, entity_type, entity_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, entityType, entityUUID); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := writeAudit(ctx, s.Pool, actorUUID, "question_entity_linked", "open_question", questionUUID, nil, map[string]any{"entity_type": entityType, "entity_id": entityUUID.String(), "name_ar": textValue(name)}); err != nil {
+		return QuestionDetail{}, err
+	}
+	return s.GetQuestionForActor(ctx, questionID, actorID)
+}
+
+func (s *Service) LinkFinding(ctx context.Context, questionID, actorID string, input QuestionFindingInput) (QuestionDetail, error) {
+	if err := s.ready(); err != nil {
+		return QuestionDetail{}, err
+	}
+	questionUUID, actorUUID, err := parseActorResource(questionID, actorID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	allowed, err := canManageQuestion(ctx, s.Pool, questionUUID, actorUUID)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	if !allowed {
+		return QuestionDetail{}, ErrForbidden
+	}
+	findingUUID, err := uuid.Parse(strings.TrimSpace(input.FindingID))
+	if err != nil {
+		return QuestionDetail{}, ErrValidation
+	}
+	var exists bool
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM platform_findings WHERE id = $1)`, findingUUID).Scan(&exists); err != nil {
+		return QuestionDetail{}, err
+	}
+	if !exists {
+		return QuestionDetail{}, ErrNotFound
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_findings (question_id, finding_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionUUID, findingUUID); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := writeAudit(ctx, s.Pool, actorUUID, "question_finding_linked", "open_question", questionUUID, nil, map[string]any{"finding_id": findingUUID.String()}); err != nil {
+		return QuestionDetail{}, err
+	}
+	return s.GetQuestionForActor(ctx, questionID, actorID)
 }
 
 func (s *Service) ListDisputes(ctx context.Context) ([]DisputeSummary, error) {
@@ -653,6 +797,61 @@ func (s *Service) questionDisputes(ctx context.Context, q dbExecutor, questionID
 	return items, rows.Err()
 }
 
+func (s *Service) questionEntities(ctx context.Context, q dbExecutor, questionID uuid.UUID) ([]QuestionEntityView, error) {
+	rows, err := q.Query(ctx, `
+		SELECT qe.entity_type, qe.entity_id,
+		       COALESCE(p.canonical_name_ar, f.canonical_name_ar, b.canonical_name_ar, t.canonical_name_ar, pl.canonical_name_ar, '')
+		FROM question_entities qe
+		LEFT JOIN people p ON qe.entity_type = 'person' AND p.id = qe.entity_id
+		LEFT JOIN families f ON qe.entity_type = 'family' AND f.id = qe.entity_id
+		LEFT JOIN branches b ON qe.entity_type = 'branch' AND b.id = qe.entity_id
+		LEFT JOIN tribes t ON qe.entity_type = 'tribe' AND t.id = qe.entity_id
+		LEFT JOIN places pl ON qe.entity_type = 'place' AND pl.id = qe.entity_id
+		WHERE qe.question_id = $1
+		ORDER BY qe.entity_type, qe.entity_id
+	`, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]QuestionEntityView, 0)
+	for rows.Next() {
+		var item QuestionEntityView
+		var entityID pgtype.UUID
+		if err := rows.Scan(&item.EntityType, &entityID, &item.NameAR); err != nil {
+			return nil, err
+		}
+		item.EntityID = uuidString(entityID)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) questionFindings(ctx context.Context, q dbExecutor, questionID uuid.UUID) ([]QuestionFindingView, error) {
+	rows, err := q.Query(ctx, `
+		SELECT pf.id, pf.finding_type, pf.title_ar, pf.status
+		FROM question_findings qf
+		JOIN platform_findings pf ON pf.id = qf.finding_id
+		WHERE qf.question_id = $1
+		ORDER BY pf.updated_at DESC
+	`, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]QuestionFindingView, 0)
+	for rows.Next() {
+		var item QuestionFindingView
+		var id pgtype.UUID
+		if err := rows.Scan(&id, &item.FindingType, &item.TitleAR, &item.Status); err != nil {
+			return nil, err
+		}
+		item.FindingID = uuidString(id)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Service) questionActivity(ctx context.Context, q dbExecutor, questionID uuid.UUID) ([]QuestionActivity, error) {
 	rows, err := q.Query(ctx, `
 		SELECT a.action, a.entity_type, a.entity_id, a.created_at, a.after_value
@@ -822,6 +1021,14 @@ func validateSourceLink(value, role string) (uuid.UUID, error) {
 		return uuid.Nil, ErrValidation
 	}
 	return sourceUUID, nil
+}
+
+func validateEntityLink(entityType, value string) (uuid.UUID, error) {
+	entityUUID, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil || !contains([]string{"person", "family", "branch", "tribe", "place"}, entityType) {
+		return uuid.Nil, ErrValidation
+	}
+	return entityUUID, nil
 }
 
 func validQuestionStatus(value string) bool {

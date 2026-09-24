@@ -19,6 +19,25 @@ func TestResearchQueryRouteIsUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestResearchWorkspaceRoutesAreUnavailableWithoutDatabase(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/research/questions/80000000-0000-0000-0000-000000000001/workspace"},
+		{method: http.MethodGet, path: "/api/v1/research/questions/80000000-0000-0000-0000-000000000001/runs"},
+		{method: http.MethodGet, path: "/api/v1/research/runs/00000000-0000-0000-0000-000000000001"},
+	}
+	for _, testCase := range cases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(testCase.method, testCase.path, nil)
+		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s %s: expected status %d, got %d", testCase.method, testCase.path, http.StatusServiceUnavailable, recorder.Code)
+		}
+	}
+}
+
 func TestResearchErrorMapping(t *testing.T) {
 	cases := []struct {
 		err    error

@@ -520,6 +520,14 @@ type ResearchRun struct {
 	SynthesisAttempted                  bool
 }
 
+type ResearchRunContext struct {
+	RunID     pgtype.UUID
+	ScopeType string
+	ScopeID   pgtype.UUID
+	Role      string
+	CreatedAt pgtype.Timestamptz
+}
+
 type SchemaMigration struct {
 	Version   string
 	AppliedAt pgtype.Timestamptz

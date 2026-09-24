@@ -13,16 +13,21 @@ var (
 	ErrAIUnavailable       = errors.New("research AI service is unavailable")
 	ErrValidation          = errors.New("research query is invalid")
 	ErrForbidden           = errors.New("research access is forbidden")
+	ErrNotFound            = errors.New("research resource is not found")
 )
 
 type QueryInput struct {
-	Question   string `json:"question"`
-	QuestionID string `json:"question_id"`
-	SourceID   string `json:"source_id"`
-	PersonID   string `json:"person_id"`
-	PlaceID    string `json:"place_id"`
-	FromYear   int    `json:"from_year"`
-	ToYear     int    `json:"to_year"`
+	Question      string `json:"question"`
+	QuestionID    string `json:"question_id"`
+	EntityType    string `json:"entity_type,omitempty"`
+	EntityID      string `json:"entity_id,omitempty"`
+	TreeID        string `json:"tree_id,omitempty"`
+	TreeVersionID string `json:"tree_version_id,omitempty"`
+	SourceID      string `json:"source_id"`
+	PersonID      string `json:"person_id"`
+	PlaceID       string `json:"place_id"`
+	FromYear      int    `json:"from_year"`
+	ToYear        int    `json:"to_year"`
 }
 
 type Score struct {
@@ -113,6 +118,13 @@ type Service struct {
 
 func NewService(pool *pgxpool.Pool, provider ai.Provider) *Service {
 	return &Service{Pool: pool, AI: provider}
+}
+
+func (s *Service) ready() error {
+	if s == nil || s.Pool == nil {
+		return ErrDatabaseUnavailable
+	}
+	return nil
 }
 
 type retrievalContext struct {

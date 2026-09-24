@@ -18,6 +18,8 @@ func TestQuestionWriteRoutesRequireAuthentication(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/questions", body: `{"title_ar":"سؤال"}`},
 		{method: http.MethodPatch, path: "/api/v1/questions/00000000-0000-0000-0000-000000000001", body: `{"status":"resolved"}`},
 		{method: http.MethodPost, path: "/api/v1/questions/00000000-0000-0000-0000-000000000001/notes", body: `{"note_ar":"ملاحظة"}`},
+		{method: http.MethodPost, path: "/api/v1/questions/00000000-0000-0000-0000-000000000001/entities", body: `{"entity_type":"person","entity_id":"10000000-0000-0000-0000-000000000001"}`},
+		{method: http.MethodPost, path: "/api/v1/questions/00000000-0000-0000-0000-000000000001/findings", body: `{"finding_id":"70000000-0000-0000-0000-000000000001"}`},
 		{method: http.MethodPost, path: "/api/v1/disputes", body: `{"title_ar":"خلاف"}`},
 		{method: http.MethodPatch, path: "/api/v1/disputes/00000000-0000-0000-0000-000000000001", body: `{"status":"under_review"}`},
 	}

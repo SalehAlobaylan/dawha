@@ -50,18 +50,24 @@ func (researchProviderStub) ResearchQuery(context.Context, ai.ResearchQueryReque
 }
 
 func TestValidateQueryInput(t *testing.T) {
-	valid, err := validateQueryInput(QueryInput{Question: "  سؤال  ", SourceID: " 30000000-0000-0000-0000-000000000001 ", FromYear: 1990, ToYear: 2020})
+	valid, err := validateQueryInput(QueryInput{Question: "  سؤال  ", EntityType: "family", EntityID: "c0000000-0000-0000-0000-000000000001", SourceID: " 30000000-0000-0000-0000-000000000001 ", FromYear: 1990, ToYear: 2020})
 	if err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if valid.Question != "سؤال" || valid.SourceID != "30000000-0000-0000-0000-000000000001" {
+	if valid.Question != "سؤال" || valid.EntityType != "family" || valid.EntityID != "c0000000-0000-0000-0000-000000000001" || valid.SourceID != "30000000-0000-0000-0000-000000000001" {
 		t.Fatalf("unexpected normalized input: %+v", valid)
+	}
+	defaulted, err := validateQueryInput(QueryInput{Question: "سؤال", EntityID: "c0000000-0000-0000-0000-000000000001"})
+	if err != nil || defaulted.EntityType != "person" || defaulted.PersonID != defaulted.EntityID {
+		t.Fatalf("unexpected entity default: %+v, %v", defaulted, err)
 	}
 
 	for _, input := range []QueryInput{
 		{},
 		{Question: stringsWithRunes(2001)},
 		{Question: "سؤال", SourceID: "not-a-uuid"},
+		{Question: "سؤال", EntityType: "family"},
+		{Question: "سؤال", EntityType: "planet", EntityID: "c0000000-0000-0000-0000-000000000001"},
 		{Question: "سؤال", FromYear: 2020, ToYear: 1990},
 	} {
 		if _, err := validateQueryInput(input); !errors.Is(err, ErrValidation) {

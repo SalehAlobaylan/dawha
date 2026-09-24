@@ -22,6 +22,21 @@ func (h questionHandler) listQuestions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h questionHandler) getQuestion(w http.ResponseWriter, r *http.Request) {
+	if h.Service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "questions service is not configured"})
+		return
+	}
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			result, serviceErr := h.Service.GetQuestionForActor(r.Context(), r.PathValue("questionID"), user.ID)
+			if serviceErr != nil {
+				writeQuestionError(w, serviceErr)
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+	}
 	result, err := h.Service.GetQuestion(r.Context(), r.PathValue("questionID"))
 	if err != nil {
 		writeQuestionError(w, err)
@@ -125,6 +140,40 @@ func (h questionHandler) linkDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Service.LinkDispute(r.Context(), r.PathValue("questionID"), user.ID, input)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h questionHandler) linkEntity(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input questions.QuestionEntityInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.LinkEntity(r.Context(), r.PathValue("questionID"), user.ID, input)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h questionHandler) linkFinding(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input questions.QuestionFindingInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.LinkFinding(r.Context(), r.PathValue("questionID"), user.ID, input)
 	if err != nil {
 		writeQuestionError(w, err)
 		return

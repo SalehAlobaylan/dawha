@@ -51,4 +51,10 @@ describe("tree routes", () => {
     const router = makeRouter("/tree/tree-1/versions/version-2");
     expect(router.state.location.pathname).toBe("/tree/tree-1/versions/version-2");
   });
+
+  it("builds contextual research workspace URLs", () => {
+    const router = makeRouter("/research");
+    expect(router.buildLocation({ to: "/research/$questionId", params: { questionId: "question-1" }, search: { entityType: "person", entityId: "person-1" } }).href).toBe("/research/question-1?entityType=person&entityId=person-1");
+    expect(router.buildLocation({ to: "/research", search: { entityType: "person", entityId: "person-1" } }).href).toBe("/research?entityType=person&entityId=person-1");
+  });
 });

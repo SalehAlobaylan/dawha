@@ -370,7 +370,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
             <div className="detail-block"><div className="detail-label">ملاحظة الباحث</div><p>{selected.note}</p></div>
             <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافات طبقة كما هي.</p></div>
             <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList sourceCount={selected.sourceCount} /></div>
-            <Link to="/research" className="detail-cta">افتح هذا الشخص في مكتب البحث <ArrowLeft size={15} /></Link>
+            <Link to="/research" search={{ entityType: "person", entityId: selected.personId, treeId, treeVersionId: selectedVersion.id }} className="detail-cta">افتح هذا الشخص في مكتب البحث <ArrowLeft size={15} /></Link>
           </> : <div className="node-empty-state"><h2>لا يوجد شخص بعد</h2><p>احفظ مسودة، ثم أضف أول شخص لتبدأ الشجرة.</p></div>}
         </aside>
       </div>

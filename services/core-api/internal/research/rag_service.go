@@ -236,21 +236,101 @@ func researchRoutingContext(passages []Citation) string {
 }
 
 func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string) (string, time.Time, error) {
-	questionID, err := optionalUUID(input.QuestionID)
+	questionUUID, err := parseOptionalUUID(input.QuestionID)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	actorUUID, err := optionalUUID(actorID)
+	actorUUID, err := parseOptionalUUID(actorID)
 	if err != nil {
 		return "", time.Time{}, ErrForbidden
 	}
 	runID := uuid.New()
 	var createdAt time.Time
-	if err := s.Pool.QueryRow(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO research_runs (id, question_id, actor_id, query, normalized_query, status)
 		VALUES ($1, $2, $3, $4, $5, 'running')
 		RETURNING created_at
-	`, runID, questionID, actorUUID, input.Question, identity.NormalizeArabicName(input.Question)).Scan(&createdAt); err != nil {
+	`, runID, nullableUUID(questionUUID), nullableUUID(actorUUID), input.Question, identity.NormalizeArabicName(input.Question)).Scan(&createdAt); err != nil {
+		return "", time.Time{}, err
+	}
+	contexts := make([]struct {
+		scopeType string
+		scopeID   uuid.UUID
+		role      string
+	}, 0, 7)
+	if questionUUID != uuid.Nil {
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{"question", questionUUID, "question"})
+	}
+	if input.EntityID != "" {
+		entityUUID, parseErr := uuid.Parse(input.EntityID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{input.EntityType, entityUUID, "subject"})
+	}
+	if input.TreeID != "" {
+		treeUUID, parseErr := uuid.Parse(input.TreeID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{"tree", treeUUID, "filter"})
+	}
+	if input.TreeVersionID != "" {
+		versionUUID, parseErr := uuid.Parse(input.TreeVersionID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{"tree_version", versionUUID, "filter"})
+	}
+	if input.SourceID != "" {
+		sourceUUID, parseErr := uuid.Parse(input.SourceID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{"source", sourceUUID, "filter"})
+	}
+	if input.PlaceID != "" {
+		placeUUID, parseErr := uuid.Parse(input.PlaceID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{"place", placeUUID, "filter"})
+	}
+	for _, context := range contexts {
+		if _, err := tx.Exec(ctx, `INSERT INTO research_run_contexts (run_id, scope_type, scope_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, runID, context.scopeType, context.scopeID, context.role); err != nil {
+			return "", time.Time{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return "", time.Time{}, err
 	}
 	return runID.String(), createdAt, nil
@@ -312,10 +392,14 @@ func (s *Service) persistRun(ctx context.Context, runID string, result QueryResu
 
 func validateQueryInput(input QueryInput) (QueryInput, error) {
 	input.Question = strings.TrimSpace(input.Question)
+	input.EntityType = strings.ToLower(strings.TrimSpace(input.EntityType))
+	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.TreeID = strings.TrimSpace(input.TreeID)
+	input.TreeVersionID = strings.TrimSpace(input.TreeVersionID)
 	if input.Question == "" || len([]rune(input.Question)) > 2000 || input.FromYear < 0 || input.ToYear < 0 || (input.FromYear > 0 && input.ToYear > 0 && input.FromYear > input.ToYear) {
 		return QueryInput{}, ErrValidation
 	}
-	for _, value := range []struct{ target *string }{{&input.QuestionID}, {&input.SourceID}, {&input.PersonID}, {&input.PlaceID}} {
+	for _, value := range []struct{ target *string }{{&input.QuestionID}, {&input.EntityID}, {&input.TreeID}, {&input.TreeVersionID}, {&input.SourceID}, {&input.PersonID}, {&input.PlaceID}} {
 		*value.target = strings.TrimSpace(*value.target)
 		if *value.target != "" {
 			if _, err := uuid.Parse(*value.target); err != nil {
@@ -323,19 +407,47 @@ func validateQueryInput(input QueryInput) (QueryInput, error) {
 			}
 		}
 	}
+	if input.EntityType == "" && (input.EntityID != "" || input.PersonID != "") {
+		input.EntityType = "person"
+		if input.EntityID == "" {
+			input.EntityID = input.PersonID
+		}
+	}
+	if input.EntityType == "person" && input.EntityID == "" {
+		input.EntityID = input.PersonID
+	}
+	if input.EntityType != "" && input.EntityID == "" {
+		return QueryInput{}, ErrValidation
+	}
+	if input.EntityType != "" && input.EntityType != "person" && input.EntityType != "family" && input.EntityType != "branch" {
+		return QueryInput{}, ErrValidation
+	}
+	if input.EntityType == "person" && input.PersonID != "" && input.EntityID != input.PersonID {
+		return QueryInput{}, ErrValidation
+	}
+	if input.EntityType == "person" {
+		input.PersonID = input.EntityID
+	}
 	return input, nil
 }
 
-func optionalUUID(value string) (any, error) {
+func parseOptionalUUID(value string) (uuid.UUID, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return nil, nil
+		return uuid.Nil, nil
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil {
-		return nil, ErrValidation
+		return uuid.Nil, ErrValidation
 	}
 	return parsed, nil
+}
+
+func nullableUUID(value uuid.UUID) any {
+	if value == uuid.Nil {
+		return nil
+	}
+	return value
 }
 
 func nullableString(value string) any {

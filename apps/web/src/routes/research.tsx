@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Plus, Search, Send, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
@@ -12,6 +12,7 @@ import { TopBar } from "../components/TopBar";
 const researchTabs = ["الكل", "ادعاءات", "مصادر", "أسئلة", "ملاحظات النظام"];
 
 export function ResearchPage() {
+  const contextSearch = useSearch({ from: "/research" });
   const [activeTab, setActiveTab] = useState("الكل");
   const [search, setSearch] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
@@ -19,6 +20,7 @@ export function ResearchPage() {
   const [researchResult, setResearchResult] = useState<ResearchQueryResult | null>(null);
   const [researchError, setResearchError] = useState("");
   const [researchLoading, setResearchLoading] = useState(false);
+  const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
     if (!normalized) return sources.slice(0, 3);
@@ -31,7 +33,7 @@ export function ResearchPage() {
     setResearchLoading(true);
     setResearchError("");
     try {
-      setResearchResult(await queryResearch({ question }));
+      setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: isUuid(contextSearch.entityId) ? contextSearch.entityId : undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined }));
     } catch (error) {
       setResearchResult(null);
       setResearchError(error instanceof Error ? error.message : "تعذر تشغيل البحث.");
@@ -47,6 +49,8 @@ export function ResearchPage() {
         title="ابنِ سياقك، خطوة خطوة"
         description="اجمع السؤال، المصادر، الادعاءات، والأدلة المضادة في مساحة واحدة قابلة للتتبع."
       />
+
+      {contextSearch.entityId ? <div className="research-context-chip"><GitBranch size={14} /><span>السياق الحالي: {contextSearch.entityType ?? "person"} · {contextSearch.entityId}</span><Link to="/research">مسح السياق</Link></div> : null}
 
       <section className="research-command-bar">
         <div className="research-command-copy"><Sparkles size={17} /><span>مساعد البحث يسأل ويقترح، لكنه لا يحسم.</span></div>
@@ -114,6 +118,11 @@ export function ResearchPage() {
   );
 }
 
+function isUuid(value: string | undefined): boolean {
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+
 const researchLayerLabels: Record<ResearchCitation["layer"], string> = {
   source_statement: "عبارة المصدر",
   research_claim: "ادعاء بحثي",
@@ -136,7 +145,7 @@ function routeLabel(route: ResearchRoute): string {
   return "مسار عميق";
 }
 
-function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
+export function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
   const groups: Array<{ citations: ResearchCitation[]; label: string }> = [
     { citations: result.layers.sourceStatements, label: "عبارات المصدر" },
     { citations: result.layers.researchClaims, label: "ادعاءات البحث" },

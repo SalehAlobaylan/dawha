@@ -11,6 +11,7 @@ import { LoginPage } from "./routes/login";
 import { PlacesPage } from "./routes/places";
 import { QuestionsPage } from "./routes/questions";
 import { ResearchPage } from "./routes/research";
+import { ResearchWorkspacePage } from "./routes/research-workspace";
 import { SourcesPage } from "./routes/sources";
 import { TreePage } from "./routes/tree";
 import { TreeByIdRoute, TreeVersionRoute } from "./routes/tree-route";
@@ -43,10 +44,34 @@ const treeVersionRoute = createRoute({
   component: TreeVersionRoute,
 });
 
+type ResearchSearch = {
+  entityType?: "person" | "family" | "branch";
+  entityId?: string;
+  treeId?: string;
+  treeVersionId?: string;
+};
+
+function parseResearchSearch(search: Record<string, unknown>): ResearchSearch {
+  const result: ResearchSearch = {};
+  if (search.entityType === "person" || search.entityType === "family" || search.entityType === "branch") result.entityType = search.entityType;
+  if (typeof search.entityId === "string") result.entityId = search.entityId;
+  if (typeof search.treeId === "string") result.treeId = search.treeId;
+  if (typeof search.treeVersionId === "string") result.treeVersionId = search.treeVersionId;
+  return result;
+}
+
 const researchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/research",
+  validateSearch: parseResearchSearch,
   component: ResearchPage,
+});
+
+const researchWorkspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/research/$questionId",
+  validateSearch: parseResearchSearch,
+  component: ResearchWorkspacePage,
 });
 
 const entityResolutionRoute = createRoute({
@@ -115,6 +140,7 @@ export const routeTree = rootRoute.addChildren([
   treeByIdRoute,
   treeVersionRoute,
   researchRoute,
+  researchWorkspaceRoute,
   entityResolutionRoute,
   contradictionsRoute,
   sourcesRoute,

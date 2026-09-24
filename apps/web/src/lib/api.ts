@@ -37,18 +37,24 @@ import type {
   QuestionClaimInput,
   QuestionDetail,
   QuestionDisputeInput,
+  QuestionEntityInput,
+  QuestionFindingInput,
   QuestionNoteInput,
   QuestionSourceInput,
+  ResearchClaim,
+  ResearchQueryInput,
+  ResearchQueryResult,
+  ResearchRunDetail,
+  ResearchRunSummary,
+  ResearchWorkspaceInput,
+  ResearchWorkspaceSnapshot,
   ReviewSuggestionInput,
-   ResearchClaim,
-   ResearchQueryInput,
-   ResearchQueryResult,
-   SearchResponse,
-   SourceCandidate,
-   SourceDetail,
-   SourceFile,
-   SourceMetadata,
-   SourceProcessing,
+  SearchResponse,
+  SourceCandidate,
+  SourceDetail,
+  SourceFile,
+  SourceMetadata,
+  SourceProcessing,
   SuggestionRecord,
   SubmitSuggestionInput,
   TreeActivity,
@@ -175,6 +181,46 @@ export async function queryResearch(input: ResearchQueryInput): Promise<Research
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as ResearchQueryResult;
+}
+
+export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض مساحة البحث.", 503);
+  }
+  const params = new URLSearchParams();
+  if (input.entityType) params.set("entity_type", input.entityType);
+  if (input.entityId) params.set("entity_id", input.entityId);
+  if (input.treeId) params.set("tree_id", input.treeId);
+  if (input.treeVersionId) params.set("tree_version_id", input.treeVersionId);
+  const query = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/questions/${encodeURIComponent(input.questionId)}/workspace${query ? `?${query}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(6000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchWorkspaceSnapshot;
+}
+
+export async function fetchResearchRuns(questionId: string): Promise<ResearchRunSummary[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض سجل التحقيقات.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/questions/${encodeURIComponent(questionId)}/runs`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: ResearchRunSummary[] };
+  return payload.items ?? [];
+}
+
+export async function fetchResearchRun(runId: string): Promise<ResearchRunDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض تفاصيل التحقيق.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ResearchRunDetail;
 }
 
 export async function runEntityResolution(entityType: EntityResolutionEntityType): Promise<EntityResolutionRun> {
@@ -783,6 +829,38 @@ export async function linkQuestionDispute(questionId: string, input: QuestionDis
     throw new ApiError("شغّل Core API أولاً لربط الخلاف.", 503);
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/disputes`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function linkQuestionEntity(questionId: string, input: QuestionEntityInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط الكيان.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/entities`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function linkQuestionFinding(questionId: string, input: QuestionFindingInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط الملاحظة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/findings`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

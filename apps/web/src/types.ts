@@ -327,11 +327,237 @@ export interface ResearchQueryResult {
 export interface ResearchQueryInput {
   question: string;
   question_id?: string;
+  entity_type?: "person" | "family" | "branch";
+  entity_id?: string;
+  tree_id?: string;
+  tree_version_id?: string;
   source_id?: string;
   person_id?: string;
   place_id?: string;
   from_year?: number;
   to_year?: number;
+}
+
+export interface ResearchWorkspaceInput {
+  questionId: string;
+  entityType?: "person" | "family" | "branch";
+  entityId?: string;
+  treeId?: string;
+  treeVersionId?: string;
+}
+
+export interface ResearchWorkspaceContext {
+  questionId: string;
+  questionTitleAr: string;
+  questionDetailAr?: string;
+  questionStatus: string;
+  questionPriority: string;
+  entityType?: string;
+  entityId?: string;
+  entityNameAr?: string;
+  entityAliasesAr?: string[];
+  treeId?: string;
+  treeVersionId?: string;
+}
+
+export interface ResearchWorkspacePermissions {
+  canRunResearch: boolean;
+  canCreateClaim: boolean;
+  canDisputeClaim: boolean;
+  canLinkEvidence: boolean;
+  canCreateQuestion: boolean;
+  canManageSelectedQuestion: boolean;
+  canAttachFinding: boolean;
+  canReviewFinding: boolean;
+  canAddNote: boolean;
+  canReviewIdentityCandidate: boolean;
+  canMergeIdentity: boolean;
+}
+
+export interface WorkspaceEvidence {
+  id: string;
+  kind: "evidence" | "counter_evidence";
+  relation: string;
+  sourceId?: string;
+  sourceTitleAr?: string;
+  statementId?: string;
+  statementTextAr?: string;
+  passageId?: string;
+  passageTextAr?: string;
+  locatorAr?: string;
+  pageNumber?: number;
+  reviewStatus?: string;
+}
+
+export interface WorkspaceClaim {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  predicate: string;
+  objectType: string;
+  objectId: string;
+  timeFrom?: string;
+  timeTo?: string;
+  placeId?: string;
+  status: string;
+  notesAr?: string;
+  createdAt: string;
+  updatedAt: string;
+  evidence: WorkspaceEvidence[];
+}
+
+export interface WorkspaceSource {
+  id: string;
+  titleAr: string;
+  authorAr?: string;
+  sourceType: string;
+  dependencyStatus: string;
+  visibility: string;
+  citationAr?: string;
+  locationAr?: string;
+  passageCount: number;
+  statementCount: number;
+}
+
+export interface WorkspaceTreeNode {
+  id: string;
+  personId: string;
+  displayNameAr: string;
+  sortOrder: number;
+}
+
+export interface WorkspaceTreeRelationship {
+  id: string;
+  subjectPersonId: string;
+  objectPersonId: string;
+  predicate: string;
+  status: string;
+  sourceId?: string;
+  sourceTitleAr?: string;
+}
+
+export interface WorkspaceTreeContext {
+  treeId: string;
+  treeNameAr: string;
+  treeVersionId: string;
+  versionNumber: number;
+  state: string;
+  nodes: WorkspaceTreeNode[];
+  relationships: WorkspaceTreeRelationship[];
+}
+
+export interface WorkspaceTimelineEvent {
+  id: string;
+  kind: "birth" | "death" | "claim" | "presence" | "migration";
+  labelAr: string;
+  dateFrom?: string;
+  dateTo?: string;
+  approximate: boolean;
+  layer: ResearchLayer;
+  status: string;
+  placeId?: string;
+  claimId?: string;
+  sourceIds?: string[];
+}
+
+export interface WorkspaceQuestion {
+  id: string;
+  titleAr: string;
+  descriptionAr?: string;
+  status: string;
+  priority: string;
+  createdAt: string;
+  updatedAt: string;
+  claimCount: number;
+  sourceCount: number;
+}
+
+export interface WorkspaceDispute {
+  id: string;
+  titleAr: string;
+  descriptionAr?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  claimCount: number;
+}
+
+export interface WorkspaceNote {
+  id: string;
+  noteAr: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface WorkspaceFinding {
+  id: string;
+  findingType: string;
+  titleAr: string;
+  explanationAr: string;
+  status: string;
+  severity: string;
+  signals: Record<string, unknown>;
+  claimIds: string[];
+  entityIds: string[];
+  evidence: WorkspaceEvidence[];
+  traceability: "evidence" | "signals_only";
+  algorithmVersion?: string;
+}
+
+export interface WorkspaceIdentityCandidate {
+  id: string;
+  runId: string;
+  entityType: string;
+  leftEntityId: string;
+  rightEntityId: string;
+  leftNameAr: string;
+  rightNameAr: string;
+  matchClass: string;
+  score: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface ResearchRunSummary {
+  id: string;
+  questionId?: string;
+  query: string;
+  status: string;
+  insufficientEvidence: boolean;
+  citationCount: number;
+  answerAr?: string;
+  modelVersion?: string;
+  route?: string;
+  synthesisAttempted: boolean;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResearchRunContext {
+  scopeType: string;
+  scopeId: string;
+  role: string;
+}
+
+export interface ResearchRunDetail extends ResearchRunSummary {
+  contexts: ResearchRunContext[];
+}
+
+export interface ResearchWorkspaceSnapshot {
+  context: ResearchWorkspaceContext;
+  permissions: ResearchWorkspacePermissions;
+  claims: WorkspaceClaim[];
+  sources: WorkspaceSource[];
+  treeContexts: WorkspaceTreeContext[];
+  mapFeatures: MapFeature[];
+  timeline: WorkspaceTimelineEvent[];
+  questions: WorkspaceQuestion[];
+  disputes: WorkspaceDispute[];
+  notes: WorkspaceNote[];
+  findings: WorkspaceFinding[];
+  identityCandidates: WorkspaceIdentityCandidate[];
+  history: ResearchRunSummary[];
 }
 
 export type EntityResolutionEntityType = "person" | "family" | "all";
@@ -557,6 +783,19 @@ export interface QuestionDisputeLink {
   status: string;
 }
 
+export interface QuestionEntityLink {
+  entityType: string;
+  entityId: string;
+  nameAr: string;
+}
+
+export interface QuestionFindingLink {
+  findingId: string;
+  findingType: string;
+  titleAr: string;
+  status: string;
+}
+
 export interface QuestionNote {
   id: string;
   noteAr: string;
@@ -577,6 +816,8 @@ export interface QuestionDetail {
   claims: QuestionClaimLink[];
   sources: QuestionSourceLink[];
   disputes: QuestionDisputeLink[];
+  entities: QuestionEntityLink[];
+  findings: QuestionFindingLink[];
   notes: QuestionNote[];
   activity: QuestionActivity[];
 }
@@ -639,6 +880,15 @@ export interface QuestionSourceInput {
 
 export interface QuestionDisputeInput {
   dispute_id: string;
+}
+
+export interface QuestionEntityInput {
+  entity_type: "person" | "family" | "branch" | "tribe" | "place";
+  entity_id: string;
+}
+
+export interface QuestionFindingInput {
+  finding_id: string;
 }
 
 export interface CreateDisputeInput {
