@@ -31,7 +31,83 @@ _RELATION_TERMS = (
     "mother",
     "spouse",
 )
-_CONTRADICTION_TERMS = ("والد", "أبو", "ابو", "father", "والدة", "mother")
+_CONTRADICTION_TERMS = (
+    "والد",
+    "أبو",
+    "ابو",
+    "father",
+    "والدة",
+    "mother",
+    "تناقض",
+    "تعارض",
+    "contradiction",
+    "conflict",
+)
+_ROUTING_QUERY_TERMS = {
+    "source_evidence": (
+        "مصدر",
+        "دليل",
+        "نص",
+        "صفحة",
+        "سجل",
+        "مرجع",
+        "اقتباس",
+        "source",
+        "evidence",
+        "document",
+        "record",
+    ),
+    "identity": ("هوية", "شخص", "اسم", "لقب", "اسماء", "alias", "identity", "person"),
+    "relationship": (
+        "والد",
+        "والدة",
+        "ابو",
+        "أبو",
+        "ابن",
+        "بنت",
+        "زوج",
+        "قرابة",
+        "نسب",
+        "علاقة",
+        "تناقض",
+        "تعارض",
+        "رواية",
+        "روايات",
+        "father",
+        "parent",
+        "family",
+    ),
+    "geography": ("مكان", "مدينة", "قرية", "هاجر", "هجرة", "مسار", "جغراف", "place", "location"),
+}
+_ROUTING_DEEP_TERMS = (
+    "تحقق",
+    "تحقيق",
+    "قارن",
+    "مقارنة",
+    "تناقض",
+    "تعارض",
+    "تتبع",
+    "اثبات",
+    "إثبات",
+    "اصل",
+    "مسار",
+    "بحث",
+    "investigate",
+    "compare",
+    "contradiction",
+    "trace",
+    "prove",
+    "explain",
+)
+_ROUTING_NOISE = {
+    "مرحبا",
+    "السلام عليكم",
+    "شكرا",
+    "شكرا لكم",
+    "كيف حالك",
+    "spam",
+    "اعلان",
+}
 
 app = FastAPI(
     title="Dawha Research API",
@@ -55,6 +131,81 @@ def normalized_text(value: str) -> str:
 
 def tokenize(value: str) -> set[str]:
     return {token for token in re.findall(r"[\w؀-ۿ]+", normalized_text(value)) if token}
+
+
+def contains_any(value: str, terms: tuple[str, ...]) -> bool:
+    normalized = normalized_text(value)
+    return any(normalized_text(term) in normalized for term in terms)
+
+
+def routing_query_type(value: str) -> str:
+    normalized = normalized_text(value)
+    scores = {
+        query_type: sum(normalized_text(term) in normalized for term in terms)
+        for query_type, terms in _ROUTING_QUERY_TERMS.items()
+    }
+    best_type = "general"
+    best_score = 0
+    for query_type in ("relationship", "source_evidence", "identity", "geography"):
+        if scores[query_type] > best_score:
+            best_type = query_type
+            best_score = scores[query_type]
+    return best_type
+
+
+def routing_decision(
+    request: "RoutingRequest", fallback: bool = False
+) -> "RoutingDecision":
+    value = normalized_text(request.text)
+    query_type = routing_query_type(value)
+    source_bearing = request.source_count > 0 or bool((request.context or "").strip())
+    contradiction = (
+        contains_any(value, _CONTRADICTION_TERMS) or request.operation == "contradiction"
+    )
+    if not value or (not source_bearing and value in _ROUTING_NOISE):
+        route = "ignore"
+        reason_code = "noise"
+        score = 0.05
+    elif contradiction:
+        route = "deep"
+        reason_code = "contradiction_signal"
+        score = 0.9
+    elif request.operation in {"duplicate_detection", "contradiction"}:
+        route = "deep"
+        reason_code = "operation_requires_deep"
+        score = 0.82
+    elif contains_any(value, _ROUTING_DEEP_TERMS):
+        route = "deep"
+        reason_code = "multi_step"
+        score = 0.86
+    elif (
+        source_bearing
+        and request.source_count >= 2
+        and query_type in {"relationship", "identity"}
+    ):
+        route = "deep"
+        reason_code = "multi_step"
+        score = 0.8
+    elif source_bearing:
+        route = "cheap"
+        reason_code = "source_context"
+        score = 0.7
+    else:
+        route = "cheap"
+        reason_code = "simple_lookup"
+        score = 0.58
+    continue_investigation = route == "deep" or contradiction or request.source_count >= 2
+    return RoutingDecision(
+        route=route,
+        query_type=query_type,
+        reason_code=reason_code,
+        source_bearing=source_bearing,
+        potential_contradiction=contradiction,
+        continue_investigation=continue_investigation,
+        operational_score=score,
+        model="deterministic-semantic-control-v1",
+        fallback=fallback,
+    )
 
 
 def clamp(value: float) -> float:
@@ -131,6 +282,41 @@ class ClassificationCandidate(BaseModel):
 class ClassificationResponse(BaseModel):
     candidates: list[ClassificationCandidate] = Field(min_length=1, max_length=20)
     model: str = "deterministic-foundation"
+    review_required: Literal[True] = True
+
+
+class RoutingRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    context: str | None = Field(default=None, max_length=20000)
+    operation: Literal[
+        "research",
+        "search",
+        "suggestion",
+        "source_processing",
+        "duplicate_detection",
+        "contradiction",
+    ] = "research"
+    source_count: int = Field(default=0, ge=0, le=10000)
+
+
+class RoutingDecision(BaseModel):
+    route: Literal["ignore", "cheap", "deep"]
+    query_type: Literal["source_evidence", "identity", "relationship", "geography", "general"]
+    reason_code: Literal[
+        "noise",
+        "simple_lookup",
+        "source_context",
+        "multi_step",
+        "contradiction_signal",
+        "operation_requires_deep",
+        "uncertainty",
+    ]
+    source_bearing: bool
+    potential_contradiction: bool
+    continue_investigation: bool
+    operational_score: float = Field(ge=0, le=1)
+    model: str = "deterministic-semantic-control-v1"
+    fallback: bool = False
     review_required: Literal[True] = True
 
 
@@ -265,6 +451,8 @@ class ResearchProvider(Protocol):
 
     def classify(self, request: ClassificationRequest) -> ClassificationResponse: ...
 
+    def route(self, request: RoutingRequest) -> RoutingDecision: ...
+
     def extract_entities(self, request: ExtractionRequest) -> EntityExtractionResponse: ...
 
     def extract_claims(self, request: ExtractionRequest) -> ClaimExtractionResponse: ...
@@ -303,6 +491,9 @@ class DeterministicProvider:
             )
         candidates.sort(key=lambda item: item.confidence, reverse=True)
         return ClassificationResponse(candidates=candidates)
+
+    def route(self, request: RoutingRequest) -> RoutingDecision:
+        return routing_decision(request)
 
     def extract_entities(self, request: ExtractionRequest) -> EntityExtractionResponse:
         values: list[str] = []
@@ -458,6 +649,11 @@ def embed(request: EmbeddingRequest) -> EmbeddingResponse:
 @app.post("/v1/classify", response_model=ClassificationResponse)
 def classify(request: ClassificationRequest) -> ClassificationResponse:
     return provider.classify(request)
+
+
+@app.post("/v1/route", response_model=RoutingDecision)
+def route(request: RoutingRequest) -> RoutingDecision:
+    return provider.route(request)
 
 
 @app.post("/v1/extract/entities", response_model=EntityExtractionResponse)

@@ -83,6 +83,28 @@ func TestValidCitationSet(t *testing.T) {
 	}
 }
 
+func TestResearchRoutingFallsBackWithoutRouteProvider(t *testing.T) {
+	service := &Service{AI: researchProviderStub{}}
+	decision, err := service.routeResearch(context.Background(), QueryInput{Question: "ما اسم المصدر؟"}, []Citation{{Title: "مصدر", Excerpt: "محمد"}})
+	if err != nil {
+		t.Fatalf("unexpected routing error: %v", err)
+	}
+	if !decision.Fallback || decision.Route != ai.RoutingRouteCheap {
+		t.Fatalf("unexpected fallback decision: %+v", decision)
+	}
+}
+
+func TestResearchRoutingContextIsBounded(t *testing.T) {
+	passages := make([]Citation, 12)
+	for index := range passages {
+		passages[index] = Citation{Title: stringsWithRunes(100), Excerpt: stringsWithRunes(4000)}
+	}
+	value := researchRoutingContext(passages)
+	if len([]rune(value)) > 18000 {
+		t.Fatalf("routing context length = %d", len([]rune(value)))
+	}
+}
+
 func TestClaimConflicts(t *testing.T) {
 	conflicts := claimConflicts([]Citation{{ID: "claim-1", Status: "contested", SourceID: "source-1"}})
 	if len(conflicts) != 1 || conflicts[0].Type != "research_claim" || conflicts[0].SourceIDs[0] != "source-1" {

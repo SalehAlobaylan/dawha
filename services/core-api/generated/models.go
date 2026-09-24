@@ -497,18 +497,27 @@ type ResearchEvidence struct {
 }
 
 type ResearchRun struct {
-	ID                   pgtype.UUID
-	QuestionID           pgtype.UUID
-	ActorID              pgtype.UUID
-	Query                string
-	NormalizedQuery      string
-	QueryType            pgtype.Text
-	Status               string
-	InsufficientEvidence bool
-	ModelVersion         pgtype.Text
-	Error                pgtype.Text
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
+	ID                                  pgtype.UUID
+	QuestionID                          pgtype.UUID
+	ActorID                             pgtype.UUID
+	Query                               string
+	NormalizedQuery                     string
+	QueryType                           pgtype.Text
+	Status                              string
+	InsufficientEvidence                bool
+	ModelVersion                        pgtype.Text
+	Error                               pgtype.Text
+	CreatedAt                           pgtype.Timestamptz
+	UpdatedAt                           pgtype.Timestamptz
+	SemanticRoute                       pgtype.Text
+	SemanticRouteModel                  pgtype.Text
+	SemanticRouteReason                 pgtype.Text
+	SemanticRouteFallback               bool
+	SemanticRouteScore                  pgtype.Float8
+	SemanticRouteSourceBearing          bool
+	SemanticRoutePotentialContradiction bool
+	SemanticRouteContinueInvestigation  bool
+	SynthesisAttempted                  bool
 }
 
 type SchemaMigration struct {

@@ -213,12 +213,13 @@ func NewHTTPProvider(baseURL string) *HTTPProvider {
 }
 
 type Client struct {
-	Provider Provider
-	Timeout  time.Duration
+	Provider     Provider
+	Timeout      time.Duration
+	RouteTimeout time.Duration
 }
 
 func NewClient(provider Provider) *Client {
-	return &Client{Provider: provider, Timeout: 20 * time.Second}
+	return &Client{Provider: provider, Timeout: 20 * time.Second, RouteTimeout: routeTimeout}
 }
 
 func NewHTTPClient(baseURL string) *Client {

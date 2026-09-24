@@ -49,6 +49,7 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pytest
       - run: ruff check .
+      - run: python -m evaluation.evaluate_routing
 
   database:
     runs-on: ubuntu-latest

@@ -293,6 +293,21 @@ export interface ResearchRetrievalStats {
   evidenceCount: number;
 }
 
+export type ResearchRoute = "ignore" | "cheap" | "deep";
+
+export interface ResearchRouting {
+  route: ResearchRoute;
+  queryType: string;
+  reasonCode: string;
+  model: string;
+  fallback: boolean;
+  operationalScore: number;
+  sourceBearing: boolean;
+  potentialContradiction: boolean;
+  continueInvestigation: boolean;
+  synthesisAttempted: boolean;
+}
+
 export interface ResearchQueryResult {
   runId: string;
   query: string;
@@ -301,6 +316,7 @@ export interface ResearchQueryResult {
   answer: string;
   insufficientEvidence: boolean;
   modelVersion?: string;
+  routing?: ResearchRouting;
   createdAt: string;
   citations: ResearchCitation[];
   layers: ResearchLayeredEvidence;

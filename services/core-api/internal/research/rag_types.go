@@ -77,6 +77,19 @@ type RetrievalStats struct {
 	EvidenceCount      int `json:"evidenceCount"`
 }
 
+type RoutingInfo struct {
+	Route                  string  `json:"route"`
+	QueryType              string  `json:"queryType"`
+	ReasonCode             string  `json:"reasonCode"`
+	Model                  string  `json:"model"`
+	Fallback               bool    `json:"fallback"`
+	OperationalScore       float64 `json:"operationalScore"`
+	SourceBearing          bool    `json:"sourceBearing"`
+	PotentialContradiction bool    `json:"potentialContradiction"`
+	ContinueInvestigation  bool    `json:"continueInvestigation"`
+	SynthesisAttempted     bool    `json:"synthesisAttempted"`
+}
+
 type QueryResult struct {
 	RunID                string          `json:"runId"`
 	Query                string          `json:"query"`
@@ -85,6 +98,7 @@ type QueryResult struct {
 	Answer               string          `json:"answer"`
 	InsufficientEvidence bool            `json:"insufficientEvidence"`
 	ModelVersion         string          `json:"modelVersion,omitempty"`
+	Routing              RoutingInfo     `json:"routing"`
 	CreatedAt            time.Time       `json:"createdAt"`
 	Citations            []Citation      `json:"citations"`
 	Layers               LayeredEvidence `json:"layers"`
@@ -102,16 +116,15 @@ func NewService(pool *pgxpool.Pool, provider ai.Provider) *Service {
 }
 
 type retrievalContext struct {
-	Input        QueryInput
-	Normalized   string
-	ActorID      string
-	Vector       []float32
-	Passages     []Citation
-	Claims       []Citation
-	Trees        []Citation
-	Findings     []Citation
-	Questions    []Citation
-	Conflicts    []Conflict
-	QueryType    string
-	ModelVersion string
+	Input      QueryInput
+	Normalized string
+	ActorID    string
+	Vector     []float32
+	Passages   []Citation
+	Claims     []Citation
+	Trees      []Citation
+	Findings   []Citation
+	Questions  []Citation
+	Conflicts  []Conflict
+	QueryType  string
 }

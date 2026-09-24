@@ -78,6 +78,41 @@ def test_invalid_classification_labels_are_rejected() -> None:
     assert response.status_code == 422
 
 
+def test_semantic_route_is_operational_and_reviewable() -> None:
+    response = client.post(
+        "/v1/route",
+        json={
+            "text": "قارن بين الرواية الأولى والثانية وابحث عن التعارض",
+            "context": "المصدر الأول يذكر والد عبدالله محمدا",
+            "operation": "research",
+            "source_count": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "deep"
+    assert body["query_type"] == "relationship"
+    assert body["reason_code"] == "contradiction_signal"
+    assert body["source_bearing"] is True
+    assert body["potential_contradiction"] is True
+    assert body["continue_investigation"] is True
+    assert 0 <= body["operational_score"] <= 1
+    assert body["review_required"] is True
+    assert "confidence" not in body
+
+
+def test_semantic_route_has_safe_ignore_and_cheap_paths() -> None:
+    ignored = client.post("/v1/route", json={"text": "مرحبا"})
+    cheap = client.post("/v1/route", json={"text": "ما اسم كتاب المصدر؟"})
+
+    assert ignored.status_code == 200
+    assert ignored.json()["route"] == "ignore"
+    assert cheap.status_code == 200
+    assert cheap.json()["route"] == "cheap"
+    assert cheap.json()["review_required"] is True
+
+
 def test_remaining_structured_outputs_are_reviewable() -> None:
     classification = client.post(
         "/v1/classify",

@@ -58,17 +58,6 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 		return QueryResult{}, ErrAIUnavailable
 	}
 	normalized := identity.NormalizeArabicName(input.Question)
-	classification, err := s.AI.Classify(ctx, ai.ClassificationRequest{
-		Text:   input.Question,
-		Labels: []string{"source_evidence", "identity", "relationship", "geography", "general"},
-	})
-	if err != nil {
-		return QueryResult{}, researchAIError(err)
-	}
-	queryType := "general"
-	if len(classification.Candidates) > 0 && allowedQueryType(classification.Candidates[0].Label) {
-		queryType = classification.Candidates[0].Label
-	}
 	embedding, err := s.AI.Embed(ctx, ai.EmbeddingRequest{Text: normalized, Dimensions: 1536})
 	if err != nil {
 		return QueryResult{}, researchAIError(err)
@@ -83,7 +72,7 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 		}
 		vector[index] = float32(value)
 	}
-	retrieval := retrievalContext{Input: input, Normalized: normalized, ActorID: actorID, Vector: vector, QueryType: queryType, ModelVersion: embedding.Model}
+	retrieval := retrievalContext{Input: input, Normalized: normalized, ActorID: actorID, Vector: vector, QueryType: "general"}
 	lexical, err := s.retrieveLexicalPassages(ctx, retrieval)
 	if err != nil {
 		return QueryResult{}, err
@@ -117,8 +106,16 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	if err := evidence.Validate(); err != nil {
 		return QueryResult{}, ErrValidation
 	}
+	routing, err := s.routeResearch(ctx, input, passages)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	if !allowedQueryType(routing.QueryType) {
+		routing.QueryType = "general"
+	}
+	retrieval.QueryType = routing.QueryType
 	conflicts := claimConflicts(retrieval.Claims)
-	if len(passages) > 0 {
+	if len(passages) > 0 && (routing.Route == ai.RoutingRouteDeep || routing.PotentialContradiction) {
 		detected, detectErr := s.detectStatementConflicts(ctx, retrieval.Passages)
 		if detectErr != nil {
 			return QueryResult{}, researchAIError(detectErr)
@@ -128,30 +125,36 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	insufficient := len(passages) == 0
 	answer := safeInsufficientAnswer
 	synthesisModel := ""
+	synthesisAttempted := false
 	if !insufficient {
-		contexts := make([]ai.SourceContext, 0, min(len(passages), 20))
-		for _, passage := range passages {
-			if len(contexts) == 20 {
-				break
+		switch routing.Route {
+		case ai.RoutingRouteDeep:
+			synthesisAttempted = true
+			contexts := make([]ai.SourceContext, 0, min(len(passages), 20))
+			for _, passage := range passages {
+				if len(contexts) == 20 {
+					break
+				}
+				contexts = append(contexts, ai.SourceContext{ID: passage.PassageID, Title: passage.Title, Text: passage.Excerpt})
 			}
-			contexts = append(contexts, ai.SourceContext{ID: passage.PassageID, Title: passage.Title, Text: passage.Excerpt})
-		}
-		response, researchErr := s.AI.ResearchQuery(ctx, ai.ResearchQueryRequest{Query: input.Question, Contexts: contexts})
-		if researchErr != nil {
-			return QueryResult{}, researchAIError(researchErr)
-		}
-		if validCitationSet(response.Citations, passages) {
-			answer = response.Answer
-			synthesisModel = response.Model
-		} else {
-			answer = "توجد أدلة مصدرية، لكن التلخيص الآلي لم يجتز تحقق الإسناد؛ راجع الأدلة مباشرة."
+			response, researchErr := s.AI.ResearchQuery(ctx, ai.ResearchQueryRequest{Query: input.Question, Contexts: contexts})
+			if researchErr != nil {
+				return QueryResult{}, researchAIError(researchErr)
+			}
+			if validCitationSet(response.Citations, passages) {
+				answer = response.Answer
+				synthesisModel = response.Model
+			} else {
+				answer = "توجد أدلة مصدرية، لكن التلخيص الآلي لم يجتز تحقق الإسناد؛ راجع الأدلة مباشرة."
+			}
+		case ai.RoutingRouteIgnore:
+			answer = "تم تجاهل هذا الطلب على أساس إشارات تشغيلية فقط؛ لا تُستخدم هذه الإجابة كقاعدة تاريخية."
+		default:
+			answer = "توجد مواد مرتبطة بالسؤال؛ راجع المقتطفات المصدرية أدناه. لم يُستخدم مسار تفكير عميق لهذه العملية."
 		}
 	}
 	if len(conflicts) > 0 && !insufficient {
 		answer = "توجد روايات أو ادعاءات متعارضة. " + answer
-	}
-	if synthesisModel == "" {
-		synthesisModel = retrieval.ModelVersion
 	}
 	layers := layeredEvidence(retrieval)
 	allCitations := append([]Citation{}, retrieval.Passages...)
@@ -163,15 +166,73 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	return QueryResult{
 		Query:                input.Question,
 		NormalizedQuery:      normalized,
-		QueryType:            queryType,
+		QueryType:            routing.QueryType,
 		Answer:               answer,
 		InsufficientEvidence: insufficient,
 		ModelVersion:         synthesisModel,
-		Citations:            allCitations,
-		Layers:               layers,
-		Conflicts:            conflicts,
-		Retrieval:            stats,
+		Routing: RoutingInfo{
+			Route:                  routing.Route,
+			QueryType:              routing.QueryType,
+			ReasonCode:             routing.ReasonCode,
+			Model:                  routing.Model,
+			Fallback:               routing.Fallback,
+			OperationalScore:       routing.OperationalScore,
+			SourceBearing:          routing.SourceBearing,
+			PotentialContradiction: routing.PotentialContradiction,
+			ContinueInvestigation:  routing.ContinueInvestigation,
+			SynthesisAttempted:     synthesisAttempted,
+		},
+		Citations: allCitations,
+		Layers:    layers,
+		Conflicts: conflicts,
+		Retrieval: stats,
 	}, nil
+}
+
+func (s *Service) routeResearch(ctx context.Context, input QueryInput, passages []Citation) (ai.RoutingDecision, error) {
+	request := ai.RoutingRequest{
+		Text:        input.Question,
+		Context:     researchRoutingContext(passages),
+		Operation:   "research",
+		SourceCount: len(passages),
+	}
+	provider, ok := s.AI.(ai.RouteProvider)
+	if !ok {
+		return ai.FallbackRoute(request), nil
+	}
+	routeCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+	result, err := provider.Route(routeCtx, request)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ai.RoutingDecision{}, ctx.Err()
+		}
+		return ai.FallbackRoute(request), nil
+	}
+	if err := ai.ValidateRoutingDecision(result); err != nil {
+		return ai.FallbackRoute(request), nil
+	}
+	return result, nil
+}
+
+func researchRoutingContext(passages []Citation) string {
+	var builder strings.Builder
+	for index, passage := range passages {
+		if index >= 10 {
+			break
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString(passage.Title)
+		builder.WriteString("\n")
+		builder.WriteString(passage.Excerpt)
+	}
+	value := []rune(builder.String())
+	if len(value) > 18000 {
+		return string(value[:18000])
+	}
+	return string(value)
 }
 
 func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string) (string, time.Time, error) {
@@ -227,9 +288,23 @@ func (s *Service) persistRun(ctx context.Context, runID string, result QueryResu
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE research_runs SET status = 'succeeded', query_type = $1, insufficient_evidence = $2, model_version = NULLIF($3, ''), updated_at = now()
-		WHERE id = $4
-	`, result.QueryType, result.InsufficientEvidence, result.ModelVersion, runID); err != nil {
+		UPDATE research_runs SET
+			status = 'succeeded',
+			query_type = $1,
+			insufficient_evidence = $2,
+			model_version = NULLIF($3, ''),
+			semantic_route = NULLIF($4, ''),
+			semantic_route_model = NULLIF($5, ''),
+			semantic_route_reason = NULLIF($6, ''),
+			semantic_route_fallback = $7,
+			semantic_route_score = $8,
+			semantic_route_source_bearing = $9,
+			semantic_route_potential_contradiction = $10,
+			semantic_route_continue_investigation = $11,
+			synthesis_attempted = $12,
+			updated_at = now()
+		WHERE id = $13
+	`, result.QueryType, result.InsufficientEvidence, result.ModelVersion, result.Routing.Route, result.Routing.Model, result.Routing.ReasonCode, result.Routing.Fallback, result.Routing.OperationalScore, result.Routing.SourceBearing, result.Routing.PotentialContradiction, result.Routing.ContinueInvestigation, result.Routing.SynthesisAttempted, runID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

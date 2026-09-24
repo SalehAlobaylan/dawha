@@ -3,7 +3,7 @@ import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, Git
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
 import { queryResearch } from "../lib/api";
-import type { EpistemicTone, ResearchCitation, ResearchQueryResult } from "../types";
+import type { EpistemicTone, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
 import { EvidenceComparison, SourceCard } from "../components/EvidencePanels";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -130,6 +130,12 @@ function researchLayerTone(layer: ResearchCitation["layer"]): EpistemicTone {
   return "question";
 }
 
+function routeLabel(route: ResearchRoute): string {
+  if (route === "ignore") return "تم تجاهل الطلب";
+  if (route === "cheap") return "مسار سريع";
+  return "مسار عميق";
+}
+
 function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
   const groups: Array<{ citations: ResearchCitation[]; label: string }> = [
     { citations: result.layers.sourceStatements, label: "عبارات المصدر" },
@@ -138,6 +144,14 @@ function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
     { citations: result.layers.platformFindings, label: "ملاحظات النظام" },
     { citations: result.layers.openQuestions, label: "أسئلة مفتوحة" },
   ].filter((group) => group.citations.length > 0);
+  const routing = result.routing;
+  const synthesisLabel = routing
+    ? routing.synthesisAttempted
+      ? "تم تشغيل التلخيص"
+      : "بلا تلخيص عميق"
+    : result.modelVersion
+      ? "تلخيص سابق"
+      : "بلا تلخيص عميق";
 
   return (
     <section className="research-result-card" aria-live="polite">
@@ -149,7 +163,7 @@ function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
         <StatusBadge tone={result.insufficientEvidence ? "disputed" : "source"}>{result.insufficientEvidence ? "أدلة غير كافية" : "مرتبطة بمصادر"}</StatusBadge>
       </div>
       <p className="research-result-answer">{result.answer}</p>
-      <div className="research-result-stats"><span><strong>{result.citations.length}</strong> مادة</span><span><strong>{result.retrieval.fusedCandidates}</strong> مرشح</span><span><strong>{result.conflicts.length}</strong> تعارض</span><span>{result.modelVersion ?? "بدون نموذج"}</span></div>
+      <div className="research-result-stats"><span><strong>{result.citations.length}</strong> مادة</span><span><strong>{result.retrieval.fusedCandidates}</strong> مرشح</span><span><strong>{result.conflicts.length}</strong> تعارض</span><span>{routing ? routeLabel(routing.route) : "مسار غير محدد"}</span><span>{synthesisLabel}</span></div>
       {result.conflicts.length > 0 ? <div className="research-conflict-list">{result.conflicts.map((conflict, index) => <div key={`${conflict.leftId}-${conflict.rightId}-${index}`}><CircleAlert size={15} /><span><strong>{conflict.status}</strong> {conflict.explanation}</span></div>)}</div> : null}
       <div className="research-evidence-groups">{groups.map((group) => <div className="research-evidence-group" key={group.label}><div className="research-evidence-group-title"><span>{group.label}</span><small>{group.citations.length}</small></div>{group.citations.map((citation) => <article className="research-evidence-item" key={`${citation.layer}-${citation.id}`}><div className="research-evidence-item-head"><StatusBadge tone={researchLayerTone(citation.layer)} compact>{researchLayerLabels[citation.layer]}</StatusBadge>{citation.rank > 0 ? <span>#{citation.rank}</span> : null}</div><strong>{citation.title || "بدون عنوان"}</strong><p>{citation.excerpt || "لا يوجد مقتطف متاح."}</p><small>{citation.locatorAr || citation.reviewStatus || citation.status || "بدون موقع"}</small></article>)}</div>)}</div>
     </section>

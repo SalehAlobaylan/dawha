@@ -48,6 +48,10 @@ func TestHTTPClientCallsAllStableContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = client.Route(context.Background(), RoutingRequest{Text: "ما اسم المصدر؟"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = client.ExtractEntities(context.Background(), ExtractionRequest{Text: "ذكر محمد"})
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +92,7 @@ func TestHTTPClientCallsAllStableContracts(t *testing.T) {
 		"/v1/normalize-name",
 		"/v1/embed",
 		"/v1/classify",
+		"/v1/route",
 		"/v1/extract/entities",
 		"/v1/extract/claims",
 		"/v1/resolve/entity",
@@ -182,6 +187,8 @@ func responseForPath(path string) string {
 		return `{"embedding":[0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1],"dimensions":16,"model":"test","deterministic":true}`
 	case "/v1/classify":
 		return `{"candidates":[{"label":"أ","confidence":0.8,"rationale":"review"}],"model":"test","review_required":true}`
+	case "/v1/route":
+		return `{"route":"cheap","query_type":"source_evidence","reason_code":"simple_lookup","source_bearing":false,"potential_contradiction":false,"continue_investigation":false,"operational_score":0.58,"model":"test","fallback":false,"review_required":true}`
 	case "/v1/extract/entities":
 		return `{"entities":[{"text":"محمد","entity_type":"person","confidence":0.8,"status":"unreviewed","rationale":"review"}],"model":"test","review_required":true}`
 	case "/v1/extract/claims":

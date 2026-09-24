@@ -1,0 +1,15 @@
+{"text":"مرحبا","context":"","operation":"research","source_count":0,"expected_route":"ignore","expected_query_type":"general","expected_reason_code":"noise"}
+{"text":"شكرا لكم","context":"","operation":"research","source_count":0,"expected_route":"ignore","expected_query_type":"general","expected_reason_code":"noise"}
+{"text":"ما اسم كتاب المصدر؟","context":"","operation":"research","source_count":0,"expected_route":"cheap","expected_query_type":"source_evidence","expected_reason_code":"simple_lookup"}
+{"text":"أين تقع المدينة القديمة؟","context":"","operation":"research","source_count":0,"expected_route":"cheap","expected_query_type":"geography","expected_reason_code":"simple_lookup"}
+{"text":"ما هو اسم الشخص؟","context":"","operation":"research","source_count":0,"expected_route":"cheap","expected_query_type":"identity","expected_reason_code":"simple_lookup"}
+{"text":"من كان الابن؟","context":"","operation":"research","source_count":0,"expected_route":"cheap","expected_query_type":"relationship","expected_reason_code":"simple_lookup"}
+{"text":"تتبع أصل النسبة عبر ثلاثة أجيال","context":"","operation":"research","source_count":0,"expected_route":"deep","expected_query_type":"relationship","expected_reason_code":"multi_step"}
+{"text":"هل يوجد تناقض بين الرواية الأولى والثانية؟","context":"","operation":"research","source_count":0,"expected_route":"deep","expected_query_type":"relationship","expected_reason_code":"contradiction_signal"}
+{"text":"ما الاسم في هذا المصدر؟","context":"المصدر يذكر اسما واضحا","operation":"research","source_count":1,"expected_route":"cheap","expected_query_type":"source_evidence","expected_reason_code":"source_context"}
+{"text":"استخرج العلاقات من النص","context":"","operation":"source_processing","source_count":0,"expected_route":"cheap","expected_query_type":"relationship","expected_reason_code":"simple_lookup"}
+{"text":"قارن الاسم مع المرشحين","context":"","operation":"duplicate_detection","source_count":0,"expected_route":"deep","expected_query_type":"identity","expected_reason_code":"operation_requires_deep"}
+{"text":"افحص الرواية","context":"","operation":"contradiction","source_count":0,"expected_route":"deep","expected_query_type":"general","expected_reason_code":"contradiction_signal"}
+{"text":"ابحث عن دليل في السجل","context":"","operation":"research","source_count":0,"expected_route":"deep","expected_query_type":"source_evidence","expected_reason_code":"multi_step"}
+{"text":"هل توجد علاقة بين المصدرين؟","context":"","operation":"research","source_count":2,"expected_route":"deep","expected_query_type":"relationship","expected_reason_code":"multi_step"}
+{"text":"Explain and trace this note","context":"","operation":"research","source_count":0,"expected_route":"deep","expected_query_type":"general","expected_reason_code":"multi_step"}

@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify ai-eval
 
 install:
 	npm install
@@ -41,3 +41,6 @@ sqlc:
 	cd services/core-api && sqlc generate
 
 verify: lint typecheck test build
+
+ai-eval:
+	cd services/ai-research && .venv/bin/python -m evaluation.evaluate_routing
