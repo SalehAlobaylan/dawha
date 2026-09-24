@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Focus, GitCompareArrows, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
+import { ArrowLeft, Focus, GitCompareArrows, GitFork, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree, updateRelationship } from "../lib/api";
 import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { CollaborationPanel } from "../components/CollaborationPanel";
+import { ForkDiffPanel } from "../components/ForkDiffPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
 import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, UpdateRelationshipInput } from "../types";
@@ -28,6 +29,8 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const [visibility, setVisibility] = useState<"private" | "unlisted" | "public">("private");
   const [editOpen, setEditOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
+  const [forkOpen, setForkOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
   const [personName, setPersonName] = useState("");
   const [personGender, setPersonGender] = useState<"male" | "female" | "unknown">("unknown");
   const [birthDateFrom, setBirthDateFrom] = useState("");
@@ -79,6 +82,8 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const currentDraft = selectedVersion.state === "draft" && selectedVersion.id === detail.tree.latestVersionId;
   const canEdit = versionReady && currentDraft && detail.permissions.canEdit;
   const canPublish = versionReady && currentDraft && detail.permissions.canPublish;
+  const canFork = versionReady && selectedVersion.state === "published" && detail.tree.id !== "tree-demo";
+  const canCompareWithUpstream = versionReady && Boolean(detail.tree.parentTreeId && detail.tree.parentVersionId);
   const queryError = resourceError;
   const showResource = !resourcePending && !resourceError && !emptyResource && loadedDetail !== undefined;
 
@@ -103,6 +108,15 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
     queryClient.setQueryData(["tree", updated.tree.id], updated);
     queryClient.setQueryData(["tree", updated.tree.id, "version", updated.selectedVersion.id], updated);
     await queryClient.invalidateQueries({ queryKey: ["trees"] });
+  };
+
+  const handleForked = (forked: TreeDetail) => {
+    void updateDetail(forked).then(() => {
+      navigateToTreeVersion(forked.tree.id, forked.selectedVersion.id);
+      setForkOpen(false);
+      setDiffOpen(false);
+      setMessage("أُنشئ التفريع كمسودة مستقلة، وبقي الأصل دون تغيير.");
+    });
   };
 
   const createMutation = useMutation({
@@ -245,7 +259,8 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
           <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)} disabled={!canEdit}><UserPlus size={15} /> تحرير المسودة</button>
           <button className="secondary-button" type="button" onClick={() => setCollaborationOpen((open) => !open)} disabled={detail.tree.id === "tree-demo"}><Share2 size={15} /> مشاركة</button>
-          <button className="secondary-button" type="button"><GitCompareArrows size={15} /> مقارنة النسخ</button>
+          <button className="secondary-button" type="button" onClick={() => { setForkOpen((open) => !open); setDiffOpen(false); }} disabled={!canFork}><GitFork size={15} /> تفريع</button>
+          <button className="secondary-button" type="button" onClick={() => { setDiffOpen((open) => !open); setForkOpen(false); }} disabled={!canCompareWithUpstream}><GitCompareArrows size={15} /> مقارنة بالأصل</button>
           <button className="primary-button" type="button" onClick={() => publishMutation.mutate()} disabled={!canPublish || publishMutation.isPending}>
             {publishMutation.isPending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />} نشر المسودة
           </button>
@@ -270,6 +285,8 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
       ) : null}
 
       {collaborationOpen ? <CollaborationPanel key={detail.tree.id} treeId={detail.tree.id} canManage={detail.permissions.canManageCollaborators} permissionLevel={detail.permissions.permissionLevel} /> : null}
+      {forkOpen ? <ForkDiffPanel key={`fork-${detail.tree.id}-${selectedVersion.id}`} detail={detail} mode="fork" onForked={handleForked} onClose={() => setForkOpen(false)} /> : null}
+      {diffOpen ? <ForkDiffPanel key={`diff-${detail.tree.id}-${selectedVersion.id}`} detail={detail} mode="diff" onForked={handleForked} onClose={() => setDiffOpen(false)} /> : null}
 
       {editOpen ? (
         <section className="tree-edit-panel">
@@ -369,6 +386,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
             })}
           </div>
           <div className="version-readonly-note"><History size={13} /> {selectedVersion.state === "draft" ? "المسودة الحالية قابلة للتحرير من صاحبها." : "هذه النسخة للقراءة فقط."}</div>
+          {detail.tree.parentTreeId && detail.tree.parentVersionId ? <div className="version-upstream-note"><GitCompareArrows size={13} /> هذا التفريع مستقل عن نسخة الأصل، ويمكنك فتح المقارنة الدلالية.</div> : null}
         </div>
       </section>
       </> : (

@@ -81,6 +81,10 @@ export interface TreeSummary {
   description: string;
   visibility: "private" | "unlisted" | "public";
   ownerId: string;
+  parentTreeId?: string;
+  parentVersionId?: string;
+  forkedBy?: string;
+  forkedAt?: string;
   updatedAt: string;
   latestVersionId: string;
   latestVersionNumber: number;
@@ -137,6 +141,70 @@ export interface TreeDetail {
   versions: TreeVersionRecord[];
   nodes: TreeNodeRecord[];
   relationships: TreeRelationshipRecord[];
+}
+
+export interface ForkTreeInput {
+  version_id: string;
+  name_ar?: string;
+  description_ar?: string;
+  visibility: "private" | "unlisted" | "public";
+}
+
+export interface TreeDiffEndpoint {
+  treeId: string;
+  treeName: string;
+  versionId: string;
+  versionNumber: number;
+}
+
+export interface TreeDiffPerson {
+  personId: string;
+  displayName: string;
+  years: string;
+}
+
+export interface TreeDiffDateChange {
+  personId: string;
+  displayName: string;
+  beforeYears: string;
+  afterYears: string;
+}
+
+export interface TreeDiffRelationship {
+  subject: string;
+  object: string;
+  predicate: string;
+  status: RelationshipStatus;
+  sourceId?: string;
+}
+
+export interface TreeDiffRelationshipChange {
+  subject: string;
+  object: string;
+  predicate: string;
+  beforeStatus: RelationshipStatus;
+  afterStatus: RelationshipStatus;
+  beforeSourceId?: string;
+  afterSourceId?: string;
+}
+
+export interface TreeDiffSourceChange {
+  sourceId: string;
+  relationshipLabel: string;
+}
+
+export interface TreeDiff {
+  from: TreeDiffEndpoint;
+  to: TreeDiffEndpoint;
+  peopleAdded: TreeDiffPerson[];
+  peopleRemoved: TreeDiffPerson[];
+  dateChanges: TreeDiffDateChange[];
+  relationshipsAdded: TreeDiffRelationship[];
+  relationshipsRemoved: TreeDiffRelationship[];
+  relationshipChanges: TreeDiffRelationshipChange[];
+  sourcesAdded: TreeDiffSourceChange[];
+  sourcesRemoved: TreeDiffSourceChange[];
+  affectedDescendants: number;
 }
 
 export interface Invitee {

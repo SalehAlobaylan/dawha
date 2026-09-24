@@ -200,6 +200,15 @@ func writeTreeError(w http.ResponseWriter, err error) {
 	case trees.ErrStaleVersion:
 		status = http.StatusConflict
 		message = err.Error()
+	case trees.ErrForkSourceNotPublished:
+		status = http.StatusConflict
+		message = err.Error()
+	case trees.ErrForkConflict:
+		status = http.StatusConflict
+		message = err.Error()
+	case trees.ErrInvalidDiff:
+		status = http.StatusBadRequest
+		message = err.Error()
 	case trees.ErrDatabaseUnavailable:
 		status = http.StatusServiceUnavailable
 		message = "tree service is not configured"

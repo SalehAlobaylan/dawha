@@ -74,6 +74,25 @@ func TestUpdateRelationshipRouteRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestForkRouteRequiresAuthentication(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trees/00000000-0000-0000-0000-000000000001/fork", strings.NewReader(`{"version_id":"00000000-0000-0000-0000-000000000002","name_ar":"نسخة","visibility":"private"}`))
+	request.Header.Set("Content-Type", "application/json")
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestDiffRouteRequiresVersionParameters(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trees/00000000-0000-0000-0000-000000000001/diff", nil)
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+}
+
 func TestTreeErrorMapping(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -85,6 +104,9 @@ func TestTreeErrorMapping(t *testing.T) {
 		{trees.ErrNoDraft, http.StatusConflict},
 		{trees.ErrDuplicateRelationship, http.StatusConflict},
 		{trees.ErrStaleVersion, http.StatusConflict},
+		{trees.ErrForkSourceNotPublished, http.StatusConflict},
+		{trees.ErrForkConflict, http.StatusConflict},
+		{trees.ErrInvalidDiff, http.StatusBadRequest},
 		{trees.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {

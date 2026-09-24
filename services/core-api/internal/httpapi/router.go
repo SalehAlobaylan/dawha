@@ -55,6 +55,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/trees/{treeID}", treeHandler.get)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions", treeHandler.versions)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions/{versionID}", treeHandler.version)
+	mux.HandleFunc("POST /api/v1/trees/{treeID}/fork", treeHandler.fork)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}/diff", treeHandler.diff)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/collaborators", collaborationHandler.listCollaborators)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/invitations", collaborationHandler.createInvitation)
 	mux.HandleFunc("PATCH /api/v1/trees/{treeID}/collaborators/{userID}", collaborationHandler.updateCollaborator)

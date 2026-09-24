@@ -5,9 +5,11 @@ import type {
   CollaboratorsResponse,
   CreateTreeInput,
   DashboardData,
+  ForkTreeInput,
   InvitationCreated,
   TreeActivity,
   TreeDetail,
+  TreeDiff,
   TreeInvitation,
   TreeSummary,
   UpdatePermissionInput,
@@ -262,6 +264,37 @@ export async function publishTree(treeId: string, note: string): Promise<TreeDet
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDetail;
+}
+
+export async function forkTree(treeId: string, input: ForkTreeInput): Promise<TreeDetail> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/fork`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TreeDetail;
+}
+
+export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string; fromVersionId: string; toVersionId: string }): Promise<TreeDiff> {
+  requireRealTree(treeId);
+  const search = new URLSearchParams({
+    from_tree_id: params.fromTreeId,
+    from_version_id: params.fromVersionId,
+    to_version_id: params.toVersionId,
+  });
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/diff?${search.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TreeDiff;
 }
 
 export async function fetchCollaborators(treeId: string): Promise<CollaboratorsResponse> {

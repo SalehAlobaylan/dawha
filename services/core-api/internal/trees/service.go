@@ -54,18 +54,22 @@ type UpdateRelationshipInput struct {
 }
 
 type TreeSummary struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	Description         string    `json:"description"`
-	Visibility          string    `json:"visibility"`
-	OwnerID             string    `json:"ownerId"`
-	UpdatedAt           time.Time `json:"updatedAt"`
-	LatestVersionID     string    `json:"latestVersionId"`
-	LatestVersionNumber int       `json:"latestVersionNumber"`
-	LatestState         string    `json:"latestState"`
-	People              int       `json:"people"`
-	Relationships       int       `json:"relationships"`
-	Unresolved          int       `json:"unresolved"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Description         string     `json:"description"`
+	Visibility          string     `json:"visibility"`
+	OwnerID             string     `json:"ownerId"`
+	ParentTreeID        string     `json:"parentTreeId,omitempty"`
+	ParentVersionID     string     `json:"parentVersionId,omitempty"`
+	ForkedBy            string     `json:"forkedBy,omitempty"`
+	ForkedAt            *time.Time `json:"forkedAt,omitempty"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+	LatestVersionID     string     `json:"latestVersionId"`
+	LatestVersionNumber int        `json:"latestVersionNumber"`
+	LatestState         string     `json:"latestState"`
+	People              int        `json:"people"`
+	Relationships       int        `json:"relationships"`
+	Unresolved          int        `json:"unresolved"`
 }
 
 type TreeVersionView struct {
@@ -476,7 +480,8 @@ func (s *Service) ListPublicTrees(ctx context.Context) ([]TreeSummary, error) {
 		return nil, ErrDatabaseUnavailable
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT t.id, t.name_ar, t.description_ar, t.visibility, t.owner_id, t.updated_at,
+		SELECT t.id, t.name_ar, t.description_ar, t.visibility, t.owner_id,
+		       t.parent_tree_id, t.parent_version_id, t.forked_by, t.forked_at, t.updated_at,
 		       tv.id, tv.version_number, tv.state,
 		       (SELECT count(*) FROM tree_nodes tn WHERE tn.tree_version_id = tv.id),
 		       (SELECT count(*) FROM tree_relationships tr WHERE tr.tree_version_id = tv.id),
@@ -510,7 +515,8 @@ func (s *Service) ListAccessibleTrees(ctx context.Context, viewerID string) ([]T
 		return nil, ErrForbidden
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT t.id, t.name_ar, t.description_ar, t.visibility, t.owner_id, t.updated_at,
+		SELECT t.id, t.name_ar, t.description_ar, t.visibility, t.owner_id,
+		       t.parent_tree_id, t.parent_version_id, t.forked_by, t.forked_at, t.updated_at,
 		       tv.id, tv.version_number, tv.state,
 		       (SELECT count(*) FROM tree_nodes tn WHERE tn.tree_version_id = tv.id),
 		       (SELECT count(*) FROM tree_relationships tr WHERE tr.tree_version_id = tv.id),
@@ -553,14 +559,20 @@ func scanTreeSummaries(rows pgx.Rows) ([]TreeSummary, error) {
 	for rows.Next() {
 		var item TreeSummary
 		var description pgtype.Text
-		var ownerID pgtype.UUID
-		var updatedAt pgtype.Timestamptz
-		var versionID pgtype.UUID
-		if err := rows.Scan(&item.ID, &item.Name, &description, &item.Visibility, &ownerID, &updatedAt, &versionID, &item.LatestVersionNumber, &item.LatestState, &item.People, &item.Relationships, &item.Unresolved); err != nil {
+		var ownerID, parentTreeID, parentVersionID, forkedBy, versionID pgtype.UUID
+		var forkedAt, updatedAt pgtype.Timestamptz
+		if err := rows.Scan(&item.ID, &item.Name, &description, &item.Visibility, &ownerID, &parentTreeID, &parentVersionID, &forkedBy, &forkedAt, &updatedAt, &versionID, &item.LatestVersionNumber, &item.LatestState, &item.People, &item.Relationships, &item.Unresolved); err != nil {
 			return nil, err
 		}
 		item.Description = textValue(description)
 		item.OwnerID = uuidString(ownerID)
+		item.ParentTreeID = uuidString(parentTreeID)
+		item.ParentVersionID = uuidString(parentVersionID)
+		item.ForkedBy = uuidString(forkedBy)
+		if forkedAt.Valid {
+			value := forkedAt.Time
+			item.ForkedAt = &value
+		}
 		item.UpdatedAt = timeValue(updatedAt)
 		item.LatestVersionID = uuidString(versionID)
 		items = append(items, item)
@@ -816,17 +828,18 @@ func (s *Service) treeSummary(ctx context.Context, id uuid.UUID) (TreeSummary, e
 func (s *Service) treeSummaryWithVisibility(ctx context.Context, id uuid.UUID, publicOnly bool) (TreeSummary, error) {
 	var item TreeSummary
 	var description pgtype.Text
-	var ownerID pgtype.UUID
-	var updatedAt pgtype.Timestamptz
+	var ownerID, parentTreeID, parentVersionID, forkedBy pgtype.UUID
+	var forkedAt, updatedAt pgtype.Timestamptz
 	query := `
-		SELECT id, name_ar, description_ar, visibility, owner_id, updated_at
+		SELECT id, name_ar, description_ar, visibility, owner_id,
+		       parent_tree_id, parent_version_id, forked_by, forked_at, updated_at
 		FROM trees
 		WHERE id = $1
 	`
 	if publicOnly {
 		query += ` AND visibility = 'public'`
 	}
-	if err := s.Pool.QueryRow(ctx, query, id).Scan(&item.ID, &item.Name, &description, &item.Visibility, &ownerID, &updatedAt); err != nil {
+	if err := s.Pool.QueryRow(ctx, query, id).Scan(&item.ID, &item.Name, &description, &item.Visibility, &ownerID, &parentTreeID, &parentVersionID, &forkedBy, &forkedAt, &updatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TreeSummary{}, ErrNotFound
 		}
@@ -834,6 +847,13 @@ func (s *Service) treeSummaryWithVisibility(ctx context.Context, id uuid.UUID, p
 	}
 	item.Description = textValue(description)
 	item.OwnerID = uuidString(ownerID)
+	item.ParentTreeID = uuidString(parentTreeID)
+	item.ParentVersionID = uuidString(parentVersionID)
+	item.ForkedBy = uuidString(forkedBy)
+	if forkedAt.Valid {
+		value := forkedAt.Time
+		item.ForkedAt = &value
+	}
 	item.UpdatedAt = timeValue(updatedAt)
 	return item, nil
 }

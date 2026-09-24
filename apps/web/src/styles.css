@@ -2541,6 +2541,214 @@ a {
   margin-top: 6px;
 }
 
+.fork-diff-panel {
+  margin-bottom: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.fork-diff-head,
+.fork-diff-title,
+.diff-endpoints,
+.diff-summary,
+.diff-impact {
+  display: flex;
+  align-items: center;
+}
+
+.fork-diff-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fork-diff-title {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.fork-diff-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(56, 111, 86, 0.22);
+  border-radius: 50%;
+  background: rgba(56, 111, 86, 0.08);
+  color: var(--green);
+}
+
+.fork-diff-head h2 {
+  margin: 6px 0 0;
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 17px;
+}
+
+.fork-diff-head p {
+  max-width: 620px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.fork-diff-message,
+.fork-diff-empty {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px dashed var(--rule);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.fork-diff-message {
+  border-style: solid;
+  border-color: rgba(56, 111, 86, 0.2);
+  background: rgba(56, 111, 86, 0.07);
+  color: var(--green);
+}
+
+.fork-diff-empty {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.fork-diff-empty p {
+  margin: 0;
+}
+
+.fork-diff-error {
+  border-color: rgba(153, 68, 56, 0.24);
+  color: var(--red);
+}
+
+.fork-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid var(--rule);
+  background: var(--canvas);
+}
+
+.fork-form .composer-label {
+  margin-top: 0;
+}
+
+.fork-form-note {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.diff-content {
+  margin-top: 18px;
+}
+
+.diff-endpoints {
+  gap: 9px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.diff-endpoints strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.diff-summary {
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.diff-summary span {
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.diff-summary strong {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+}
+
+.diff-summary .diff-impact {
+  border-color: rgba(153, 68, 56, 0.24);
+  color: var(--red);
+}
+
+.diff-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.diff-section {
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.diff-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 31px;
+  border-bottom: 1px solid rgba(110, 98, 87, 0.12);
+  color: var(--ink);
+  font-size: 9px;
+}
+
+.diff-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-line small,
+.diff-empty {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.diff-empty {
+  display: block;
+  padding-top: 9px;
+}
+
+.diff-footnote {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.version-upstream-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--green);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
 .node-empty-state {
   display: grid;
   min-height: 320px;
@@ -5314,6 +5522,33 @@ a {
   .collaboration-member-row select,
   .collaboration-member-row .icon-button {
     margin-right: 38px;
+  }
+
+  .fork-diff-panel {
+    padding: 17px;
+  }
+
+  .fork-diff-head {
+    flex-direction: column;
+  }
+
+  .fork-form,
+  .diff-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .fork-form-note {
+    grid-column: auto;
+  }
+
+  .diff-endpoints {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .diff-endpoints > svg {
+    display: none;
   }
 
   .tree-explorer-head {
