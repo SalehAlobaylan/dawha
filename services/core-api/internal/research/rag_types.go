@@ -11,23 +11,30 @@ import (
 var (
 	ErrDatabaseUnavailable = errors.New("research database is unavailable")
 	ErrAIUnavailable       = errors.New("research AI service is unavailable")
+	ErrGraphUnavailable    = errors.New("research graph retrieval is unavailable")
 	ErrValidation          = errors.New("research query is invalid")
 	ErrForbidden           = errors.New("research access is forbidden")
 	ErrNotFound            = errors.New("research resource is not found")
 )
 
 type QueryInput struct {
-	Question      string `json:"question"`
-	QuestionID    string `json:"question_id"`
-	EntityType    string `json:"entity_type,omitempty"`
-	EntityID      string `json:"entity_id,omitempty"`
-	TreeID        string `json:"tree_id,omitempty"`
-	TreeVersionID string `json:"tree_version_id,omitempty"`
-	SourceID      string `json:"source_id"`
-	PersonID      string `json:"person_id"`
-	PlaceID       string `json:"place_id"`
-	FromYear      int    `json:"from_year"`
-	ToYear        int    `json:"to_year"`
+	Question       string `json:"question"`
+	QuestionID     string `json:"question_id"`
+	EntityType     string `json:"entity_type,omitempty"`
+	EntityID       string `json:"entity_id,omitempty"`
+	TreeID         string `json:"tree_id,omitempty"`
+	TreeVersionID  string `json:"tree_version_id,omitempty"`
+	SourceID       string `json:"source_id"`
+	PersonID       string `json:"person_id"`
+	PlaceID        string `json:"place_id"`
+	FromYear       int    `json:"from_year"`
+	ToYear         int    `json:"to_year"`
+	GraphOperation string `json:"graph_operation,omitempty"`
+	GraphStartType string `json:"graph_start_type,omitempty"`
+	GraphStartID   string `json:"graph_start_id,omitempty"`
+	GraphEndType   string `json:"graph_end_type,omitempty"`
+	GraphEndID     string `json:"graph_end_id,omitempty"`
+	GraphMaxDepth  int    `json:"graph_max_depth,omitempty"`
 }
 
 type Score struct {
@@ -82,6 +89,88 @@ type RetrievalStats struct {
 	EvidenceCount      int `json:"evidenceCount"`
 }
 
+type GraphTreeScope struct {
+	TreeID        string `json:"treeId,omitempty"`
+	TreeVersionID string `json:"treeVersionId,omitempty"`
+	VersionNumber int    `json:"versionNumber,omitempty"`
+	VersionState  string `json:"versionState,omitempty"`
+}
+
+type GraphNode struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Label      string `json:"label,omitempty"`
+	PersonID   string `json:"personId,omitempty"`
+	TreeNodeID string `json:"treeNodeId,omitempty"`
+	Position   int    `json:"position"`
+}
+
+type GraphEdge struct {
+	ID                 string `json:"id"`
+	Type               string `json:"type"`
+	FromNodeID         string `json:"fromNodeId"`
+	ToNodeID           string `json:"toNodeId"`
+	Predicate          string `json:"predicate,omitempty"`
+	Status             string `json:"status,omitempty"`
+	Certainty          string `json:"certainty,omitempty"`
+	SourceID           string `json:"sourceId,omitempty"`
+	ClaimID            string `json:"claimId,omitempty"`
+	StatementID        string `json:"statementId,omitempty"`
+	PassageID          string `json:"passageId,omitempty"`
+	TreeRelationshipID string `json:"treeRelationshipId,omitempty"`
+	MigrationEventID   string `json:"migrationEventId,omitempty"`
+	FromPlaceID        string `json:"fromPlaceId,omitempty"`
+	ToPlaceID          string `json:"toPlaceId,omitempty"`
+	Position           int    `json:"position"`
+}
+
+type GraphEvidenceRef struct {
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	Layer        string `json:"layer,omitempty"`
+	Relation     string `json:"relation,omitempty"`
+	SourceID     string `json:"sourceId,omitempty"`
+	ClaimID      string `json:"claimId,omitempty"`
+	StatementID  string `json:"statementId,omitempty"`
+	PassageID    string `json:"passageId,omitempty"`
+	ReviewStatus string `json:"reviewStatus,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Certainty    string `json:"certainty,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Excerpt      string `json:"excerpt,omitempty"`
+	LocatorAR    string `json:"locatorAr,omitempty"`
+	PageNumber   *int   `json:"pageNumber,omitempty"`
+}
+
+type GraphPath struct {
+	ID               string             `json:"id"`
+	Operation        string             `json:"operation"`
+	Nodes            []GraphNode        `json:"nodes"`
+	Edges            []GraphEdge        `json:"edges"`
+	EvidenceRefs     []GraphEvidenceRef `json:"evidenceRefs"`
+	Status           string             `json:"status"`
+	Explanation      string             `json:"explanation"`
+	Depth            int                `json:"depth"`
+	Truncated        bool               `json:"truncated"`
+	EvidenceBacked   bool               `json:"evidenceBacked"`
+	StructuralOnly   bool               `json:"structuralOnly"`
+	TreeScope        GraphTreeScope     `json:"treeScope"`
+	AlgorithmVersion string             `json:"algorithmVersion"`
+}
+
+type GraphStats struct {
+	Operation        string `json:"operation,omitempty"`
+	PathCount        int    `json:"pathCount"`
+	NodeCount        int    `json:"nodeCount"`
+	EdgeCount        int    `json:"edgeCount"`
+	EvidenceCount    int    `json:"evidenceCount"`
+	Truncated        bool   `json:"truncated"`
+	PathsTruncated   bool   `json:"pathsTruncated"`
+	EdgesTruncated   bool   `json:"edgesTruncated"`
+	MaxDepth         int    `json:"maxDepth"`
+	AlgorithmVersion string `json:"algorithmVersion,omitempty"`
+}
+
 type RoutingInfo struct {
 	Route                  string  `json:"route"`
 	QueryType              string  `json:"queryType"`
@@ -109,6 +198,8 @@ type QueryResult struct {
 	Layers               LayeredEvidence `json:"layers"`
 	Conflicts            []Conflict      `json:"conflicts"`
 	Retrieval            RetrievalStats  `json:"retrieval"`
+	GraphPaths           []GraphPath     `json:"graphPaths"`
+	GraphStats           GraphStats      `json:"graphStats"`
 }
 
 type Service struct {

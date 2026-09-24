@@ -496,6 +496,75 @@ type ResearchEvidence struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ResearchGraphEdge struct {
+	ID                 pgtype.UUID
+	RunID              pgtype.UUID
+	PathID             pgtype.UUID
+	Ordinal            int32
+	EdgeReferenceID    pgtype.UUID
+	EdgeType           string
+	FromNodeID         pgtype.UUID
+	ToNodeID           pgtype.UUID
+	Predicate          pgtype.Text
+	Status             pgtype.Text
+	Certainty          pgtype.Text
+	SourceID           pgtype.UUID
+	ClaimID            pgtype.UUID
+	StatementID        pgtype.UUID
+	PassageID          pgtype.UUID
+	TreeRelationshipID pgtype.UUID
+	MigrationEventID   pgtype.UUID
+	FromPlaceID        pgtype.UUID
+	ToPlaceID          pgtype.UUID
+	Metadata           []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
+type ResearchGraphPath struct {
+	ID                pgtype.UUID
+	RunID             pgtype.UUID
+	PathKey           string
+	Operation         string
+	Status            string
+	Explanation       string
+	Depth             int32
+	Truncated         bool
+	EvidenceBacked    bool
+	StructuralOnly    bool
+	TreeID            pgtype.UUID
+	TreeVersionID     pgtype.UUID
+	TreeVersionNumber pgtype.Int4
+	TreeVersionState  pgtype.Text
+	AlgorithmVersion  string
+	Nodes             []byte
+	NodeProvenance    []byte
+	Metadata          []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
+type ResearchGraphPathEvidence struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	PathID        pgtype.UUID
+	Ordinal       int32
+	ReferenceID   pgtype.UUID
+	ReferenceType string
+	Relation      pgtype.Text
+	SourceID      pgtype.UUID
+	ClaimID       pgtype.UUID
+	StatementID   pgtype.UUID
+	PassageID     pgtype.UUID
+	ReviewStatus  pgtype.Text
+	Status        pgtype.Text
+	Certainty     pgtype.Text
+	TitleAr       pgtype.Text
+	ExcerptAr     pgtype.Text
+	LocatorAr     pgtype.Text
+	PageNumber    pgtype.Int4
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ResearchRun struct {
 	ID                                  pgtype.UUID
 	QuestionID                          pgtype.UUID
@@ -518,6 +587,9 @@ type ResearchRun struct {
 	SemanticRoutePotentialContradiction bool
 	SemanticRouteContinueInvestigation  bool
 	SynthesisAttempted                  bool
+	GraphOperation                      pgtype.Text
+	GraphMaxDepth                       pgtype.Int4
+	GraphTruncated                      pgtype.Bool
 }
 
 type ResearchRunContext struct {

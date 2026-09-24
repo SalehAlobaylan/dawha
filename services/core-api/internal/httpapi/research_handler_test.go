@@ -47,6 +47,7 @@ func TestResearchErrorMapping(t *testing.T) {
 		{research.ErrForbidden, http.StatusForbidden},
 		{research.ErrAIUnavailable, http.StatusServiceUnavailable},
 		{research.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
+		{research.ErrGraphUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {
 		recorder := httptest.NewRecorder()

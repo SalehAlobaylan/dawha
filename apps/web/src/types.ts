@@ -285,6 +285,90 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path";
+
+export interface GraphTreeScope {
+  treeId?: string;
+  treeVersionId?: string;
+  versionNumber?: number;
+  versionState?: string;
+}
+
+export interface GraphNode {
+  id: string;
+  type: string;
+  label?: string;
+  personId?: string;
+  treeNodeId?: string;
+  position: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  type: string;
+  fromNodeId: string;
+  toNodeId: string;
+  predicate?: string;
+  status?: string;
+  certainty?: string;
+  sourceId?: string;
+  claimId?: string;
+  statementId?: string;
+  passageId?: string;
+  treeRelationshipId?: string;
+  migrationEventId?: string;
+  fromPlaceId?: string;
+  toPlaceId?: string;
+  position: number;
+}
+
+export interface GraphEvidenceRef {
+  id: string;
+  type: string;
+  layer?: string;
+  relation?: string;
+  sourceId?: string;
+  claimId?: string;
+  statementId?: string;
+  passageId?: string;
+  reviewStatus?: string;
+  status?: string;
+  certainty?: string;
+  title?: string;
+  excerpt?: string;
+  locatorAr?: string;
+  pageNumber?: number;
+}
+
+export interface GraphPath {
+  id: string;
+  operation: GraphOperation;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  evidenceRefs: GraphEvidenceRef[];
+  status: string;
+  explanation: string;
+  depth: number;
+  truncated: boolean;
+  evidenceBacked: boolean;
+  structuralOnly: boolean;
+  treeScope: GraphTreeScope;
+  algorithmVersion: string;
+}
+
+export interface GraphStats {
+  operation?: GraphOperation;
+  pathCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  evidenceCount: number;
+  truncated: boolean;
+  pathsTruncated: boolean;
+  edgesTruncated: boolean;
+  maxDepth: number;
+  algorithmVersion?: string;
+}
+
 export interface ResearchRetrievalStats {
   lexicalCandidates: number;
   vectorCandidates: number;
@@ -322,6 +406,8 @@ export interface ResearchQueryResult {
   layers: ResearchLayeredEvidence;
   conflicts: ResearchConflict[];
   retrieval: ResearchRetrievalStats;
+  graphPaths: GraphPath[];
+  graphStats: GraphStats;
 }
 
 export interface ResearchQueryInput {
@@ -336,6 +422,12 @@ export interface ResearchQueryInput {
   place_id?: string;
   from_year?: number;
   to_year?: number;
+  graph_operation?: GraphOperation;
+  graph_start_type?: "person" | "family" | "branch" | "source" | "place";
+  graph_start_id?: string;
+  graph_end_type?: "person" | "family" | "branch" | "source" | "place";
+  graph_end_id?: string;
+  graph_max_depth?: number;
 }
 
 export interface ResearchWorkspaceInput {
@@ -525,6 +617,10 @@ export interface ResearchRunSummary {
   status: string;
   insufficientEvidence: boolean;
   citationCount: number;
+  graphPathCount: number;
+  graphOperation?: GraphOperation;
+  graphMaxDepth?: number;
+  graphTruncated: boolean;
   answerAr?: string;
   modelVersion?: string;
   route?: string;
@@ -542,6 +638,7 @@ export interface ResearchRunContext {
 
 export interface ResearchRunDetail extends ResearchRunSummary {
   contexts: ResearchRunContext[];
+  graphPaths: GraphPath[];
 }
 
 export interface ResearchWorkspaceSnapshot {

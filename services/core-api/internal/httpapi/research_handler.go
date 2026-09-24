@@ -120,6 +120,9 @@ func writeResearchError(w http.ResponseWriter, err error) {
 	case errors.Is(err, research.ErrForbidden):
 		status = http.StatusForbidden
 		message = err.Error()
+	case errors.Is(err, research.ErrGraphUnavailable):
+		status = http.StatusServiceUnavailable
+		message = "research graph retrieval is unavailable"
 	case errors.Is(err, research.ErrAIUnavailable), errors.Is(err, research.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
 		message = "research service is not configured"

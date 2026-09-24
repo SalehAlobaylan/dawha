@@ -45,7 +45,8 @@ export function ResearchWorkspacePage() {
     mutationFn: async () => {
       if (!snapshot) throw new Error("مساحة البحث غير جاهزة.");
       const entityType = normalizeEntityType(snapshot.context.entityType);
-      return queryResearch({ question: snapshot.context.questionTitleAr, question_id: isUuid(questionId) ? questionId : undefined, entity_type: entityType, entity_id: isUuid(snapshot.context.entityId) ? snapshot.context.entityId : undefined, tree_id: isUuid(snapshot.context.treeId) ? snapshot.context.treeId : undefined, tree_version_id: isUuid(snapshot.context.treeVersionId) ? snapshot.context.treeVersionId : undefined });
+      const graphContext = entityType && isUuid(snapshot.context.entityId);
+      return queryResearch({ question: snapshot.context.questionTitleAr, question_id: isUuid(questionId) ? questionId : undefined, entity_type: entityType, entity_id: graphContext ? snapshot.context.entityId : undefined, tree_id: isUuid(snapshot.context.treeId) ? snapshot.context.treeId : undefined, tree_version_id: isUuid(snapshot.context.treeVersionId) ? snapshot.context.treeVersionId : undefined, graph_operation: graphContext ? "branch_claims" : undefined, graph_start_type: graphContext ? entityType : undefined, graph_start_id: graphContext ? snapshot.context.entityId : undefined, graph_max_depth: graphContext ? 2 : undefined });
     },
     onSuccess: (value) => { setResult(value); setMessage("حُفظ التحقيق في السجل."); setError(""); void invalidate(); },
     onError: (value) => setError(actionError(value, "تعذر تشغيل التحقيق.")),
@@ -175,7 +176,7 @@ function NotesPanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
 }
 
 function HistoryPanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
-  return <section className="workspace-panel"><SectionHeading eyebrow="السجل" title="مسار التحقيق" description="كل تشغيل يبقى قابلاً للعودة." /><div className="workspace-list">{snapshot.history.length ? snapshot.history.map((run) => <div className="workspace-history-row" key={run.id}><div><strong>{run.query}</strong><small>{formatDate(run.createdAt)} · {run.status}</small></div><div><StatusBadge tone={run.insufficientEvidence ? "question" : "source"}>{run.insufficientEvidence ? "أدلة غير كافية" : "مدعوم"}{run.route ? ` · ${run.route}` : ""}</StatusBadge><small>{run.citationCount} مادة</small></div></div>) : <EmptyWorkspace label="لم يُشغل تحقيق في هذا السؤال بعد." />}</div></section>;
+  return <section className="workspace-panel"><SectionHeading eyebrow="السجل" title="مسار التحقيق" description="كل تشغيل يبقى قابلاً للعودة." /><div className="workspace-list">{snapshot.history.length ? snapshot.history.map((run) => <div className="workspace-history-row" key={run.id}><div><strong>{run.query}</strong><small>{formatDate(run.createdAt)} · {run.status}</small></div><div><StatusBadge tone={run.insufficientEvidence ? "question" : "source"}>{run.insufficientEvidence ? "أدلة غير كافية" : "مدعوم"}{run.route ? ` · ${run.route}` : ""}</StatusBadge><small>{run.citationCount} مادة{run.graphPathCount ? ` · ${run.graphPathCount} مسار` : ""}</small></div></div>) : <EmptyWorkspace label="لم يُشغل تحقيق في هذا السؤال بعد." />}</div></section>;
 }
 
 function EvidenceLine({ evidence }: { evidence: WorkspaceClaim["evidence"][number] }) {

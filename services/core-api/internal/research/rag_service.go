@@ -102,6 +102,19 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	if err != nil {
 		return QueryResult{}, err
 	}
+	graphPaths := make([]GraphPath, 0)
+	graphStats := GraphStats{}
+	if input.GraphOperation != "" {
+		graphResult, graphErr := s.retrieveGraph(ctx, input, actorID)
+		if graphErr != nil {
+			return QueryResult{}, graphErr
+		}
+		if validationErr := validateGraphPaths(graphResult.Paths, input.GraphMaxDepth); validationErr != nil {
+			return QueryResult{}, ErrGraphUnavailable
+		}
+		graphPaths = graphResult.Paths
+		graphStats = graphResult.Stats
+	}
 	evidence := evidencePackage(retrieval)
 	if err := evidence.Validate(); err != nil {
 		return QueryResult{}, ErrValidation
@@ -122,11 +135,15 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 		}
 		conflicts = append(conflicts, detected...)
 	}
-	insufficient := len(passages) == 0
+	graphEvidenceTotal := graphEvidenceCount(graphPaths)
+	hasGraphEvidence := graphEvidenceTotal > 0
+	insufficient := len(passages) == 0 && !hasGraphEvidence
 	answer := safeInsufficientAnswer
 	synthesisModel := ""
 	synthesisAttempted := false
-	if !insufficient {
+	if hasGraphEvidence && len(passages) == 0 {
+		answer = "توجد أدلة قابلة للتتبع داخل مسار رسومي؛ راجع المسار والعبارات المرتبطة به."
+	} else if !insufficient {
 		switch routing.Route {
 		case ai.RoutingRouteDeep:
 			synthesisAttempted = true
@@ -162,7 +179,7 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 	allCitations = append(allCitations, retrieval.Trees...)
 	allCitations = append(allCitations, retrieval.Findings...)
 	allCitations = append(allCitations, retrieval.Questions...)
-	stats.EvidenceCount = len(allCitations)
+	stats.EvidenceCount = len(allCitations) + graphEvidenceTotal
 	return QueryResult{
 		Query:                input.Question,
 		NormalizedQuery:      normalized,
@@ -182,10 +199,12 @@ func (s *Service) execute(ctx context.Context, input QueryInput, actorID string)
 			ContinueInvestigation:  routing.ContinueInvestigation,
 			SynthesisAttempted:     synthesisAttempted,
 		},
-		Citations: allCitations,
-		Layers:    layers,
-		Conflicts: conflicts,
-		Retrieval: stats,
+		Citations:  allCitations,
+		Layers:     layers,
+		Conflicts:  conflicts,
+		Retrieval:  stats,
+		GraphPaths: graphPaths,
+		GraphStats: graphStats,
 	}, nil
 }
 
@@ -246,16 +265,22 @@ func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string
 	}
 	runID := uuid.New()
 	var createdAt time.Time
+	var graphOperation any
+	var graphMaxDepth any
+	if input.GraphOperation != "" {
+		graphOperation = input.GraphOperation
+		graphMaxDepth = input.GraphMaxDepth
+	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO research_runs (id, question_id, actor_id, query, normalized_query, status)
-		VALUES ($1, $2, $3, $4, $5, 'running')
+		INSERT INTO research_runs (id, question_id, actor_id, query, normalized_query, status, graph_operation, graph_max_depth)
+		VALUES ($1, $2, $3, $4, $5, 'running', $6, $7)
 		RETURNING created_at
-	`, runID, nullableUUID(questionUUID), nullableUUID(actorUUID), input.Question, identity.NormalizeArabicName(input.Question)).Scan(&createdAt); err != nil {
+	`, runID, nullableUUID(questionUUID), nullableUUID(actorUUID), input.Question, identity.NormalizeArabicName(input.Question), graphOperation, graphMaxDepth).Scan(&createdAt); err != nil {
 		return "", time.Time{}, err
 	}
 	contexts := make([]struct {
@@ -314,6 +339,28 @@ func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string
 			role      string
 		}{"source", sourceUUID, "filter"})
 	}
+	if input.GraphOperation != "" {
+		startUUID, parseErr := uuid.Parse(input.GraphStartID)
+		if parseErr != nil {
+			return "", time.Time{}, ErrValidation
+		}
+		contexts = append(contexts, struct {
+			scopeType string
+			scopeID   uuid.UUID
+			role      string
+		}{input.GraphStartType, startUUID, "graph_start"})
+		if input.GraphEndID != "" {
+			endUUID, endErr := uuid.Parse(input.GraphEndID)
+			if endErr != nil {
+				return "", time.Time{}, ErrValidation
+			}
+			contexts = append(contexts, struct {
+				scopeType string
+				scopeID   uuid.UUID
+				role      string
+			}{input.GraphEndType, endUUID, "graph_end"})
+		}
+	}
 	if input.PlaceID != "" {
 		placeUUID, parseErr := uuid.Parse(input.PlaceID)
 		if parseErr != nil {
@@ -341,6 +388,9 @@ func (s *Service) failRun(ctx context.Context, runID string, cause error) error 
 	if errors.Is(cause, ErrAIUnavailable) {
 		message = "research AI service is unavailable"
 	}
+	if errors.Is(cause, ErrGraphUnavailable) {
+		message = "research graph retrieval is unavailable"
+	}
 	_, err := s.Pool.Exec(ctx, `UPDATE research_runs SET status = 'failed', error = $1, updated_at = now() WHERE id = $2`, message, runID)
 	return err
 }
@@ -367,6 +417,11 @@ func (s *Service) persistRun(ctx context.Context, runID string, result QueryResu
 	`, runID, result.Answer, mustJSON(citations), mustJSON(conflicts), result.InsufficientEvidence); err != nil {
 		return err
 	}
+	if result.GraphStats.Operation != "" || len(result.GraphPaths) > 0 {
+		if err := persistGraphRun(ctx, tx, runID, result); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE research_runs SET
 			status = 'succeeded',
@@ -382,9 +437,10 @@ func (s *Service) persistRun(ctx context.Context, runID string, result QueryResu
 			semantic_route_potential_contradiction = $10,
 			semantic_route_continue_investigation = $11,
 			synthesis_attempted = $12,
+			graph_truncated = $13,
 			updated_at = now()
-		WHERE id = $13
-	`, result.QueryType, result.InsufficientEvidence, result.ModelVersion, result.Routing.Route, result.Routing.Model, result.Routing.ReasonCode, result.Routing.Fallback, result.Routing.OperationalScore, result.Routing.SourceBearing, result.Routing.PotentialContradiction, result.Routing.ContinueInvestigation, result.Routing.SynthesisAttempted, runID); err != nil {
+		WHERE id = $14
+	`, result.QueryType, result.InsufficientEvidence, result.ModelVersion, result.Routing.Route, result.Routing.Model, result.Routing.ReasonCode, result.Routing.Fallback, result.Routing.OperationalScore, result.Routing.SourceBearing, result.Routing.PotentialContradiction, result.Routing.ContinueInvestigation, result.Routing.SynthesisAttempted, graphTruncatedValue(result.GraphStats, len(result.GraphPaths) > 0), runID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -399,7 +455,7 @@ func validateQueryInput(input QueryInput) (QueryInput, error) {
 	if input.Question == "" || len([]rune(input.Question)) > 2000 || input.FromYear < 0 || input.ToYear < 0 || (input.FromYear > 0 && input.ToYear > 0 && input.FromYear > input.ToYear) {
 		return QueryInput{}, ErrValidation
 	}
-	for _, value := range []struct{ target *string }{{&input.QuestionID}, {&input.EntityID}, {&input.TreeID}, {&input.TreeVersionID}, {&input.SourceID}, {&input.PersonID}, {&input.PlaceID}} {
+	for _, value := range []struct{ target *string }{{&input.QuestionID}, {&input.EntityID}, {&input.TreeID}, {&input.TreeVersionID}, {&input.SourceID}, {&input.PersonID}, {&input.PlaceID}, {&input.GraphStartID}, {&input.GraphEndID}} {
 		*value.target = strings.TrimSpace(*value.target)
 		if *value.target != "" {
 			if _, err := uuid.Parse(*value.target); err != nil {
@@ -428,7 +484,7 @@ func validateQueryInput(input QueryInput) (QueryInput, error) {
 	if input.EntityType == "person" {
 		input.PersonID = input.EntityID
 	}
-	return input, nil
+	return normalizeGraphInput(input)
 }
 
 func parseOptionalUUID(value string) (uuid.UUID, error) {

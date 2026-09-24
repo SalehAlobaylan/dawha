@@ -1,9 +1,9 @@
 import { Link, useSearch } from "@tanstack/react-router";
-import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Plus, Search, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Link2, Plus, Search, Send, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
 import { queryResearch } from "../lib/api";
-import type { EpistemicTone, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
+import type { EpistemicTone, GraphOperation, GraphPath, GraphStats, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
 import { EvidenceComparison, SourceCard } from "../components/EvidencePanels";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -20,7 +20,13 @@ export function ResearchPage() {
   const [researchResult, setResearchResult] = useState<ResearchQueryResult | null>(null);
   const [researchError, setResearchError] = useState("");
   const [researchLoading, setResearchLoading] = useState(false);
+  const [graphOperation, setGraphOperation] = useState<GraphOperation | "">("");
+  const [graphStartID, setGraphStartID] = useState("");
+  const [graphEndID, setGraphEndID] = useState("");
+  const [graphMaxDepth, setGraphMaxDepth] = useState(2);
   const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
+  const contextualEntityID = isUuid(contextSearch.entityId) ? contextSearch.entityId : "";
+  const graphStartIDValue = graphOperation === "source_entities" ? graphStartID : graphStartID || contextualEntityID;
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
     if (!normalized) return sources.slice(0, 3);
@@ -33,7 +39,17 @@ export function ResearchPage() {
     setResearchLoading(true);
     setResearchError("");
     try {
-      setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: isUuid(contextSearch.entityId) ? contextSearch.entityId : undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined }));
+      const graphStartType = graphStartTypeFor(graphOperation, contextualEntityType);
+      const graphEndRequired = graphOperation === "common_ancestor_path" || graphOperation === "evidence_connection" || graphOperation === "geographic_path";
+      const graphInput = graphOperation ? {
+        graph_operation: graphOperation,
+        graph_start_type: graphStartType,
+        graph_start_id: graphStartIDValue,
+        graph_end_type: graphOperation === "geographic_path" ? "place" as const : graphOperation === "source_entities" ? undefined : graphStartType,
+        graph_end_id: graphEndRequired ? graphEndID || undefined : undefined,
+        graph_max_depth: graphMaxDepth,
+      } : {};
+      setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: contextualEntityID || undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined, ...graphInput }));
     } catch (error) {
       setResearchResult(null);
       setResearchError(error instanceof Error ? error.message : "تعذر تشغيل البحث.");
@@ -82,6 +98,13 @@ export function ResearchPage() {
                 <button className="primary-button" type="submit" disabled={researchLoading || !researchQuestion.trim()}>{researchLoading ? "جارٍ البحث…" : "ابحث في الأدلة"}<Search size={15} /></button>
               </div>
             </form>
+            <div className="research-graph-mode">
+              <div className="research-graph-mode-copy"><GitBranch size={15} /><div><strong>مسار 관계</strong><small>اجعل الاستعلام يستخدم بنية relationships محدودة، مع إبقاء الأدلة قابلة للتتبع.</small></div></div>
+              <div className="research-graph-fields">
+                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
+                {graphOperation ? <><label>نقطة البداية<input value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : "نقطة النهاية"}<input value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}<label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label></> : null}
+              </div>
+            </div>
             {researchError ? <p className="research-query-error">{researchError}</p> : null}
             <p className="research-focus-lead">المصادر المتاحة لا تحسم اسم الأب. هل توجد علاقة اعتماد بين المصدرين، أم روايتان مستقلتان؟</p>
             <div className="focus-claims">
@@ -116,6 +139,12 @@ export function ResearchPage() {
       </div>
     </div>
   );
+}
+
+function graphStartTypeFor(operation: GraphOperation | "", entityType: "person" | "family" | "branch" | undefined): "person" | "family" | "branch" | "source" {
+  if (operation === "source_entities") return "source";
+  if (operation === "common_ancestor_path") return "person";
+  return entityType ?? "person";
 }
 
 function isUuid(value: string | undefined): boolean {
@@ -172,9 +201,26 @@ export function ResearchResultPanel({ result }: { result: ResearchQueryResult })
         <StatusBadge tone={result.insufficientEvidence ? "disputed" : "source"}>{result.insufficientEvidence ? "أدلة غير كافية" : "مرتبطة بمصادر"}</StatusBadge>
       </div>
       <p className="research-result-answer">{result.answer}</p>
-      <div className="research-result-stats"><span><strong>{result.citations.length}</strong> مادة</span><span><strong>{result.retrieval.fusedCandidates}</strong> مرشح</span><span><strong>{result.conflicts.length}</strong> تعارض</span><span>{routing ? routeLabel(routing.route) : "مسار غير محدد"}</span><span>{synthesisLabel}</span></div>
+      <div className="research-result-stats"><span><strong>{result.citations.length}</strong> مادة</span><span><strong>{result.retrieval.fusedCandidates}</strong> مرشح</span><span><strong>{result.conflicts.length}</strong> تعارض</span>{result.graphStats?.operation ? <span><strong>{result.graphStats.pathCount}</strong> مسار</span> : null}<span>{routing ? routeLabel(routing.route) : "مسار غير محدد"}</span><span>{synthesisLabel}</span></div>
+      <GraphPathsPanel paths={result.graphPaths ?? []} stats={result.graphStats} />
       {result.conflicts.length > 0 ? <div className="research-conflict-list">{result.conflicts.map((conflict, index) => <div key={`${conflict.leftId}-${conflict.rightId}-${index}`}><CircleAlert size={15} /><span><strong>{conflict.status}</strong> {conflict.explanation}</span></div>)}</div> : null}
       <div className="research-evidence-groups">{groups.map((group) => <div className="research-evidence-group" key={group.label}><div className="research-evidence-group-title"><span>{group.label}</span><small>{group.citations.length}</small></div>{group.citations.map((citation) => <article className="research-evidence-item" key={`${citation.layer}-${citation.id}`}><div className="research-evidence-item-head"><StatusBadge tone={researchLayerTone(citation.layer)} compact>{researchLayerLabels[citation.layer]}</StatusBadge>{citation.rank > 0 ? <span>#{citation.rank}</span> : null}</div><strong>{citation.title || "بدون عنوان"}</strong><p>{citation.excerpt || "لا يوجد مقتطف متاح."}</p><small>{citation.locatorAr || citation.reviewStatus || citation.status || "بدون موقع"}</small></article>)}</div>)}</div>
     </section>
   );
+}
+
+function GraphPathsPanel({ paths, stats }: { paths: GraphPath[]; stats?: GraphStats }) {
+  if (!stats?.operation && paths.length === 0) return null;
+  return <section className="research-graph-panel"><div className="research-graph-panel-head"><div><div className="eyebrow">مسار العلاقات</div><h3>بنية العلاقات القابلة للتتبع</h3></div><span>{stats?.pathCount ?? paths.length} مسار · عمق {stats?.maxDepth ?? 0}</span></div>{paths.length ? paths.map((path) => <article className="research-graph-path" key={path.id}><div className="research-graph-path-head"><div><strong>{graphOperationLabel(path.operation)}</strong><small>{path.explanation}</small></div><StatusBadge tone={graphPathTone(path)}>{path.status}</StatusBadge></div><div className="research-graph-nodes">{path.nodes.map((node, index) => <span key={`${path.id}-${node.id}-${index}`}><b>{node.label || node.id.slice(0, 8)}</b><small>{node.type}</small></span>)}</div>{path.edges.length ? <div className="research-graph-edges">{path.edges.map((edge) => <div key={`${path.id}-${edge.id}-${edge.position}`}><Link2 size={12} /><span>{edge.predicate || edge.type}</span><small>{edge.status || "بدون حالة"}{edge.sourceId ? ` · ${edge.sourceId.slice(0, 8)}` : ""}</small></div>)}</div> : null}{path.evidenceRefs.length ? <div className="research-graph-evidence">{path.evidenceRefs.map((evidence) => <div key={`${path.id}-${evidence.id}-${evidence.relation ?? ""}`}><FileSearch size={12} /><span>{evidence.title || evidence.excerpt || evidence.type}</span><small>{evidence.relation || evidence.reviewStatus || "مرجع"}</small></div>)}</div> : null}{path.truncated ? <p className="research-graph-warning"><CircleAlert size={13} /> تم قص المسار عند الحد الآمن؛ المتابعة تحتاج فحصاً إضافياً.</p> : null}{path.structuralOnly ? <p className="research-graph-warning"><CircleAlert size={13} /> هذا مسار بنيوي ولا يحتوي على دليل مصدرّي ظاهر.</p> : null}</article>) : <div className="research-graph-empty"><CircleAlert size={16} /><span>لم يُعثر على مسار ضمن النطاق المحدد.</span></div>}</section>;
+}
+
+function graphOperationLabel(operation: GraphOperation): string {
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  return labels[operation];
+}
+
+function graphPathTone(path: GraphPath): EpistemicTone {
+  if (path.status === "contested") return "disputed";
+  if (path.structuralOnly) return "interpretation";
+  return "source";
 }
