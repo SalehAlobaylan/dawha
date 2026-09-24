@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
 import { DictionaryPage } from "./components/DictionaryPage";
+import { EntityResolutionPage } from "./routes/entity-resolution";
 import { JobsPage } from "./components/JobsPage";
 import { SearchPage } from "./components/SearchPage";
 import { HomePage } from "./routes/index";
@@ -45,6 +46,12 @@ const researchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/research",
   component: ResearchPage,
+});
+
+const entityResolutionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/entity-resolution",
+  component: EntityResolutionPage,
 });
 
 const sourcesRoute = createRoute({
@@ -101,6 +108,7 @@ export const routeTree = rootRoute.addChildren([
   treeByIdRoute,
   treeVersionRoute,
   researchRoute,
+  entityResolutionRoute,
   sourcesRoute,
   placesRoute,
   questionsRoute,

@@ -19,6 +19,12 @@ import type {
   DictionaryDetail,
   DictionaryIndexResponse,
   DictionaryKind,
+  EntityResolutionCandidate,
+  EntityResolutionEntityType,
+  EntityResolutionMerge,
+  EntityResolutionMergeInput,
+  EntityResolutionReviewInput,
+  EntityResolutionRun,
   EnqueueJobInput,
   ForkTreeInput,
   InvitationCreated,
@@ -166,6 +172,110 @@ export async function queryResearch(input: ResearchQueryInput): Promise<Research
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as ResearchQueryResult;
+}
+
+export async function runEntityResolution(entityType: EntityResolutionEntityType): Promise<EntityResolutionRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API وخدمة مطابقة الهوية.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/runs`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entity_type: entityType }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as EntityResolutionRun;
+}
+
+export async function fetchEntityResolutionRun(runId: string): Promise<EntityResolutionRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as EntityResolutionRun;
+}
+
+export async function fetchEntityResolutionCandidates(status?: string, entityType?: string): Promise<EntityResolutionCandidate[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (entityType) params.set("entity_type", entityType);
+  const query = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/candidates${query ? `?${query}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: EntityResolutionCandidate[] };
+  return payload.items ?? [];
+}
+
+export async function fetchEntityResolutionMerges(): Promise<EntityResolutionMerge[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/merges`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: EntityResolutionMerge[] };
+  return payload.items ?? [];
+}
+
+export async function reviewEntityResolutionCandidate(candidateId: string, input: EntityResolutionReviewInput): Promise<EntityResolutionCandidate> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/candidates/${candidateId}/review`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as EntityResolutionCandidate;
+}
+
+export async function mergeEntityResolutionCandidate(candidateId: string, input: EntityResolutionMergeInput): Promise<EntityResolutionMerge> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/candidates/${candidateId}/merge`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as EntityResolutionMerge;
+}
+
+export async function reverseEntityResolutionMerge(mergeId: string, reasonAr: string): Promise<EntityResolutionMerge> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/merges/${mergeId}/reverse`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason_ar: reasonAr }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as EntityResolutionMerge;
 }
 
 export async function fetchPublicTrees(): Promise<TreeSummary[]> {

@@ -318,6 +318,82 @@ export interface ResearchQueryInput {
   to_year?: number;
 }
 
+export type EntityResolutionEntityType = "person" | "family" | "all";
+export type EntityResolutionMatchClass = "likely_different" | "possible_match" | "strong_candidate";
+export type EntityResolutionReviewStatus = "pending" | "approved" | "rejected" | "deferred" | "reopened" | "merged";
+
+export interface EntityResolutionRun {
+  id: string;
+  requestedBy: string;
+  entityType: EntityResolutionEntityType;
+  status: "running" | "succeeded" | "failed";
+  algorithmVersion: string;
+  normalizationVersion: string;
+  modelVersion?: string;
+  candidateCount: number;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EntityResolutionSignal {
+  kind: string;
+  detail: string;
+  score: number;
+}
+
+export interface EntityResolutionCandidate {
+  id: string;
+  runId: string;
+  entityType: "person" | "family";
+  leftEntityId: string;
+  rightEntityId: string;
+  leftNameAr: string;
+  rightNameAr: string;
+  matchClass: EntityResolutionMatchClass;
+  score: number;
+  scoreComponents: Record<string, number>;
+  matchingSignals: EntityResolutionSignal[];
+  conflictingSignals: EntityResolutionSignal[];
+  explanationAr: string;
+  reviewStatus: EntityResolutionReviewStatus;
+  candidateVersion: number;
+  requiresHumanReview: boolean;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EntityResolutionReviewInput {
+  decision: "approve" | "reject" | "defer" | "reopen";
+  note_ar?: string;
+  expected_version?: number;
+}
+
+export interface EntityResolutionMergeInput {
+  survivor_entity_id: string;
+  reason_ar: string;
+  expected_candidate_version: number;
+  confirm: boolean;
+}
+
+export interface EntityResolutionMerge {
+  id: string;
+  candidateId: string;
+  entityType: "person" | "family";
+  survivorId: string;
+  mergedId: string;
+  state: "applied" | "reversed";
+  requestedBy: string;
+  reasonAr: string;
+  appliedAt: string;
+  reversedBy?: string;
+  reversedAt?: string;
+  reversalReasonAr?: string;
+}
+
 export interface ClaimSummary {
   id: string;
   subjectType: string;

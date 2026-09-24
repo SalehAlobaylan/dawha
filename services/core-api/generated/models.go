@@ -112,6 +112,23 @@ type DisputeClaim struct {
 	Position  string
 }
 
+type EntityMerge struct {
+	ID               pgtype.UUID
+	CandidateID      pgtype.UUID
+	EntityType       string
+	SurvivorID       pgtype.UUID
+	MergedID         pgtype.UUID
+	State            string
+	BeforeSnapshot   []byte
+	AfterSnapshot    []byte
+	RequestedBy      pgtype.UUID
+	ReasonAr         string
+	AppliedAt        pgtype.Timestamptz
+	ReversedBy       pgtype.UUID
+	ReversedAt       pgtype.Timestamptz
+	ReversalReasonAr pgtype.Text
+}
+
 type EntityRelationship struct {
 	ID          pgtype.UUID
 	SubjectType string
@@ -127,6 +144,62 @@ type EntityRelationship struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type EntityResolutionBlock struct {
+	RunID      pgtype.UUID
+	EntityType string
+	EntityID   pgtype.UUID
+	BlockType  string
+	BlockKey   string
+	CreatedAt  pgtype.Timestamptz
+}
+
+type EntityResolutionCandidate struct {
+	ID                 pgtype.UUID
+	RunID              pgtype.UUID
+	EntityType         string
+	LeftEntityID       pgtype.UUID
+	RightEntityID      pgtype.UUID
+	LeftNameAr         string
+	RightNameAr        string
+	MatchClass         string
+	Score              float64
+	ScoreComponents    []byte
+	MatchingSignals    []byte
+	ConflictingSignals []byte
+	ExplanationAr      string
+	ReviewStatus       string
+	CandidateVersion   int32
+	ReviewedBy         pgtype.UUID
+	ReviewedAt         pgtype.Timestamptz
+	ReviewNoteAr       pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type EntityResolutionReview struct {
+	ID               pgtype.UUID
+	CandidateID      pgtype.UUID
+	ReviewerID       pgtype.UUID
+	Decision         string
+	NoteAr           pgtype.Text
+	CandidateVersion int32
+	CreatedAt        pgtype.Timestamptz
+}
+
+type EntityResolutionRun struct {
+	ID                   pgtype.UUID
+	RequestedBy          pgtype.UUID
+	EntityType           string
+	Status               string
+	AlgorithmVersion     string
+	NormalizationVersion string
+	ModelVersion         pgtype.Text
+	CandidateCount       int32
+	Error                pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type Family struct {
 	ID               pgtype.UUID
 	CanonicalNameAr  string
@@ -136,6 +209,9 @@ type Family struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	IdentityStatus   string
+	MergedIntoID     pgtype.UUID
+	MergedAt         pgtype.Timestamptz
 }
 
 type FamilyAlias struct {
@@ -281,6 +357,8 @@ type Person struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	MergedIntoID     pgtype.UUID
+	MergedAt         pgtype.Timestamptz
 }
 
 type PersonAlias struct {

@@ -13,6 +13,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geography"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
@@ -64,6 +65,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	questionHandler := questionHandler{Service: questionService, Auth: authService}
 	dictionaryService := dictionary.NewService(dependencies.DB)
 	dictionaryHandler := dictionaryHandler{Service: dictionaryService}
+	entityResolutionService := entityresolution.NewService(dependencies.DB, dependencies.AI)
+	entityResolutionHandler := entityResolutionHandler{Service: entityResolutionService, Auth: authService}
 	geographyService := geography.NewService(dependencies.DB)
 	geographyHandler := geographyHandler{Service: geographyService}
 	searchService := search.NewService(dependencies.DB)
@@ -103,6 +106,14 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/relationships", treeHandler.addRelationship)
 	mux.HandleFunc("PATCH /api/v1/trees/{treeID}/relationships/{relationshipID}", treeHandler.updateRelationship)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/publish", treeHandler.publish)
+	mux.HandleFunc("POST /api/v1/entity-resolution/runs", entityResolutionHandler.run)
+	mux.HandleFunc("GET /api/v1/entity-resolution/runs/{runID}", entityResolutionHandler.getRun)
+	mux.HandleFunc("GET /api/v1/entity-resolution/candidates", entityResolutionHandler.listCandidates)
+	mux.HandleFunc("GET /api/v1/entity-resolution/merges", entityResolutionHandler.listMerges)
+	mux.HandleFunc("GET /api/v1/entity-resolution/candidates/{candidateID}", entityResolutionHandler.getCandidate)
+	mux.HandleFunc("POST /api/v1/entity-resolution/candidates/{candidateID}/review", entityResolutionHandler.reviewCandidate)
+	mux.HandleFunc("POST /api/v1/entity-resolution/candidates/{candidateID}/merge", entityResolutionHandler.mergeCandidate)
+	mux.HandleFunc("POST /api/v1/entity-resolution/merges/{mergeID}/reverse", entityResolutionHandler.reverseMerge)
 	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode": "demo",
