@@ -121,9 +121,13 @@ export interface TreeRelationshipRecord {
   status: RelationshipStatus;
 }
 
+export type TreePermissionLevel = "owner" | "view" | "edit" | "review";
+
 export interface TreePermissions {
   canEdit: boolean;
   canPublish: boolean;
+  canManageCollaborators: boolean;
+  permissionLevel: TreePermissionLevel | "";
 }
 
 export interface TreeDetail {
@@ -133,6 +137,54 @@ export interface TreeDetail {
   versions: TreeVersionRecord[];
   nodes: TreeNodeRecord[];
   relationships: TreeRelationshipRecord[];
+}
+
+export interface Invitee {
+  userId: string;
+  displayName: string;
+  email?: string;
+  permissionLevel: TreePermissionLevel | "view" | "edit" | "review";
+  invitedBy?: string;
+  createdAt: string;
+}
+
+export interface TreeInvitation {
+  id: string;
+  treeId: string;
+  treeName: string;
+  inviteeUserId?: string;
+  inviteeEmail?: string;
+  permissionLevel: "view" | "edit" | "review";
+  status: "pending" | "accepted" | "revoked" | "expired";
+  expiresAt: string;
+  acceptedAt?: string;
+  createdAt: string;
+}
+
+export interface CollaboratorsResponse {
+  owner: Invitee;
+  collaborators: Invitee[];
+  invitations: TreeInvitation[];
+  canManage: boolean;
+}
+
+export interface TreeActivity {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  actorId?: string;
+  actorName?: string;
+  before?: unknown;
+  after?: unknown;
+  reasonAr?: string;
+  createdAt: string;
+}
+
+export interface InvitationCreated {
+  invitation: TreeInvitation;
+  acceptToken: string;
+  acceptPath: string;
 }
 
 export interface CreateTreeInput {
@@ -169,6 +221,10 @@ export interface UpdateRelationshipInput {
   status: RelationshipStatus;
   expected_version_id: string;
   reason_ar: string;
+}
+
+export interface UpdatePermissionInput {
+  permission_level: "view" | "edit" | "review";
 }
 
 export interface PlaceRecord {

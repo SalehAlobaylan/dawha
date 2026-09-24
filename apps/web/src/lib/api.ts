@@ -1,5 +1,18 @@
 import { demoDashboard, treeNodes } from "../data/demo";
-import type { AddPersonInput, AddRelationshipInput, CreateTreeInput, DashboardData, TreeDetail, TreeSummary, UpdateRelationshipInput } from "../types";
+import type {
+  AddPersonInput,
+  AddRelationshipInput,
+  CollaboratorsResponse,
+  CreateTreeInput,
+  DashboardData,
+  InvitationCreated,
+  TreeActivity,
+  TreeDetail,
+  TreeInvitation,
+  TreeSummary,
+  UpdatePermissionInput,
+  UpdateRelationshipInput,
+} from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
 const demoTreeId = "tree-demo";
@@ -27,7 +40,7 @@ export const demoTreeDetail: TreeDetail = {
     publishedAt: "2026-03-20T00:00:00Z",
     createdAt: "2026-03-20T00:00:00Z",
   },
-  permissions: { canEdit: false, canPublish: false },
+  permissions: { canEdit: false, canPublish: false, canManageCollaborators: false, permissionLevel: "" },
   versions: [
     {
       id: "demo-version-3",
@@ -153,7 +166,7 @@ export async function fetchTreeVersion(treeId: string, versionId: string): Promi
       ...demoTreeDetail,
       tree: { ...demoTreeDetail.tree, people: nodes.length, relationships: relationships.length, unresolved: relationships.filter((relationship) => relationship.status === "unresolved").length },
       selectedVersion: version,
-      permissions: { canEdit: false, canPublish: false },
+      permissions: { canEdit: false, canPublish: false, canManageCollaborators: false, permissionLevel: "" },
       nodes,
       relationships,
     };
@@ -249,6 +262,115 @@ export async function publishTree(treeId: string, note: string): Promise<TreeDet
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDetail;
+}
+
+export async function fetchCollaborators(treeId: string): Promise<CollaboratorsResponse> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/collaborators`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as CollaboratorsResponse;
+}
+
+export async function createInvitation(treeId: string, input: { invitee_email: string; permission_level: "view" | "edit" | "review" }): Promise<InvitationCreated> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/invitations`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as InvitationCreated;
+}
+
+export async function updateCollaboratorPermission(treeId: string, userId: string, input: UpdatePermissionInput): Promise<void> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/collaborators/${userId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+}
+
+export async function removeCollaborator(treeId: string, userId: string): Promise<void> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/collaborators/${userId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+}
+
+export async function revokeInvitation(treeId: string, invitationId: string): Promise<void> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/invitations/${invitationId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+}
+
+export async function fetchInvitations(): Promise<TreeInvitation[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الدعوات.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/invitations`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: TreeInvitation[] };
+  return payload.items ?? [];
+}
+
+export async function acceptInvitation(token: string): Promise<{ invitationId: string; treeId: string; treeName: string; permissionLevel: "view" | "edit" | "review" }> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لقبول الدعوة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/invitations/${encodeURIComponent(token)}/accept`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { invitationId: string; treeId: string; treeName: string; permissionLevel: "view" | "edit" | "review" };
+}
+
+export async function fetchTreeActivity(treeId: string): Promise<TreeActivity[]> {
+  requireRealTree(treeId);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/activity`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: TreeActivity[] };
+  return payload.items ?? [];
+}
+
+function requireRealTree(treeId: string): void {
+  if (!apiBaseUrl || treeId === demoTreeId) {
+    throw new ApiError("هذه الميزة تحتاج إلى شجرة محفوظة وCore API.", 409);
+  }
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

@@ -98,8 +98,10 @@ type TreeRelationshipView struct {
 }
 
 type TreePermissions struct {
-	CanEdit    bool `json:"canEdit"`
-	CanPublish bool `json:"canPublish"`
+	CanEdit                bool   `json:"canEdit"`
+	CanPublish             bool   `json:"canPublish"`
+	CanManageCollaborators bool   `json:"canManageCollaborators"`
+	PermissionLevel        string `json:"permissionLevel"`
 }
 
 type TreeDetail struct {
@@ -181,6 +183,9 @@ func (s *Service) CreateTree(ctx context.Context, ownerID string, input CreateTr
 	`, ownerUUID, treeID, auditValue); err != nil {
 		return TreeDetail{}, err
 	}
+	if err := writeTreeChange(ctx, tx, treeID, &versionID, ownerUUID, "tree_created", "tree", treeID, nil, map[string]any{"name": input.Name, "visibility": input.Visibility}, ""); err != nil {
+		return TreeDetail{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return TreeDetail{}, err
 	}
@@ -207,12 +212,8 @@ func (s *Service) AddPerson(ctx context.Context, treeID, ownerID string, input P
 	if err != nil {
 		return TreeDetail{}, err
 	}
-	tree, err := s.treeSummary(ctx, treeUUID)
-	if err != nil {
+	if _, err := s.treeSummary(ctx, treeUUID); err != nil {
 		return TreeDetail{}, err
-	}
-	if tree.OwnerID != ownerID {
-		return TreeDetail{}, ErrForbidden
 	}
 
 	tx, err := s.Pool.Begin(ctx)
@@ -223,6 +224,13 @@ func (s *Service) AddPerson(ctx context.Context, treeID, ownerID string, input P
 	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
 	if err != nil {
 		return TreeDetail{}, err
+	}
+	allowed, err := s.canEditDraftTx(ctx, tx, treeUUID, ownerUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if !allowed {
+		return TreeDetail{}, ErrForbidden
 	}
 
 	var sortOrder int
@@ -255,6 +263,9 @@ func (s *Service) AddPerson(ctx context.Context, treeID, ownerID string, input P
 		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
 		VALUES ($1, 'person_added', 'tree_node', $2, $3)
 	`, ownerUUID, nodeID, auditValue); err != nil {
+		return TreeDetail{}, err
+	}
+	if err := writeTreeChange(ctx, tx, treeUUID, &versionID, ownerUUID, "person_added", "tree_node", nodeID, nil, map[string]any{"display_name_ar": input.CanonicalName}, ""); err != nil {
 		return TreeDetail{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -290,12 +301,8 @@ func (s *Service) AddRelationship(ctx context.Context, treeID, ownerID string, i
 	if subjectUUID == objectUUID {
 		return TreeDetail{}, ErrValidation
 	}
-	tree, err := s.treeSummary(ctx, treeUUID)
-	if err != nil {
+	if _, err := s.treeSummary(ctx, treeUUID); err != nil {
 		return TreeDetail{}, err
-	}
-	if tree.OwnerID != ownerID {
-		return TreeDetail{}, ErrForbidden
 	}
 
 	tx, err := s.Pool.Begin(ctx)
@@ -306,6 +313,13 @@ func (s *Service) AddRelationship(ctx context.Context, treeID, ownerID string, i
 	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
 	if err != nil {
 		return TreeDetail{}, err
+	}
+	allowed, err := s.canEditDraftTx(ctx, tx, treeUUID, ownerUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if !allowed {
+		return TreeDetail{}, ErrForbidden
 	}
 	var nodeCount int
 	if err := tx.QueryRow(ctx, `
@@ -351,6 +365,9 @@ func (s *Service) AddRelationship(ctx context.Context, treeID, ownerID string, i
 	`, ownerUUID, relationshipID, auditValue); err != nil {
 		return TreeDetail{}, err
 	}
+	if err := writeTreeChange(ctx, tx, treeUUID, &versionID, ownerUUID, "relationship_added", "tree_relationship", relationshipID, nil, map[string]any{"predicate": input.Predicate, "status": input.Status}, ""); err != nil {
+		return TreeDetail{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return TreeDetail{}, err
 	}
@@ -381,12 +398,8 @@ func (s *Service) UpdateRelationship(ctx context.Context, treeID, relationshipID
 	if err != nil {
 		return TreeDetail{}, ErrValidation
 	}
-	tree, err := s.treeSummary(ctx, treeUUID)
-	if err != nil {
+	if _, err := s.treeSummary(ctx, treeUUID); err != nil {
 		return TreeDetail{}, err
-	}
-	if tree.OwnerID != ownerID {
-		return TreeDetail{}, ErrForbidden
 	}
 
 	tx, err := s.Pool.Begin(ctx)
@@ -397,6 +410,13 @@ func (s *Service) UpdateRelationship(ctx context.Context, treeID, relationshipID
 	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
 	if err != nil {
 		return TreeDetail{}, err
+	}
+	allowed, err := s.canEditDraftTx(ctx, tx, treeUUID, ownerUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if !allowed {
+		return TreeDetail{}, ErrForbidden
 	}
 	if expectedVersionUUID.String() != uuidString(versionID) {
 		return TreeDetail{}, ErrStaleVersion
@@ -440,6 +460,9 @@ func (s *Service) UpdateRelationship(ctx context.Context, treeID, relationshipID
 		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value, reason_ar)
 		VALUES ($1, 'relationship_changed', 'tree_relationship', $2, $3, $4)
 	`, ownerUUID, relationshipUUID, auditValue, input.ReasonAR); err != nil {
+		return TreeDetail{}, err
+	}
+	if err := writeTreeChange(ctx, tx, treeUUID, &versionID, ownerUUID, "relationship_changed", "tree_relationship", relationshipUUID, map[string]any{"status": previousStatus}, map[string]any{"status": input.Status}, input.ReasonAR); err != nil {
 		return TreeDetail{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -619,7 +642,11 @@ func (s *Service) getTree(ctx context.Context, treeID, viewerID, requestedVersio
 			tree.Unresolved++
 		}
 	}
-	permissions := permissionsFor(tree, viewerID, selected)
+	permissionLevel, err := s.collaboratorLevel(ctx, id, viewerID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	permissions := permissionsForAccess(tree, viewerID, selected, permissionLevel)
 	return TreeDetail{
 		Tree:            tree,
 		SelectedVersion: selected,
@@ -729,10 +756,38 @@ func (s *Service) PublishLatestDraft(ctx context.Context, treeID, ownerID, note 
 	`, ownerUUID, treeUUID, auditValue, strings.TrimSpace(note)); err != nil {
 		return TreeDetail{}, err
 	}
+	if err := writeTreeChange(ctx, tx, treeUUID, &versionID, ownerUUID, "tree_version_published", "tree", treeUUID, nil, map[string]any{"published_version": versionNumber, "next_version": versionNumber + 1}, note); err != nil {
+		return TreeDetail{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return TreeDetail{}, err
 	}
 	return s.GetTree(ctx, treeID, ownerID)
+}
+
+func (s *Service) canEditDraftTx(ctx context.Context, tx pgx.Tx, treeID, actorID uuid.UUID) (bool, error) {
+	var ownerID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT owner_id FROM trees WHERE id = $1`, treeID).Scan(&ownerID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if ownerID == actorID {
+		return true, nil
+	}
+	var permissionLevel string
+	if err := tx.QueryRow(ctx, `
+		SELECT permission_level
+		FROM tree_collaborators
+		WHERE tree_id = $1 AND user_id = $2
+	`, treeID, actorID).Scan(&permissionLevel); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return permissionLevel == "edit", nil
 }
 
 func (s *Service) lockLatestDraft(ctx context.Context, tx pgx.Tx, treeID uuid.UUID) (pgtype.UUID, int, error) {
@@ -788,8 +843,91 @@ func canViewVersionState(state string, draftVisible bool) bool {
 }
 
 func permissionsFor(tree TreeSummary, viewerID string, version TreeVersionView) TreePermissions {
-	canEdit := viewerID != "" && tree.OwnerID == viewerID && version.State == "draft"
-	return TreePermissions{CanEdit: canEdit, CanPublish: canEdit}
+	return permissionsForAccess(tree, viewerID, version, "")
+}
+
+func permissionsForAccess(tree TreeSummary, viewerID string, version TreeVersionView, permissionLevel string) TreePermissions {
+	isOwner := viewerID != "" && tree.OwnerID == viewerID
+	canEdit := version.State == "draft" && (isOwner || permissionLevel == "edit")
+	if isOwner {
+		permissionLevel = "owner"
+	}
+	return TreePermissions{
+		CanEdit:                canEdit,
+		CanPublish:             isOwner && version.State == "draft",
+		CanManageCollaborators: isOwner,
+		PermissionLevel:        permissionLevel,
+	}
+}
+
+func (s *Service) CanViewDraft(ctx context.Context, treeID, viewerID string) (bool, error) {
+	if s == nil || s.Pool == nil {
+		return false, ErrDatabaseUnavailable
+	}
+	if viewerID == "" {
+		return false, nil
+	}
+	if _, err := uuid.Parse(viewerID); err != nil {
+		return false, ErrForbidden
+	}
+	id, err := uuid.Parse(treeID)
+	if err != nil {
+		return false, ErrNotFound
+	}
+	var allowed bool
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM trees t
+			LEFT JOIN tree_collaborators tc ON tc.tree_id = t.id AND tc.user_id = $2
+			WHERE t.id = $1 AND (t.owner_id = $2 OR tc.user_id IS NOT NULL)
+		)
+	`, id, viewerID).Scan(&allowed); err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+func (s *Service) CanManageCollaborators(ctx context.Context, treeID, actorID string) (bool, error) {
+	if s == nil || s.Pool == nil {
+		return false, ErrDatabaseUnavailable
+	}
+	id, err := uuid.Parse(treeID)
+	if err != nil {
+		return false, ErrNotFound
+	}
+	actorUUID, err := uuid.Parse(actorID)
+	if err != nil {
+		return false, ErrForbidden
+	}
+	var allowed bool
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM trees WHERE id = $1 AND owner_id = $2)
+	`, id, actorUUID).Scan(&allowed); err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+func (s *Service) collaboratorLevel(ctx context.Context, treeID uuid.UUID, viewerID string) (string, error) {
+	if viewerID == "" {
+		return "", nil
+	}
+	if _, err := uuid.Parse(viewerID); err != nil {
+		return "", ErrForbidden
+	}
+	var level string
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT permission_level
+		FROM tree_collaborators
+		WHERE tree_id = $1 AND user_id = $2
+	`, treeID, viewerID).Scan(&level); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return level, nil
 }
 
 func (s *Service) canViewDraft(ctx context.Context, tree TreeSummary, viewerID string) (bool, error) {
@@ -969,6 +1107,53 @@ func scanVersionRows(rows pgx.Rows) (TreeVersionView, error) {
 	}
 	item.CreatedAt = timeValue(createdAt)
 	return item, nil
+}
+
+func writeTreeChange(ctx context.Context, tx pgx.Tx, treeID uuid.UUID, versionID any, actorID uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any, reason string) error {
+	beforeValue := marshalTreeValue(before)
+	afterValue := marshalTreeValue(after)
+	versionArg := versionIDValue(versionID)
+	var reasonArg any
+	if strings.TrimSpace(reason) != "" {
+		reasonArg = strings.TrimSpace(reason)
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO tree_change_log
+			(tree_id, tree_version_id, actor_id, action, entity_type, entity_id, before_value, after_value, reason_ar)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, treeID, versionArg, actorID, action, entityType, entityID, beforeValue, afterValue, reasonArg)
+	return err
+}
+
+func versionIDValue(value any) any {
+	switch current := value.(type) {
+	case *uuid.UUID:
+		if current != nil {
+			return *current
+		}
+	case uuid.UUID:
+		return current
+	case *pgtype.UUID:
+		if current != nil && current.Valid {
+			return uuid.UUID(current.Bytes)
+		}
+	case pgtype.UUID:
+		if current.Valid {
+			return uuid.UUID(current.Bytes)
+		}
+	}
+	return nil
+}
+
+func marshalTreeValue(value any) any {
+	if value == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 func validateCreateInput(input CreateTreeInput) (CreateTreeInput, error) {

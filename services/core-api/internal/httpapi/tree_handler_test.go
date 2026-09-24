@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 )
 
@@ -96,9 +96,49 @@ func TestTreeErrorMapping(t *testing.T) {
 	}
 }
 
-func TestTreeHandlerUsesAuthService(t *testing.T) {
-	service := auth.NewService(nil)
-	if service == nil {
-		t.Fatal("expected auth service")
+func TestCollaborationRoutesRequireAuthentication(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/collaborators"},
+		{method: http.MethodPost, path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/invitations", body: `{"invitee_email":"researcher@example.com","permission_level":"edit"}`},
+		{method: http.MethodPatch, path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/collaborators/00000000-0000-0000-0000-000000000002", body: `{"permission_level":"view"}`},
+		{method: http.MethodDelete, path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/collaborators/00000000-0000-0000-0000-000000000002"},
+		{method: http.MethodGet, path: "/api/v1/invitations"},
+		{method: http.MethodPost, path: "/api/v1/invitations/token/accept"},
+	}
+	for _, testCase := range cases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(testCase.method, testCase.path, strings.NewReader(testCase.body))
+		if testCase.body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected status %d, got %d", testCase.method, testCase.path, http.StatusUnauthorized, recorder.Code)
+		}
+	}
+}
+
+func TestCollaborationErrorMapping(t *testing.T) {
+	cases := []struct {
+		err    error
+		status int
+	}{
+		{err: collaboration.ErrValidation, status: http.StatusBadRequest},
+		{err: collaboration.ErrNotFound, status: http.StatusNotFound},
+		{err: collaboration.ErrForbidden, status: http.StatusForbidden},
+		{err: collaboration.ErrConflict, status: http.StatusConflict},
+		{err: collaboration.ErrInvitationExpired, status: http.StatusGone},
+		{err: collaboration.ErrDatabaseUnavailable, status: http.StatusServiceUnavailable},
+	}
+	for _, testCase := range cases {
+		recorder := httptest.NewRecorder()
+		writeCollaborationError(recorder, testCase.err)
+		if recorder.Code != testCase.status {
+			t.Fatalf("error %v: expected status %d, got %d", testCase.err, testCase.status, recorder.Code)
+		}
 	}
 }

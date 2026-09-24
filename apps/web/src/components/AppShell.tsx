@@ -30,7 +30,7 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
-  if (pathname === "/login") {
+  if (pathname === "/login" || pathname.startsWith("/invitation/")) {
     return <Outlet />;
   }
 

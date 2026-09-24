@@ -2251,10 +2251,294 @@ a {
   margin-top: 12px;
 }
 
-.tree-edit-actions {
+.tree-collaboration-panel {
+  margin-bottom: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.tree-collaboration-head,
+.collaboration-list-heading,
+.collaboration-member-row,
+.collaboration-invitation-row,
+.collaboration-activity-row {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+}
+
+.tree-collaboration-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.tree-collaboration-head h2 {
+  margin: 6px 0 0;
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 17px;
+}
+
+.tree-collaboration-head p {
+  max-width: 560px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.collaboration-permission {
+  flex: 0 0 auto;
+}
+
+.tree-collaboration-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.tree-collaboration-message,
+.tree-collaboration-error {
   margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 111, 86, 0.2);
+  background: rgba(56, 111, 86, 0.07);
+  color: var(--green);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.tree-collaboration-error {
+  border-color: rgba(153, 68, 56, 0.24);
+  background: rgba(153, 68, 56, 0.07);
+  color: var(--red);
+}
+
+.tree-collaboration-error a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.collaboration-invite-form {
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid var(--rule);
+  background: var(--canvas);
+}
+
+.collaboration-invite-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--ink);
+}
+
+.collaboration-invite-heading > svg {
+  flex: 0 0 auto;
+  color: var(--green);
+}
+
+.collaboration-invite-heading strong,
+.collaboration-invite-heading small {
+  display: block;
+}
+
+.collaboration-invite-heading strong {
+  font-size: 11px;
+}
+
+.collaboration-invite-heading small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.collaboration-invite-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  align-items: end;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.collaboration-invite-fields .composer-label {
+  margin-top: 0;
+}
+
+.collaboration-accept-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid rgba(56, 111, 86, 0.24);
+  background: rgba(56, 111, 86, 0.06);
+  color: var(--green);
+  font-size: 9px;
+}
+
+.collaboration-accept-link > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.collaboration-accept-link code {
+  overflow: hidden;
+  color: var(--ink);
+  direction: ltr;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-list-heading {
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.collaboration-list-heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.collaboration-list-heading small,
+.collaboration-list-heading > span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.collaboration-member-list,
+.collaboration-invitation-list,
+.collaboration-activity-list {
+  margin-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.collaboration-member-row,
+.collaboration-invitation-row,
+.collaboration-activity-row {
+  gap: 9px;
+  min-height: 53px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.collaboration-member-avatar,
+.invitation-icon {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--sand);
+  color: var(--green);
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 12px;
+}
+
+.collaboration-member-info,
+.collaboration-invitation-row > div,
+.collaboration-activity-row > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.collaboration-member-info strong,
+.collaboration-invitation-row strong,
+.collaboration-activity-row strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-member-info small,
+.collaboration-invitation-row small,
+.collaboration-activity-row small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-member-row select {
+  min-width: 82px;
+  min-height: 29px;
+  padding: 0 7px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 9px;
+}
+
+.danger-icon {
+  color: var(--red);
+}
+
+.collaboration-activity {
+  margin-top: 4px;
+  padding-bottom: 2px;
+}
+
+.collaboration-activity-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.invitation-card {
+  width: min(100%, 520px);
+}
+
+.invitation-action,
+.invitation-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 27px;
+  text-align: center;
+}
+
+.invitation-action p,
+.invitation-success p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.invitation-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+}
+
+.invitation-success > svg {
+  color: var(--green);
+}
+
+.invitation-success strong {
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 17px;
+}
+
+.invitation-success .primary-button {
+  margin-top: 6px;
 }
 
 .node-empty-state {
@@ -4995,6 +5279,41 @@ a {
 
   .tree-edit-fields {
     grid-template-columns: 1fr;
+  }
+
+  .tree-collaboration-panel {
+    padding: 17px;
+  }
+
+  .tree-collaboration-head {
+    flex-direction: column;
+  }
+
+  .collaboration-invite-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .collaboration-accept-link {
+    grid-template-columns: 1fr auto;
+  }
+
+  .collaboration-accept-link code {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .collaboration-member-row {
+    flex-wrap: wrap;
+    padding: 9px 0;
+  }
+
+  .collaboration-member-row .collaboration-member-info {
+    min-width: calc(100% - 45px);
+  }
+
+  .collaboration-member-row select,
+  .collaboration-member-row .icon-button {
+    margin-right: 38px;
   }
 
   .tree-explorer-head {

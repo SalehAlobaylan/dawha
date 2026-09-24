@@ -68,6 +68,14 @@ func TestVersionVisibilityAndPermissions(t *testing.T) {
 	if otherPermissions.CanEdit || otherPermissions.CanPublish {
 		t.Fatalf("non-owner permissions were granted: %+v", otherPermissions)
 	}
+	editPermissions := permissionsForAccess(tree, "editor", TreeVersionView{State: "draft"}, "edit")
+	if !editPermissions.CanEdit || editPermissions.CanPublish || editPermissions.CanManageCollaborators {
+		t.Fatalf("edit collaborator permissions were incorrect: %+v", editPermissions)
+	}
+	reviewPermissions := permissionsForAccess(tree, "reviewer", TreeVersionView{State: "draft"}, "review")
+	if reviewPermissions.CanEdit || reviewPermissions.CanPublish {
+		t.Fatalf("review collaborator permissions were incorrect: %+v", reviewPermissions)
+	}
 }
 
 func TestValidatePersonInputNormalizesDefaults(t *testing.T) {

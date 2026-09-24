@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
@@ -42,6 +43,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	authHandler := auth.Handler{Service: authService, SecureCookies: dependencies.SecureCookies}
 	treeService := trees.NewService(dependencies.DB)
 	treeHandler := treeHandler{Service: treeService, Auth: authService}
+	collaborationService := collaboration.NewService(dependencies.DB)
+	collaborationHandler := collaborationHandler{Service: collaborationService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +55,14 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/trees/{treeID}", treeHandler.get)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions", treeHandler.versions)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions/{versionID}", treeHandler.version)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}/collaborators", collaborationHandler.listCollaborators)
+	mux.HandleFunc("POST /api/v1/trees/{treeID}/invitations", collaborationHandler.createInvitation)
+	mux.HandleFunc("PATCH /api/v1/trees/{treeID}/collaborators/{userID}", collaborationHandler.updateCollaborator)
+	mux.HandleFunc("DELETE /api/v1/trees/{treeID}/collaborators/{userID}", collaborationHandler.removeCollaborator)
+	mux.HandleFunc("DELETE /api/v1/trees/{treeID}/invitations/{invitationID}", collaborationHandler.revokeInvitation)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}/activity", collaborationHandler.listActivity)
+	mux.HandleFunc("GET /api/v1/invitations", collaborationHandler.listInvitations)
+	mux.HandleFunc("POST /api/v1/invitations/{token}/accept", collaborationHandler.acceptInvitation)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/people", treeHandler.addPerson)
 	mux.HandleFunc("POST /api/v1/trees/{treeID}/relationships", treeHandler.addRelationship)
 	mux.HandleFunc("PATCH /api/v1/trees/{treeID}/relationships/{relationshipID}", treeHandler.updateRelationship)

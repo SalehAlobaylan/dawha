@@ -449,6 +449,21 @@ type Tree struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type TreeChangeLog struct {
+	ID            pgtype.UUID
+	TreeID        pgtype.UUID
+	TreeVersionID pgtype.UUID
+	ActorID       pgtype.UUID
+	Action        string
+	EntityType    string
+	EntityID      pgtype.UUID
+	BeforeValue   []byte
+	AfterValue    []byte
+	ReasonAr      pgtype.Text
+	RequestID     pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+}
+
 type TreeCollaborator struct {
 	TreeID          pgtype.UUID
 	UserID          pgtype.UUID

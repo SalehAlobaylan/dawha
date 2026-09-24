@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree, updateRelationship } from "../lib/api";
 import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
+import { CollaborationPanel } from "../components/CollaborationPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
 import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, UpdateRelationshipInput } from "../types";
@@ -26,6 +27,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const [firstPerson, setFirstPerson] = useState("");
   const [visibility, setVisibility] = useState<"private" | "unlisted" | "public">("private");
   const [editOpen, setEditOpen] = useState(false);
+  const [collaborationOpen, setCollaborationOpen] = useState(false);
   const [personName, setPersonName] = useState("");
   const [personGender, setPersonGender] = useState<"male" | "female" | "unknown">("unknown");
   const [birthDateFrom, setBirthDateFrom] = useState("");
@@ -242,7 +244,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
         <div className="toolbar-button-group">
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
           <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)} disabled={!canEdit}><UserPlus size={15} /> تحرير المسودة</button>
-          <button className="secondary-button" type="button"><Share2 size={15} /> مشاركة</button>
+          <button className="secondary-button" type="button" onClick={() => setCollaborationOpen((open) => !open)} disabled={detail.tree.id === "tree-demo"}><Share2 size={15} /> مشاركة</button>
           <button className="secondary-button" type="button"><GitCompareArrows size={15} /> مقارنة النسخ</button>
           <button className="primary-button" type="button" onClick={() => publishMutation.mutate()} disabled={!canPublish || publishMutation.isPending}>
             {publishMutation.isPending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />} نشر المسودة
@@ -267,13 +269,15 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
         </form>
       ) : null}
 
+      {collaborationOpen ? <CollaborationPanel key={detail.tree.id} treeId={detail.tree.id} canManage={detail.permissions.canManageCollaborators} permissionLevel={detail.permissions.permissionLevel} /> : null}
+
       {editOpen ? (
         <section className="tree-edit-panel">
           <div className="tree-edit-head">
             <div><div className="eyebrow">تعديل تفسيري</div><h2>حرّر المسودة الحالية</h2><p>كل إضافة تُحفظ داخل نسخة الشجرة، ولا تتحول تلقائياً إلى حقيقة تاريخية.</p></div>
             <StatusBadge tone="claim">نسخة محفوظة</StatusBadge>
           </div>
-          {!canEdit ? <p className="tree-edit-note">هذه نسخة منشورة أو تجريبية. لا يتم تفعيل التحرير إلا على مسودة صاحب الشجرة الحالية.</p> : (
+          {!canEdit ? <p className="tree-edit-note">هذه نسخة منشورة أو تجريبية. التحرير متاح على المسودة الحالية لصاحب الشجرة أو لمتعاون بصلاحية تحرير.</p> : (
             <div className="tree-edit-grid">
               <form className="tree-edit-form" onSubmit={submitPerson}>
                 <div className="tree-edit-form-head"><div><h3>إضافة شخص</h3><p>أضف الاسم كما يظهر في السجل، مع تواريخ تقريبية عند توفرها.</p></div><UserPlus size={17} /></div>

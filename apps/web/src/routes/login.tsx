@@ -5,6 +5,11 @@ import { BrandMark } from "../components/BrandMark";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
 
+function getReturnPath(): string {
+  const candidate = new URLSearchParams(window.location.search).get("returnTo");
+  return candidate && candidate.startsWith("/invitation/") && !candidate.startsWith("//") ? candidate : "/";
+}
+
 export function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -36,7 +41,7 @@ export function LoginPage() {
         setMessage(result.error ?? "تعذر إكمال العملية.");
         return;
       }
-      window.location.assign("/");
+      window.location.assign(getReturnPath());
     } catch {
       setMessage("تعذر الاتصال بالخدمة. حاول مرة أخرى.");
     } finally {

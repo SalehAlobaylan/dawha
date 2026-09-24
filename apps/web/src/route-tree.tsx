@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
 import { HomePage } from "./routes/index";
+import { InvitationPage } from "./routes/invitation";
 import { LoginPage } from "./routes/login";
 import { PlacesPage } from "./routes/places";
 import { QuestionsPage } from "./routes/questions";
@@ -67,6 +68,12 @@ const loginRoute = createRoute({
   component: LoginPage,
 });
 
+const invitationRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/invitation/$token",
+  component: InvitationPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   treeRoute,
@@ -77,4 +84,5 @@ export const routeTree = rootRoute.addChildren([
   placesRoute,
   questionsRoute,
   loginRoute,
+  invitationRoute,
 ]);

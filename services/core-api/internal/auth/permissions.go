@@ -34,11 +34,13 @@ type Actor struct {
 }
 
 type Resource struct {
-	Type            string
-	OwnerID         string
-	Visibility      string
-	CollaboratorIDs []string
-	CanEditResearch bool
+	Type                   string
+	OwnerID                string
+	Visibility             string
+	CollaboratorIDs        []string
+	CollaboratorPermission string
+	VersionState           string
+	CanEditResearch        bool
 }
 
 func (a Actor) hasRole(role Role) bool {
@@ -65,28 +67,34 @@ func (a Actor) isCollaborator(resource Resource) bool {
 func Can(actor Actor, permission Permission, resource Resource) bool {
 	isOwner := actor.UserID != "" && actor.UserID == resource.OwnerID
 	isCollaborator := actor.isCollaborator(resource)
-	isPublic := resource.Visibility == "public" || resource.Visibility == "unlisted"
+	isPublic := resource.Visibility == "public"
+	isDraft := resource.VersionState == "draft"
+	canEditAsCollaborator := isCollaborator && resource.CollaboratorPermission == "edit" && isDraft
+	canReviewAsCollaborator := isCollaborator && (resource.CollaboratorPermission == "edit" || resource.CollaboratorPermission == "review")
 	hasRegisteredRole := actor.hasRole(RoleRegistered) || actor.hasRole(RoleTreeOwner) || actor.hasRole(RoleCollaborator) || actor.hasRole(RoleResearcher) || actor.hasRole(RoleModerator) || actor.hasRole(RoleAdmin)
 	hasResearchRole := actor.hasRole(RoleResearcher) || actor.hasRole(RoleModerator) || actor.hasRole(RoleAdmin)
 	hasModerationRole := actor.hasRole(RoleModerator) || actor.hasRole(RoleAdmin)
 
 	if permission == TreeRead {
-		return isPublic || isOwner || isCollaborator || hasResearchRole
+		return isPublic || isOwner || isCollaborator
 	}
 	if permission == TreeCreate || permission == SourceCreate || permission == ClaimCreate {
 		return hasRegisteredRole
 	}
 	if permission == TreeEdit {
-		return isOwner || isCollaborator || hasResearchRole
+		return isDraft && (isOwner || canEditAsCollaborator)
 	}
-	if permission == TreePublish || permission == TreeInvite {
+	if permission == TreePublish {
+		return isDraft && isOwner
+	}
+	if permission == TreeInvite {
 		return isOwner
 	}
 	if permission == ClaimReview || permission == SourceReview {
-		return hasResearchRole || (resource.CanEditResearch && (isOwner || isCollaborator))
+		return hasResearchRole || (resource.CanEditResearch && (isOwner || canReviewAsCollaborator))
 	}
 	if permission == QuestionManage {
-		return hasResearchRole || isOwner || isCollaborator
+		return hasResearchRole || isOwner || canReviewAsCollaborator
 	}
 	if permission == ModerationReview {
 		return hasModerationRole

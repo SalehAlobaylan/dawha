@@ -17,6 +17,11 @@ describe("tree routes", () => {
     expect(router.buildLocation({ to: "/tree/$treeId/versions/$versionId", params: { treeId: "tree-1", versionId: "version-2" } }).href).toBe("/tree/tree-1/versions/version-2");
   });
 
+  it("builds an addressable invitation route", () => {
+    const router = makeRouter("/invitation/token-1");
+    expect(router.buildLocation({ to: "/invitation/$token", params: { token: "token-1" } }).href).toBe("/invitation/token-1");
+  });
+
   it("keeps the static tree route separate from dynamic resources", () => {
     const router = makeRouter("/tree/tree-1/versions/version-2");
     expect(router.state.location.pathname).toBe("/tree/tree-1/versions/version-2");
