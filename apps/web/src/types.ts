@@ -53,6 +53,7 @@ export interface DashboardData {
 
 export interface TreeNode {
   id: string;
+  personId: string;
   name: string;
   role: string;
   years: string;
@@ -118,8 +119,15 @@ export interface TreeRelationshipRecord {
   status: "interpreted" | "disputed" | "unresolved";
 }
 
+export interface TreePermissions {
+  canEdit: boolean;
+  canPublish: boolean;
+}
+
 export interface TreeDetail {
   tree: TreeSummary;
+  selectedVersion: TreeVersionRecord;
+  permissions: TreePermissions;
   versions: TreeVersionRecord[];
   nodes: TreeNodeRecord[];
   relationships: TreeRelationshipRecord[];

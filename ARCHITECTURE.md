@@ -1179,6 +1179,7 @@ POST   /api/v1/trees/{treeID}/relationships
 POST   /api/v1/trees/{treeID}/publish
 POST   /api/v1/trees/{treeID}/fork
 GET    /api/v1/trees/{treeID}/versions
+GET    /api/v1/trees/{treeID}/versions/{versionID}
 
 GET    /api/v1/people/{personID}
 GET    /api/v1/families/{familyID}

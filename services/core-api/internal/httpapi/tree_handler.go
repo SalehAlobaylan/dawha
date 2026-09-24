@@ -45,6 +45,16 @@ func (h treeHandler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+func (h treeHandler) version(w http.ResponseWriter, r *http.Request) {
+	viewerID := h.optionalUserID(r)
+	detail, err := h.Service.GetTreeVersion(r.Context(), r.PathValue("treeID"), r.PathValue("versionID"), viewerID)
+	if err != nil {
+		writeTreeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
 func (h treeHandler) versions(w http.ResponseWriter, r *http.Request) {
 	viewerID := h.optionalUserID(r)
 	items, err := h.Service.ListVersions(r.Context(), r.PathValue("treeID"), viewerID)

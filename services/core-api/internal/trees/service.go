@@ -90,11 +90,18 @@ type TreeRelationshipView struct {
 	Status        string `json:"status"`
 }
 
+type TreePermissions struct {
+	CanEdit    bool `json:"canEdit"`
+	CanPublish bool `json:"canPublish"`
+}
+
 type TreeDetail struct {
-	Tree          TreeSummary            `json:"tree"`
-	Versions      []TreeVersionView      `json:"versions"`
-	Nodes         []TreeNodeView         `json:"nodes"`
-	Relationships []TreeRelationshipView `json:"relationships"`
+	Tree            TreeSummary            `json:"tree"`
+	SelectedVersion TreeVersionView        `json:"selectedVersion"`
+	Permissions     TreePermissions        `json:"permissions"`
+	Versions        []TreeVersionView      `json:"versions"`
+	Nodes           []TreeNodeView         `json:"nodes"`
+	Relationships   []TreeRelationshipView `json:"relationships"`
 }
 
 type Service struct {
@@ -441,6 +448,14 @@ func scanTreeSummaries(rows pgx.Rows) ([]TreeSummary, error) {
 }
 
 func (s *Service) GetTree(ctx context.Context, treeID, viewerID string) (TreeDetail, error) {
+	return s.getTree(ctx, treeID, viewerID, "")
+}
+
+func (s *Service) GetTreeVersion(ctx context.Context, treeID, versionID, viewerID string) (TreeDetail, error) {
+	return s.getTree(ctx, treeID, viewerID, versionID)
+}
+
+func (s *Service) getTree(ctx context.Context, treeID, viewerID, requestedVersionID string) (TreeDetail, error) {
 	if s == nil || s.Pool == nil {
 		return TreeDetail{}, ErrDatabaseUnavailable
 	}
@@ -459,25 +474,46 @@ func (s *Service) GetTree(ctx context.Context, treeID, viewerID string) (TreeDet
 	if !allowed {
 		return TreeDetail{}, ErrForbidden
 	}
-	version, err := s.latestVersion(ctx, id, publishedOnlyForViewer(tree, viewerID))
+	draftVisible, err := s.canViewDraft(ctx, tree, viewerID)
 	if err != nil {
 		return TreeDetail{}, err
 	}
-	versions, err := s.versions(ctx, id, publishedOnlyForViewer(tree, viewerID))
+
+	var selected TreeVersionView
+	if requestedVersionID == "" {
+		selected, err = s.latestVersion(ctx, id, !draftVisible)
+	} else {
+		versionUUID, parseErr := uuid.Parse(requestedVersionID)
+		if parseErr != nil {
+			return TreeDetail{}, ErrNotFound
+		}
+		selected, err = s.version(ctx, id, versionUUID)
+		if err == nil && !canViewVersionState(selected.State, draftVisible) {
+			return TreeDetail{}, ErrNotFound
+		}
+	}
 	if err != nil {
 		return TreeDetail{}, err
 	}
-	nodes, err := s.nodes(ctx, version.ID)
+	latest, err := s.latestVersion(ctx, id, !draftVisible)
 	if err != nil {
 		return TreeDetail{}, err
 	}
-	relationships, err := s.relationships(ctx, version.ID)
+	versions, err := s.versions(ctx, id, !draftVisible)
 	if err != nil {
 		return TreeDetail{}, err
 	}
-	tree.LatestVersionID = version.ID
-	tree.LatestVersionNumber = version.Number
-	tree.LatestState = version.State
+	nodes, err := s.nodes(ctx, selected.ID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	relationships, err := s.relationships(ctx, selected.ID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	tree.LatestVersionID = latest.ID
+	tree.LatestVersionNumber = latest.Number
+	tree.LatestState = latest.State
 	tree.People = len(nodes)
 	tree.Relationships = len(relationships)
 	for _, relationship := range relationships {
@@ -485,7 +521,15 @@ func (s *Service) GetTree(ctx context.Context, treeID, viewerID string) (TreeDet
 			tree.Unresolved++
 		}
 	}
-	return TreeDetail{Tree: tree, Versions: versions, Nodes: nodes, Relationships: relationships}, nil
+	permissions := permissionsFor(tree, viewerID, selected)
+	return TreeDetail{
+		Tree:            tree,
+		SelectedVersion: selected,
+		Permissions:     permissions,
+		Versions:        versions,
+		Nodes:           nodes,
+		Relationships:   relationships,
+	}, nil
 }
 
 func (s *Service) ListVersions(ctx context.Context, treeID, viewerID string) ([]TreeVersionView, error) {
@@ -507,7 +551,11 @@ func (s *Service) ListVersions(ctx context.Context, treeID, viewerID string) ([]
 	if !allowed {
 		return nil, ErrForbidden
 	}
-	return s.versions(ctx, id, publishedOnlyForViewer(tree, viewerID))
+	draftVisible, err := s.canViewDraft(ctx, tree, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	return s.versions(ctx, id, !draftVisible)
 }
 
 func (s *Service) PublishLatestDraft(ctx context.Context, treeID, ownerID, note string) (TreeDetail, error) {
@@ -637,8 +685,27 @@ func (s *Service) treeSummaryWithVisibility(ctx context.Context, id uuid.UUID, p
 	return item, nil
 }
 
-func publishedOnlyForViewer(tree TreeSummary, viewerID string) bool {
-	return tree.Visibility == "public" && tree.OwnerID != viewerID
+func canViewVersionState(state string, draftVisible bool) bool {
+	return state == "published" || draftVisible
+}
+
+func permissionsFor(tree TreeSummary, viewerID string, version TreeVersionView) TreePermissions {
+	canEdit := viewerID != "" && tree.OwnerID == viewerID && version.State == "draft"
+	return TreePermissions{CanEdit: canEdit, CanPublish: canEdit}
+}
+
+func (s *Service) canViewDraft(ctx context.Context, tree TreeSummary, viewerID string) (bool, error) {
+	if viewerID == "" {
+		return false, nil
+	}
+	if tree.OwnerID == viewerID {
+		return true, nil
+	}
+	var count int
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM tree_collaborators WHERE tree_id = $1 AND user_id = $2`, tree.ID, viewerID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *Service) canView(ctx context.Context, tree TreeSummary, viewerID string) (bool, error) {
@@ -656,6 +723,14 @@ func (s *Service) canView(ctx context.Context, tree TreeSummary, viewerID string
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *Service) version(ctx context.Context, treeID, versionID uuid.UUID) (TreeVersionView, error) {
+	return s.scanVersion(s.Pool.QueryRow(ctx, `
+		SELECT id, version_number, state, publication_note_ar, published_at, created_at
+		FROM tree_versions
+		WHERE tree_id = $1 AND id = $2
+	`, treeID, versionID))
 }
 
 func (s *Service) latestVersion(ctx context.Context, treeID uuid.UUID, publishedOnly bool) (TreeVersionView, error) {

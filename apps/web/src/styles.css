@@ -2557,9 +2557,24 @@ a {
   color: var(--surface);
 }
 
-.detail-cta:hover {
-  background: var(--red);
-  border-color: var(--red);
+.node-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.node-detail-actions .secondary-button {
+  min-width: 0;
+  flex: 1;
+  padding-inline: 8px;
+  font-size: 9px;
+}
+
+.tree-action-error {
+  border-color: rgba(153, 68, 56, 0.25);
+  background: rgba(153, 68, 56, 0.07);
+  color: var(--red);
 }
 
 .version-strip {
@@ -2588,6 +2603,41 @@ a {
   display: flex;
   align-items: center;
   gap: 0;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+
+.version-item {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.version-item:hover strong {
+  color: var(--red);
+}
+
+.version-item:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.version-loading {
+  color: var(--red);
+}
+
+.version-readonly-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .version-item {

@@ -55,6 +55,15 @@ func TestTreeEditRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestTreeVersionRouteUsesSelectedVersionService(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trees/00000000-0000-0000-0000-000000000001/versions/00000000-0000-0000-0000-000000000002", nil)
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected unavailable service status %d, got %d", http.StatusServiceUnavailable, recorder.Code)
+	}
+}
+
 func TestTreeErrorMapping(t *testing.T) {
 	cases := []struct {
 		err    error

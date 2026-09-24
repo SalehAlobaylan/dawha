@@ -19,6 +19,15 @@ export const demoTreeDetail: TreeDetail = {
     relationships: demoDashboard.treePreview.relationships,
     unresolved: demoDashboard.treePreview.unresolved,
   },
+  selectedVersion: {
+    id: "demo-version-3",
+    number: 3,
+    state: "published",
+    publicationNote: "النسخة الحالية، مع علاقات غير محسومة.",
+    publishedAt: "2026-03-20T00:00:00Z",
+    createdAt: "2026-03-20T00:00:00Z",
+  },
+  permissions: { canEdit: false, canPublish: false },
   versions: [
     {
       id: "demo-version-3",
@@ -47,7 +56,7 @@ export const demoTreeDetail: TreeDetail = {
   ],
   nodes: treeNodes.map((node) => ({
     id: node.id,
-    personId: node.id,
+    personId: node.personId,
     displayName: node.name,
     sortOrder: Number(node.id.replace("p-", "")),
     years: node.years,
@@ -106,10 +115,10 @@ export async function fetchPublicTrees(): Promise<TreeSummary[]> {
     const payload = (await response.json()) as { items?: TreeSummary[] };
     return payload.items ?? [];
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
+    if (error instanceof ApiError) {
       throw error;
     }
-    return [demoTreeDetail.tree];
+    throw new ApiError("تعذر الاتصال بخدمة الأشجار.", 503);
   }
 }
 
@@ -125,6 +134,33 @@ export async function fetchTree(treeId: string): Promise<TreeDetail> {
   if (!response.ok) {
     const message = await readErrorMessage(response);
     throw new ApiError(message, response.status);
+  }
+  return (await response.json()) as TreeDetail;
+}
+
+export async function fetchTreeVersion(treeId: string, versionId: string): Promise<TreeDetail> {
+  if (!apiBaseUrl || treeId === demoTreeId) {
+    const version = demoTreeDetail.versions.find((candidate) => candidate.id === versionId);
+    if (!version) {
+      throw new ApiError("النسخة التجريبية غير موجودة.", 404);
+    }
+    const nodes = version.number === 1 ? demoTreeDetail.nodes.slice(0, 3) : version.number === 2 ? demoTreeDetail.nodes.slice(0, 4) : demoTreeDetail.nodes;
+    const relationships = version.number === 1 ? demoTreeDetail.relationships.slice(0, 2) : version.number === 2 ? demoTreeDetail.relationships.slice(0, 3) : demoTreeDetail.relationships;
+    return {
+      ...demoTreeDetail,
+      tree: { ...demoTreeDetail.tree, people: nodes.length, relationships: relationships.length, unresolved: relationships.filter((relationship) => relationship.status === "unresolved").length },
+      selectedVersion: version,
+      permissions: { canEdit: false, canPublish: false },
+      nodes,
+      relationships,
+    };
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/versions/${versionId}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDetail;
 }

@@ -73,6 +73,7 @@ function useGraphNodes(): TreeNode[] {
   return [
     {
       id: "p-1",
+      personId: "person-1",
       name: "محمد بن سعد",
       role: "الجد الأعلى",
       years: "١٠٨٠ — ١١٥٠هـ",
@@ -84,6 +85,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-2",
+      personId: "person-2",
       name: "عبدالله بن محمد",
       role: "الجيل الثاني",
       years: "تقريباً ١١٢٠ — ١٢١٠هـ",
@@ -95,6 +97,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-3",
+      personId: "person-3",
       name: "أم عبدالله",
       role: "الجيل الثاني",
       years: "غير محددة",
@@ -106,6 +109,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-4",
+      personId: "person-4",
       name: "سعد بن عامر",
       role: "فرع محتمل",
       years: "تقريباً ١٠٤٠ — ١١٥٠هـ",
@@ -117,6 +121,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-5",
+      personId: "person-5",
       name: "صالح بن عبدالله",
       role: "ابن متابع",
       years: "تقريباً ١١٥٠ — ١١٨٠هـ",
@@ -128,6 +133,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-6",
+      personId: "person-6",
       name: "مبارك بن صالح",
       role: "الجيل التالي",
       years: "تقريباً ١١٨٠ — ١٢٣٠هـ",
@@ -139,6 +145,7 @@ function useGraphNodes(): TreeNode[] {
     },
     {
       id: "p-7",
+      personId: "person-7",
       name: "نورة بنت عبدالله",
       role: "فرع جانبي",
       years: "غير محددة",

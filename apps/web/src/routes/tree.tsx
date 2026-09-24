@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, GitCompareArrows, Link2, LoaderCircle, LockKeyhole, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
-import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, publishTree } from "../lib/api";
+import { ArrowLeft, Focus, GitCompareArrows, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree } from "../lib/api";
+import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
@@ -11,7 +12,9 @@ import type { AddPersonInput, AddRelationshipInput, TreeDetail, TreeNode } from 
 export function TreePage() {
   const queryClient = useQueryClient();
   const [activeTreeId, setActiveTreeId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [selectedPersonId, setSelectedPersonId] = useState("");
+  const [focusedPersonId, setFocusedPersonId] = useState<string | null>(null);
   const [showUnresolved, setShowUnresolved] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -33,21 +36,43 @@ export function TreePage() {
   const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
   const availableTrees = treesQuery.data ?? [];
   const treeId = activeTreeId ?? availableTrees[0]?.id ?? "tree-demo";
-  const treeQuery = useQuery({
+  const latestQuery = useQuery({
     queryKey: ["tree", treeId],
     queryFn: () => fetchTree(treeId),
     enabled: Boolean(treeId),
   });
-  const detail = treeQuery.data ?? demoTreeDetail;
+  const latestDetail = latestQuery.data;
+  const requestedVersionId = selectedVersionId || latestDetail?.selectedVersion.id || "";
+  const versionQuery = useQuery({
+    queryKey: ["tree", treeId, "version", requestedVersionId],
+    queryFn: () => fetchTreeVersion(treeId, requestedVersionId),
+    enabled: Boolean(requestedVersionId && requestedVersionId !== latestDetail?.selectedVersion.id),
+  });
+  const detail = versionQuery.data ?? latestDetail ?? demoTreeDetail;
+  const selectedVersion = detail.selectedVersion;
   const graphNodes = useMemo(() => toGraphNodes(detail), [detail]);
-  const visibleGraphNodes = showUnresolved ? graphNodes : graphNodes.filter((node) => node.tone !== "disputed" && node.tone !== "question");
-  const visibleNodeIds = new Set(visibleGraphNodes.map((node) => node.id));
-  const visibleRelationships = detail.relationships.filter((relationship) => visibleNodeIds.has(relationship.subjectNodeId) && visibleNodeIds.has(relationship.objectNodeId));
-  const selected = visibleGraphNodes.find((node) => node.id === selectedId) ?? visibleGraphNodes[0];
-  const canEditDraft = detail.tree.latestState === "draft" && detail.tree.id !== "tree-demo";
+  const statusRelationships = useMemo(() => filterUnresolvedRelationships(detail.relationships, showUnresolved), [detail.relationships, showUnresolved]);
+  const lineageFocus = useMemo(() => focusedPersonId ? focusLineage(detail.nodes, statusRelationships, focusedPersonId) : null, [detail.nodes, focusedPersonId, statusRelationships]);
+  const visibleGraphNodes = lineageFocus ? graphNodes.filter((node) => lineageFocus.nodeIds.has(node.id)) : graphNodes;
+  const visibleRelationships = lineageFocus ? statusRelationships.filter((relationship) => lineageFocus.relationshipIds.has(relationship.id)) : statusRelationships;
+  const selected = visibleGraphNodes.find((node) => node.personId === selectedPersonId) ?? visibleGraphNodes[0];
+  const versionReady = !versionQuery.isFetching && !versionQuery.isError && (!selectedVersionId || selectedVersion.id === requestedVersionId);
+  const canEdit = versionReady && detail.permissions.canEdit && selectedVersion.state === "draft";
+  const canPublish = versionReady && detail.permissions.canPublish && selectedVersion.state === "draft";
+  const queryError = treesQuery.error ?? latestQuery.error ?? versionQuery.error;
+
+  useEffect(() => {
+    if (selectedPersonId && !detail.nodes.some((node) => node.personId === selectedPersonId)) {
+      setSelectedPersonId("");
+    }
+    if (focusedPersonId && !detail.nodes.some((node) => node.personId === focusedPersonId)) {
+      setFocusedPersonId(null);
+    }
+  }, [detail.nodes, focusedPersonId, selectedPersonId]);
 
   const updateDetail = async (updated: TreeDetail) => {
     queryClient.setQueryData(["tree", updated.tree.id], updated);
+    queryClient.setQueryData(["tree", updated.tree.id, "version", updated.selectedVersion.id], updated);
     await queryClient.invalidateQueries({ queryKey: ["trees"] });
   };
 
@@ -55,7 +80,11 @@ export function TreePage() {
     mutationFn: createTree,
     onSuccess: async (created) => {
       setActiveTreeId(created.tree.id);
+      setSelectedVersionId(created.selectedVersion.id);
+      setSelectedPersonId("");
+      setFocusedPersonId(null);
       queryClient.setQueryData(["tree", created.tree.id], created);
+      queryClient.setQueryData(["tree", created.tree.id, "version", created.selectedVersion.id], created);
       await queryClient.invalidateQueries({ queryKey: ["trees"] });
       setCreateOpen(false);
       setName("");
@@ -70,7 +99,9 @@ export function TreePage() {
     mutationFn: (input: AddPersonInput) => addPerson(detail.tree.id, input),
     onSuccess: async (updated) => {
       await updateDetail(updated);
-      setSelectedId(updated.nodes[updated.nodes.length - 1]?.id ?? "");
+      setSelectedVersionId(updated.selectedVersion.id);
+      setSelectedPersonId(updated.nodes[updated.nodes.length - 1]?.personId ?? "");
+      setFocusedPersonId(null);
       setPersonName("");
       setBirthDateFrom("");
       setBirthDateTo("");
@@ -85,6 +116,7 @@ export function TreePage() {
     mutationFn: (input: AddRelationshipInput) => addRelationship(detail.tree.id, input),
     onSuccess: async (updated) => {
       await updateDetail(updated);
+      setSelectedVersionId(updated.selectedVersion.id);
       setParentNodeId("");
       setChildNodeId("");
       setMessage("أُضيفت العلاقة إلى تفسير المسودة.");
@@ -95,9 +127,9 @@ export function TreePage() {
   const publishMutation = useMutation({
     mutationFn: () => publishTree(detail.tree.id, "نشر نسخة جديدة من التفسير"),
     onSuccess: async (published) => {
-      queryClient.setQueryData(["tree", published.tree.id], published);
-      await queryClient.invalidateQueries({ queryKey: ["trees"] });
-      setMessage(`نُشرت النسخة ${published.tree.latestVersionNumber}، وفُتحت مسودة جديدة للتعديل.`);
+      await updateDetail(published);
+      setSelectedVersionId(published.selectedVersion.id);
+      setMessage(`نُشرت النسخة ${published.selectedVersion.number}، وفُتحت مسودة جديدة للتعديل.`);
     },
     onError: (error) => setMessage(authMessage(error)),
   });
@@ -137,6 +169,20 @@ export function TreePage() {
     });
   };
 
+  const selectTree = (nextTreeId: string) => {
+    setActiveTreeId(nextTreeId);
+    setSelectedVersionId("");
+    setSelectedPersonId("");
+    setFocusedPersonId(null);
+    setMessage("");
+  };
+
+  const selectVersion = (versionId: string) => {
+    setSelectedVersionId(versionId);
+    setEditOpen(false);
+    setMessage("");
+  };
+
   return (
     <div className="page-stack">
       <TopBar
@@ -146,20 +192,21 @@ export function TreePage() {
       />
       <div className="tree-page-toolbar">
         <div className="toolbar-breadcrumb"><span>الأشجار</span><b>/</b><strong>{detail.tree.name}</strong></div>
-        <label className="tree-selector-label">الملف الحالي<select className="tree-selector" aria-label="اختيار الشجرة" value={treeId} onChange={(event) => { setActiveTreeId(event.target.value); setSelectedId(""); }}>
-          {availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>)}
+        <label className="tree-selector-label">الملف الحالي<select className="tree-selector" aria-label="اختيار الشجرة" value={treeId} onChange={(event) => selectTree(event.target.value)}>
+          {availableTrees.length > 0 ? availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>) : <option value={treeId}>{detail.tree.name}</option>}
         </select></label>
         <div className="toolbar-button-group">
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
-          <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)}><UserPlus size={15} /> تحرير المسودة</button>
+          <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)} disabled={!canEdit}><UserPlus size={15} /> تحرير المسودة</button>
           <button className="secondary-button" type="button"><Share2 size={15} /> مشاركة</button>
           <button className="secondary-button" type="button"><GitCompareArrows size={15} /> مقارنة النسخ</button>
-          <button className="primary-button" type="button" onClick={() => publishMutation.mutate()} disabled={publishMutation.isPending}>
+          <button className="primary-button" type="button" onClick={() => publishMutation.mutate()} disabled={!canPublish || publishMutation.isPending}>
             {publishMutation.isPending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />} نشر المسودة
           </button>
         </div>
       </div>
 
+      {queryError ? <div className="tree-action-message tree-action-error" role="alert">{authMessage(queryError)}</div> : null}
       {message ? <div className="tree-action-message" role="status">{message}{message.includes("تسجيل الدخول") ? <Link to="/login">فتح تسجيل الدخول</Link> : null}</div> : null}
 
       {createOpen ? (
@@ -181,7 +228,7 @@ export function TreePage() {
             <div><div className="eyebrow">تعديل تفسيري</div><h2>حرّر المسودة الحالية</h2><p>كل إضافة تُحفظ داخل نسخة الشجرة، ولا تتحول تلقائياً إلى حقيقة تاريخية.</p></div>
             <StatusBadge tone="claim">نسخة محفوظة</StatusBadge>
           </div>
-          {!canEditDraft ? <p className="tree-edit-note">هذه العرض نسخة منشورة أو تجريبية. افتح مسودة مملوكة لك لتفعيل التعديل.</p> : (
+          {!canEdit ? <p className="tree-edit-note">هذه نسخة منشورة أو تجريبية. لا يتم تفعيل التحرير إلا على مسودة صاحب الشجرة الحالية.</p> : (
             <div className="tree-edit-grid">
               <form className="tree-edit-form" onSubmit={submitPerson}>
                 <div className="tree-edit-form-head"><div><h3>إضافة شخص</h3><p>أضف الاسم كما يظهر في السجل، مع تواريخ تقريبية عند توفرها.</p></div><UserPlus size={17} /></div>
@@ -214,7 +261,7 @@ export function TreePage() {
         <section className="tree-explorer-panel">
           <div className="tree-explorer-head">
             <div>
-              <div className="tree-status-line"><StatusBadge tone={detail.tree.latestState === "published" ? "interpretation" : "claim"}>{detail.tree.latestState === "published" ? "منشورة" : "مسودة"}</StatusBadge><span>النسخة {detail.tree.latestVersionNumber} من {detail.versions.length || 1}</span></div>
+              <div className="tree-status-line"><StatusBadge tone={selectedVersion.state === "published" ? "interpretation" : "claim"}>{selectedVersion.state === "published" ? "منشورة" : "مسودة"}</StatusBadge><span>النسخة {selectedVersion.number} من {detail.tree.latestVersionNumber}</span>{versionQuery.isFetching ? <span className="version-loading">جارٍ فتح النسخة…</span> : null}</div>
               <h2>الشجرة كما يعرضها هذا التفسير</h2>
               <p>هذه العلاقات تشرح هذا العرض، ولا تمثل حقيقة تاريخية نهائية.</p>
             </div>
@@ -224,10 +271,11 @@ export function TreePage() {
             <button className={`filter-chip${showUnresolved ? " filter-chip-active" : ""}`} type="button" onClick={() => setShowUnresolved((visible) => !visible)}>
               <span className="filter-chip-dot filter-dot-disputed" /> إظهار غير المحسوم
             </button>
+            {focusedPersonId ? <button className="filter-chip filter-chip-active" type="button" onClick={() => setFocusedPersonId(null)}><Maximize2 size={13} /> عرض السلالة كاملة</button> : null}
             <span className="filter-count">{detail.tree.people} أشخاص · {detail.tree.relationships} علاقات</span>
           </div>
-          <ResearchGraph selected={selected?.id ?? ""} onSelect={(node) => setSelectedId(node.id)} nodes={visibleGraphNodes} relationships={visibleRelationships} label="رسم الشجرة الرقمية" />
-          <div className="tree-canvas-footer"><LockKeyhole size={13} /> {detail.tree.latestState === "published" ? "النسخة المنشورة ثابتة. التعديلات الجديدة تنشئ نسخة مسودة." : "هذه مسودة قابلة للتعديل، ولا تمثل تفسيراً منشوراً."}</div>
+          <ResearchGraph selected={selected?.id ?? ""} onSelect={(node) => setSelectedPersonId(node.personId)} nodes={visibleGraphNodes} relationships={visibleRelationships} label="رسم الشجرة الرقمية" />
+          <div className="tree-canvas-footer"><LockKeyhole size={13} /> {selectedVersion.state === "draft" ? "هذه مسودة قابلة للتعديل، ولا تمثل تفسيراً منشوراً." : selectedVersion.id === detail.tree.latestVersionId ? "النسخة المنشورة ثابتة. التعديلات الجديدة تنشئ نسخة مسودة." : "هذه نسخة تاريخية للقراءة فقط، وليست تفسيراً منشوراً حالياً."}</div>
         </section>
 
         <aside className="node-detail-panel">
@@ -237,8 +285,9 @@ export function TreePage() {
               <div><div className="eyebrow">شخص محدد</div><h2>{selected.name}</h2><p>{selected.years} · {selected.role}</p></div>
             </div>
             <div className="node-detail-alert"><StatusBadge tone={selected.tone}>{selected.tone === "disputed" ? "في مركز سؤال" : "ضمن التفسير"}</StatusBadge><span>{selected.sourceCount} إشارات مرتبطة</span></div>
+            <div className="node-detail-actions"><button className="secondary-button" type="button" onClick={() => setFocusedPersonId(selected.personId)}><Focus size={14} /> ركّز السلالة</button>{focusedPersonId ? <button className="secondary-button" type="button" onClick={() => setFocusedPersonId(null)}><Maximize2 size={14} /> عرض الكل</button> : null}</div>
             <div className="detail-block"><div className="detail-label">ملاحظة الباحث</div><p>{selected.note}</p></div>
-            <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافاتطبقة كما هي.</p></div>
+            <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافات طبقة كما هي.</p></div>
             <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList sourceCount={selected.sourceCount} /></div>
             <Link to="/research" className="detail-cta">افتح هذا الشخص في مكتب البحث <ArrowLeft size={15} /></Link>
           </> : <div className="node-empty-state"><h2>لا يوجد شخص بعد</h2><p>احفظ مسودة، ثم أضف أول شخص لتبدأ الشجرة.</p></div>}
@@ -246,9 +295,18 @@ export function TreePage() {
       </div>
 
       <section className="version-strip">
-        <div><div className="eyebrow">سجل النسخ</div><h2>ما الذي تغيّر بين الإصدارات؟</h2><p>الاختلاف هنا ليس خطأً؛ قد يكون بداية لسؤال جديد.</p></div>
-        <div className="version-timeline">
-          {detail.versions.slice(0, 3).map((version, index) => <div className={`version-item${index === 0 ? " version-item-current" : ""}`} key={version.id}><span>v{version.number}</span><div><strong>{version.state === "draft" ? "مسودة حالية" : index === 0 ? "النشر الحالي" : "نسخة منشورة"}</strong><small>{version.publicationNote || "دون ملاحظة نشر"}</small></div></div>)}
+        <div><div className="eyebrow">سجل النسخ</div><h2>اختر نسخة الشجرة</h2><p>النسخة الحالية قد تكون منشورة، بينما تبقى المسودة الحالية قابلة للتعديل.</p></div>
+        <div>
+          <div className="version-timeline" role="list" aria-label="نسخ الشجرة">
+            {detail.versions.map((version) => {
+              const current = version.id === selectedVersion.id;
+              const latest = version.id === detail.tree.latestVersionId;
+              return <button type="button" className={`version-item${current ? " version-item-current" : ""}`} key={version.id} onClick={() => selectVersion(version.id)} aria-current={current ? "true" : undefined} role="listitem">
+                <span>v{version.number}</span><div><strong>{version.state === "draft" ? "مسودة حالية" : current ? "نسخة معاينة" : latest ? "النشر الحالي" : "نسخة منشورة"}</strong><small>{version.publicationNote || "دون ملاحظة نشر"}</small></div>
+              </button>;
+            })}
+          </div>
+          <div className="version-readonly-note"><History size={13} /> {selectedVersion.state === "draft" ? "المسودة الحالية قابلة للتحرير من صاحبها." : "هذه النسخة للقراءة فقط."}</div>
         </div>
       </section>
     </div>
@@ -258,6 +316,7 @@ export function TreePage() {
 function toGraphNodes(detail: TreeDetail): TreeNode[] {
   return detail.nodes.map((node, index) => ({
     id: node.id,
+    personId: node.personId,
     name: node.displayName,
     role: node.role,
     years: node.years,

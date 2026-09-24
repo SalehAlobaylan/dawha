@@ -45,20 +45,28 @@ func TestParseDateAndFormatYears(t *testing.T) {
 	}
 }
 
-func TestPublishedOnlyForViewer(t *testing.T) {
+func TestVersionVisibilityAndPermissions(t *testing.T) {
+	if !canViewVersionState("published", false) {
+		t.Fatal("published versions should be visible without draft access")
+	}
+	if canViewVersionState("draft", false) {
+		t.Fatal("draft versions should require draft access")
+	}
+	if !canViewVersionState("draft", true) {
+		t.Fatal("owners and collaborators should see draft versions")
+	}
 	tree := TreeSummary{Visibility: "public", OwnerID: "owner"}
-	if publishedOnlyForViewer(tree, "owner") {
-		t.Fatal("owner should see the latest draft")
+	draftPermissions := permissionsFor(tree, "owner", TreeVersionView{State: "draft"})
+	if !draftPermissions.CanEdit || !draftPermissions.CanPublish {
+		t.Fatalf("owner draft permissions were not granted: %+v", draftPermissions)
 	}
-	if !publishedOnlyForViewer(tree, "other") {
-		t.Fatal("non-owner should see only published versions")
+	publishedPermissions := permissionsFor(tree, "owner", TreeVersionView{State: "published"})
+	if publishedPermissions.CanEdit || publishedPermissions.CanPublish {
+		t.Fatalf("published versions must be read-only: %+v", publishedPermissions)
 	}
-	if !publishedOnlyForViewer(tree, "") {
-		t.Fatal("anonymous visitor should see only published versions")
-	}
-	privateTree := TreeSummary{Visibility: "private", OwnerID: "owner"}
-	if publishedOnlyForViewer(privateTree, "other") {
-		t.Fatal("private trees should not be filtered as public versions")
+	otherPermissions := permissionsFor(tree, "other", TreeVersionView{State: "draft"})
+	if otherPermissions.CanEdit || otherPermissions.CanPublish {
+		t.Fatalf("non-owner permissions were granted: %+v", otherPermissions)
 	}
 }
 
