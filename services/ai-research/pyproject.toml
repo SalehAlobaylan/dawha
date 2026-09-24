@@ -1,6 +1,6 @@
 [project]
 name = "dawha-ai-research"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic and model-assisted research capabilities for Dawha"
 requires-python = ">=3.12"
 dependencies = [
