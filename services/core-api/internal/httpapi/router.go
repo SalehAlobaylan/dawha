@@ -126,6 +126,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/contradictions/findings/{findingID}", contradictionHandler.getFinding)
 	mux.HandleFunc("POST /api/v1/contradictions/findings/{findingID}/review", contradictionHandler.review)
 	mux.HandleFunc("POST /api/v1/temporal-analysis/runs", temporalAnalysisHandler.start)
+	mux.HandleFunc("GET /api/v1/temporal-analysis/runs/latest", temporalAnalysisHandler.getLatestRun)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/runs/{runID}", temporalAnalysisHandler.getRun)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings", temporalAnalysisHandler.listFindings)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings/{findingID}", temporalAnalysisHandler.getFinding)

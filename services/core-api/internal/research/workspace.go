@@ -38,6 +38,7 @@ type WorkspaceContext struct {
 
 type WorkspacePermissions struct {
 	CanRunResearch             bool `json:"canRunResearch"`
+	CanRunTemporalAnalysis     bool `json:"canRunTemporalAnalysis"`
 	CanCreateClaim             bool `json:"canCreateClaim"`
 	CanDisputeClaim            bool `json:"canDisputeClaim"`
 	CanLinkEvidence            bool `json:"canLinkEvidence"`
@@ -45,6 +46,7 @@ type WorkspacePermissions struct {
 	CanManageSelectedQuestion  bool `json:"canManageSelectedQuestion"`
 	CanAttachFinding           bool `json:"canAttachFinding"`
 	CanReviewFinding           bool `json:"canReviewFinding"`
+	CanReviewTemporalFinding   bool `json:"canReviewTemporalFinding"`
 	CanAddNote                 bool `json:"canAddNote"`
 	CanReviewIdentityCandidate bool `json:"canReviewIdentityCandidate"`
 	CanMergeIdentity           bool `json:"canMergeIdentity"`
@@ -116,9 +118,11 @@ type WorkspaceTreeRelationship struct {
 type WorkspaceTreeContext struct {
 	TreeID        string                      `json:"treeId"`
 	TreeNameAR    string                      `json:"treeNameAr"`
+	Visibility    string                      `json:"visibility"`
 	TreeVersionID string                      `json:"treeVersionId"`
 	VersionNumber int                         `json:"versionNumber"`
 	State         string                      `json:"state"`
+	TargetPresent bool                        `json:"targetPresent"`
 	Nodes         []WorkspaceTreeNode         `json:"nodes"`
 	Relationships []WorkspaceTreeRelationship `json:"relationships"`
 }
@@ -284,7 +288,7 @@ func (s *Service) Workspace(ctx context.Context, input WorkspaceInput, actorID s
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
-	findings, err := loadWorkspaceFindings(ctx, tx, questionUUID, evidence, canResearch || actorUUID == questionCreator)
+	findings, err := loadWorkspaceFindings(ctx, tx, questionUUID, actorUUID, evidence, canResearch || actorUUID == questionCreator)
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
@@ -661,7 +665,8 @@ func loadWorkspaceTrees(ctx context.Context, q workspaceExecutor, input Workspac
 	}
 	personID, _ := uuid.Parse(entityID)
 	rows, err := q.Query(ctx, `
-		SELECT t.id, t.name_ar, tv.id, tv.version_number, tv.state
+		SELECT t.id, t.name_ar, t.visibility, tv.id, tv.version_number, tv.state,
+		       EXISTS (SELECT 1 FROM tree_nodes target_node WHERE target_node.tree_version_id = tv.id AND target_node.person_id = $1)
 		FROM tree_nodes tn
 		JOIN tree_versions tv ON tv.id = tn.tree_version_id
 		JOIN trees t ON t.id = tv.tree_id
@@ -671,7 +676,7 @@ func loadWorkspaceTrees(ctx context.Context, q workspaceExecutor, input Workspac
 		  ))))
 		  AND ($3 = '' OR t.id = $4::uuid)
 		  AND ($5 = '' OR tv.id = $6::uuid)
-		ORDER BY tv.version_number DESC
+		ORDER BY (tv.state = 'published') DESC, tv.version_number DESC
 		LIMIT 3
 	`, personID, nullableUUID(actorUUID), input.TreeID, nullableString(input.TreeID), input.TreeVersionID, nullableString(input.TreeVersionID))
 	if err != nil {
@@ -681,7 +686,7 @@ func loadWorkspaceTrees(ctx context.Context, q workspaceExecutor, input Workspac
 	for rows.Next() {
 		var item WorkspaceTreeContext
 		var treeID, versionID pgtype.UUID
-		if err := rows.Scan(&treeID, &item.TreeNameAR, &versionID, &item.VersionNumber, &item.State); err != nil {
+		if err := rows.Scan(&treeID, &item.TreeNameAR, &item.Visibility, &versionID, &item.VersionNumber, &item.State, &item.TargetPresent); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -927,7 +932,7 @@ func loadWorkspaceNotes(ctx context.Context, q workspaceExecutor, questionID uui
 	return items, rows.Err()
 }
 
-func loadWorkspaceFindings(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, evidence map[string][]WorkspaceEvidence, canResearch bool) ([]WorkspaceFinding, error) {
+func loadWorkspaceFindings(ctx context.Context, q workspaceExecutor, questionID, actorID uuid.UUID, evidence map[string][]WorkspaceEvidence, canResearch bool) ([]WorkspaceFinding, error) {
 	items := make([]WorkspaceFinding, 0)
 	if !canResearch {
 		return items, nil
@@ -935,15 +940,23 @@ func loadWorkspaceFindings(ctx context.Context, q workspaceExecutor, questionID 
 	rows, err := q.Query(ctx, `
 		SELECT pf.id, pf.finding_type, pf.title_ar, pf.explanation_ar, pf.status, COALESCE(pf.severity, 'medium'), pf.signals, COALESCE(pf.algorithm_version, '')
 		FROM platform_findings pf
-		WHERE pf.id IN (SELECT finding_id FROM question_findings WHERE question_id = $1)
+		WHERE (pf.id IN (SELECT finding_id FROM question_findings WHERE question_id = $1)
 		   OR pf.id IN (
 			SELECT fc.finding_id FROM finding_claims fc
 			JOIN question_claims qc ON qc.claim_id = fc.claim_id
 			WHERE qc.question_id = $1
-		   )
+		   ))
+		  AND (pf.temporal_run_id IS NULL OR EXISTS (
+			SELECT 1 FROM temporal_analysis_runs tr
+			JOIN trees t ON t.id = tr.tree_id
+			WHERE tr.id = pf.temporal_run_id
+			  AND (t.visibility = 'public' OR ($2::uuid IS NOT NULL AND (t.owner_id = $2 OR EXISTS (
+				SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2
+			  ))))
+		  ))
 		ORDER BY pf.updated_at DESC
 		LIMIT 30
-	`, questionID)
+	`, questionID, nullableUUID(actorID))
 	if err != nil {
 		return nil, err
 	}
@@ -1045,7 +1058,7 @@ func loadWorkspaceCandidates(ctx context.Context, q workspaceExecutor, entityTyp
 
 func buildWorkspacePermissions(actorUUID, questionCreator uuid.UUID, canResearch, canModerate bool) WorkspacePermissions {
 	registered := actorUUID != uuid.Nil
-	return WorkspacePermissions{CanRunResearch: true, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
+	return WorkspacePermissions{CanRunResearch: true, CanRunTemporalAnalysis: canResearch, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanReviewTemporalFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
 }
 
 func (s *Service) workspaceHasResearchRole(ctx context.Context, actorUUID uuid.UUID) (bool, error) {

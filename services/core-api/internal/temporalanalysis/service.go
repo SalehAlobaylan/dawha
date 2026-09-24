@@ -73,7 +73,7 @@ func (s *Service) StartRun(ctx context.Context, actorID string, input StartRunIn
 	if !scope.TargetPresent {
 		return Run{}, ErrValidation
 	}
-	rows, truncated, err := loadGenerationEdges(ctx, tx, input.TreeVersionID)
+	rows, truncated, err := loadGenerationEdges(ctx, tx, input.TreeVersionID, input.TargetPersonID)
 	if err != nil {
 		return Run{}, err
 	}
@@ -104,7 +104,7 @@ func (s *Service) StartRun(ctx context.Context, actorID string, input StartRunIn
 		return Run{}, err
 	}
 	for _, draft := range analysis.Findings {
-		if err := persistFinding(ctx, tx, runID, actorUUID, draft, analysis.Reference); err != nil {
+		if err := persistFinding(ctx, tx, runID, actorUUID, draft, analysis.Reference, questionArg); err != nil {
 			return Run{}, err
 		}
 	}
@@ -116,10 +116,30 @@ func (s *Service) StartRun(ctx context.Context, actorID string, input StartRunIn
 	}, ""); err != nil {
 		return Run{}, err
 	}
+	completedAt := startedAt
 	if err := tx.Commit(ctx); err != nil {
 		return Run{}, err
 	}
-	return s.GetRun(ctx, actorID, runID.String())
+	return Run{
+		ID:                         runID.String(),
+		RequestedBy:                actorID,
+		QuestionID:                 input.QuestionID,
+		TreeID:                     input.TreeID,
+		TreeVersionID:              input.TreeVersionID,
+		TargetPersonID:             input.TargetPersonID,
+		Status:                     "succeeded",
+		ReportStatus:               analysis.ReportStatus,
+		ExecutionMode:              "synchronous",
+		AlgorithmVersion:           AlgorithmVersion,
+		QualificationPolicyVersion: QualificationPolicyVersion,
+		MinReferenceSize:           input.MinReferenceSize,
+		ReferencePopulation:        analysis.Reference,
+		FindingCount:               len(analysis.Findings),
+		CreatedAt:                  startedAt,
+		StartedAt:                  &startedAt,
+		CompletedAt:                &completedAt,
+		UpdatedAt:                  startedAt,
+	}, nil
 }
 
 func (s *Service) GetRun(ctx context.Context, actorID, runID string) (Run, error) {
@@ -133,38 +153,67 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (Run, error
 	if err != nil {
 		return Run{}, ErrNotFound
 	}
-	var result Run
-	var reportStatus, executionMode, runError pgtype.Text
-	var referenceData []byte
-	var startedAt, completedAt pgtype.Timestamptz
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT id::text, requested_by::text, COALESCE(question_id::text, ''), tree_id::text, tree_version_id::text,
-		       target_person_id::text, status, report_status, execution_mode, algorithm_version,
-		       qualification_policy_version, min_reference_size, reference_population, finding_count,
-		       error, created_at, started_at, completed_at, updated_at
-		FROM temporal_analysis_runs WHERE id = $1
-	`, id).Scan(&result.ID, &result.RequestedBy, &result.QuestionID, &result.TreeID, &result.TreeVersionID, &result.TargetPersonID, &result.Status, &reportStatus, &executionMode, &result.AlgorithmVersion, &result.QualificationPolicyVersion, &result.MinReferenceSize, &referenceData, &result.FindingCount, &runError, &result.CreatedAt, &startedAt, &completedAt, &result.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Run{}, ErrNotFound
-		}
+	result, err := scanRun(s.Pool.QueryRow(ctx, temporalRunSelect+` WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrNotFound
+	}
+	if err != nil {
 		return Run{}, err
 	}
-	result.ReportStatus = textValue(reportStatus)
-	result.ExecutionMode = textValue(executionMode)
-	result.Error = textValue(runError)
-	result.ReferencePopulation = ReferencePopulation{}
-	if len(referenceData) > 0 {
-		_ = json.Unmarshal(referenceData, &result.ReferencePopulation)
-	}
-	if startedAt.Valid {
-		value := startedAt.Time
-		result.StartedAt = &value
-	}
-	if completedAt.Valid {
-		value := completedAt.Time
-		result.CompletedAt = &value
+	if err := requireTreeAccess(ctx, s.Pool, result.TreeID, actorID); err != nil {
+		return Run{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) GetLatestRun(ctx context.Context, actorID, questionID, treeID, treeVersionID, targetPersonID string) (Run, error) {
+	if err := s.ready(); err != nil {
+		return Run{}, err
+	}
+	if err := requireRole(ctx, s.Pool, strings.TrimSpace(actorID)); err != nil {
+		return Run{}, err
+	}
+	filters := []struct {
+		column string
+		value  string
+	}{
+		{column: "question_id", value: questionID},
+		{column: "tree_id", value: treeID},
+		{column: "tree_version_id", value: treeVersionID},
+		{column: "target_person_id", value: targetPersonID},
+	}
+	query := temporalRunSelect + ` WHERE 1 = 1
+		AND EXISTS (
+			SELECT 1 FROM trees accessible_tree
+			WHERE accessible_tree.id = temporal_analysis_runs.tree_id
+			  AND (accessible_tree.visibility = 'public' OR accessible_tree.owner_id = $1 OR EXISTS (
+				SELECT 1 FROM tree_collaborators accessible_collaborator
+				WHERE accessible_collaborator.tree_id = accessible_tree.id AND accessible_collaborator.user_id = $1
+			  ))
+		)`
+	actor, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return Run{}, ErrForbidden
+	}
+	args := make([]any, 1, len(filters)+1)
+	args[0] = actor
+	for _, filter := range filters {
+		if strings.TrimSpace(filter.value) == "" {
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(filter.value))
+		if err != nil {
+			return Run{}, ErrValidation
+		}
+		args = append(args, id)
+		query += fmt.Sprintf(" AND %s = $%d", filter.column, len(args))
+	}
+	query += ` ORDER BY created_at DESC LIMIT 1`
+	result, err := scanRun(s.Pool.QueryRow(ctx, query, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrNotFound
+	}
+	return result, err
 }
 
 func (s *Service) ListFindings(ctx context.Context, actorID, runID, status string) ([]Finding, error) {
@@ -174,8 +223,21 @@ func (s *Service) ListFindings(ctx context.Context, actorID, runID, status strin
 	if err := requireRole(ctx, s.Pool, strings.TrimSpace(actorID)); err != nil {
 		return nil, err
 	}
-	query := temporalFindingSelect + ` WHERE f.temporal_run_id IS NOT NULL`
-	args := make([]any, 0, 2)
+	actor, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return nil, ErrForbidden
+	}
+	query := temporalFindingSelect + ` WHERE f.temporal_run_id IS NOT NULL
+		AND EXISTS (
+			SELECT 1 FROM trees accessible_tree
+			WHERE accessible_tree.id = temporal_run.tree_id
+			  AND (accessible_tree.visibility = 'public' OR accessible_tree.owner_id = $1 OR EXISTS (
+				SELECT 1 FROM tree_collaborators accessible_collaborator
+				WHERE accessible_collaborator.tree_id = accessible_tree.id AND accessible_collaborator.user_id = $1
+			  ))
+		)`
+	args := make([]any, 1, 3)
+	args[0] = actor
 	if strings.TrimSpace(runID) != "" {
 		id, err := uuid.Parse(strings.TrimSpace(runID))
 		if err != nil {
@@ -230,6 +292,9 @@ func (s *Service) GetFinding(ctx context.Context, actorID, findingID string) (Fi
 	if err != nil {
 		return Finding{}, err
 	}
+	if err := requireRunAccess(ctx, s.Pool, finding.TemporalRunID, actorID); err != nil {
+		return Finding{}, err
+	}
 	if err := populateTemporalFinding(ctx, s.Pool, &finding); err != nil {
 		return Finding{}, err
 	}
@@ -270,6 +335,12 @@ func (s *Service) ReviewFinding(ctx context.Context, actorID, findingID string, 
 		}
 		return Finding{}, err
 	}
+	if err := requireRunAccess(ctx, tx, uuidString(runID), actorID); err != nil {
+		return Finding{}, err
+	}
+	if decision == "investigate" && currentStatus == "investigating" {
+		input.CreateQuestion = false
+	}
 	questionID := ""
 	if input.CreateQuestion {
 		questionID = uuid.NewString()
@@ -299,10 +370,17 @@ func (s *Service) ReviewFinding(ctx context.Context, actorID, findingID string, 
 	if err := writeAudit(ctx, tx, actorUUID, "temporal_finding_reviewed", "platform_finding", id, map[string]any{"status": currentStatus, "runId": uuidString(runID)}, map[string]any{"status": nextStatus, "decision": decision, "questionId": questionID}, input.NoteAR); err != nil {
 		return Finding{}, err
 	}
+	finding, err := scanTemporalFinding(tx.QueryRow(ctx, temporalFindingSelect+` WHERE f.id = $1 AND f.temporal_run_id IS NOT NULL`, id))
+	if err != nil {
+		return Finding{}, err
+	}
+	if err := populateTemporalFinding(ctx, tx, &finding); err != nil {
+		return Finding{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Finding{}, err
 	}
-	return s.GetFinding(ctx, actorID, findingID)
+	return finding, nil
 }
 
 func validateStartInput(input StartRunInput) (StartRunInput, error) {
@@ -337,16 +415,18 @@ func analyzeGenerationEdges(scope treeScope, rows []edgeRow, targetPersonID stri
 		VersionNumber:    scope.VersionNumber,
 		VersionState:     scope.VersionState,
 		ExcludedCounts:   map[string]int{},
-		DatePolicy:       "bounded_stored_date_ranges",
+		DatePolicy:       "bounded_stored_date_ranges_with_parent_death_chronology",
 		DependencyPolicy: "independent_sources_only",
-		SourcePolicy:     "public_accepted_evidence_only",
-		ClaimPolicy:      "supported_claims_with_accepted_statement_evidence",
+		SourcePolicy:     "public_accepted_supporting_statement_evidence_only",
+		ClaimPolicy:      "all_matching_supported_claims_without_counter_evidence",
 		TreePolicy:       "published_public_tree_version",
 		Truncated:        truncated,
 	}
 	referenceItems := make([]IntervalObservation, 0)
-	var target *IntervalObservation
-	var targetRow edgeRow
+	targets := make([]struct {
+		observation IntervalObservation
+		row         edgeRow
+	}, 0)
 	candidateCount := 0
 	for _, row := range rows {
 		if row.ExclusionReason != "qualified" {
@@ -358,11 +438,16 @@ func analyzeGenerationEdges(scope treeScope, rows []edgeRow, targetPersonID stri
 			reference.ExcludedCounts["invalid_dates"]++
 			continue
 		}
+		if !validGenerationChronology(row.ParentDeathFrom, row.ParentDeathTo, row.ChildBirthFrom) {
+			reference.ExcludedCounts["invalid_chronology"]++
+			continue
+		}
 		candidateCount++
 		if row.ParentPersonID == targetPersonID || row.ChildPersonID == targetPersonID {
-			copyObservation := observation
-			target = &copyObservation
-			targetRow = row
+			targets = append(targets, struct {
+				observation IntervalObservation
+				row         edgeRow
+			}{observation: observation, row: row})
 			reference.TargetInPopulation = true
 			continue
 		}
@@ -370,6 +455,10 @@ func analyzeGenerationEdges(scope treeScope, rows []edgeRow, targetPersonID stri
 	}
 	reference.CandidateEdgeCount = candidateCount
 	reference.ReferenceEdgeCount = len(referenceItems)
+	result := analysisResult{Reference: reference, ReportStatus: ReportStatusInsufficient}
+	if truncated {
+		return result
+	}
 	q1, median, q3, enough := referenceBand(referenceItems, minimum)
 	reference.ReferenceBandAvailable = enough
 	if enough {
@@ -377,28 +466,33 @@ func analyzeGenerationEdges(scope treeScope, rows []edgeRow, targetPersonID stri
 		reference.MedianYears = median
 		reference.Q3Years = q3
 	}
-	result := analysisResult{Reference: reference, ReportStatus: ReportStatusInsufficient}
-	if target == nil || !enough {
+	if len(targets) == 0 || !enough {
+		result.Reference = reference
 		return result
 	}
-	comparison := compareInterval(*target, q1, median, q3)
-	comparison.ReferenceN = len(referenceItems)
-	if comparison.Relation == FindingRelationOverlap {
-		result.ReportStatus = ReportStatusSucceeded
-		return result
+	result.Reference = reference
+	for _, target := range targets {
+		if len(result.Findings) >= MaximumFindings {
+			break
+		}
+		comparison := compareInterval(target.observation, q1, median, q3)
+		comparison.ReferenceN = len(referenceItems)
+		if comparison.Relation == FindingRelationOverlap {
+			continue
+		}
+		result.Findings = append(result.Findings, findingDraft{
+			RelationshipID: target.row.RelationshipID,
+			ParentPersonID: target.row.ParentPersonID,
+			ChildPersonID:  target.row.ChildPersonID,
+			ClaimID:        target.row.ClaimID,
+			Comparison:     comparison,
+		})
 	}
-	result.Findings = append(result.Findings, findingDraft{
-		RelationshipID: targetRow.RelationshipID,
-		ParentPersonID: targetRow.ParentPersonID,
-		ChildPersonID:  targetRow.ChildPersonID,
-		ClaimID:        targetRow.ClaimID,
-		Comparison:     comparison,
-	})
 	result.ReportStatus = ReportStatusSucceeded
 	return result
 }
 
-func persistFinding(ctx context.Context, tx pgx.Tx, runID, actorID uuid.UUID, draft findingDraft, reference ReferencePopulation) error {
+func persistFinding(ctx context.Context, tx pgx.Tx, runID, actorID uuid.UUID, draft findingDraft, reference ReferencePopulation, questionID any) error {
 	findingID := uuid.New()
 	relationLabel := "فوق النطاق المرجعي"
 	if draft.Comparison.Relation == FindingRelationBelow {
@@ -425,6 +519,11 @@ func persistFinding(ctx context.Context, tx pgx.Tx, runID, actorID uuid.UUID, dr
 			return err
 		}
 	}
+	if questionID != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO question_findings (question_id, finding_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionID, findingID); err != nil {
+			return err
+		}
+	}
 	if draft.ParentPersonID != "" {
 		if _, err := tx.Exec(ctx, `INSERT INTO finding_entities (finding_id, entity_type, entity_id) VALUES ($1, 'person', $2)`, findingID, draft.ParentPersonID); err != nil {
 			return err
@@ -434,6 +533,41 @@ func persistFinding(ctx context.Context, tx pgx.Tx, runID, actorID uuid.UUID, dr
 		if _, err := tx.Exec(ctx, `INSERT INTO finding_entities (finding_id, entity_type, entity_id) VALUES ($1, 'person', $2)`, findingID, draft.ChildPersonID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func requireRunAccess(ctx context.Context, q queryer, runID, actorID string) error {
+	var treeID string
+	if err := q.QueryRow(ctx, `SELECT tree_id::text FROM temporal_analysis_runs WHERE id = $1`, runID).Scan(&treeID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return requireTreeAccess(ctx, q, treeID, actorID)
+}
+
+func requireTreeAccess(ctx context.Context, q queryer, treeID, actorID string) error {
+	actor, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return ErrForbidden
+	}
+	var allowed bool
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM trees t
+			WHERE t.id = $1
+			  AND (t.visibility = 'public' OR t.owner_id = $2 OR EXISTS (
+				SELECT 1 FROM tree_collaborators tc
+				WHERE tc.tree_id = t.id AND tc.user_id = $2
+			  ))
+		)
+	`, treeID, actor).Scan(&allowed); err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
 	}
 	return nil
 }
@@ -472,13 +606,47 @@ func validFindingStatus(value string) bool {
 	return value == "needs_review" || value == "confirmed" || value == "dismissed" || value == "investigating"
 }
 
+const temporalRunSelect = `
+	SELECT id::text, requested_by::text, COALESCE(question_id::text, ''), tree_id::text, tree_version_id::text,
+	       target_person_id::text, status, report_status, execution_mode, algorithm_version,
+	       qualification_policy_version, min_reference_size, reference_population, finding_count,
+	       error, created_at, started_at, completed_at, updated_at
+	FROM temporal_analysis_runs`
+
+func scanRun(row pgx.Row) (Run, error) {
+	var result Run
+	var reportStatus, executionMode, runError pgtype.Text
+	var referenceData []byte
+	var startedAt, completedAt pgtype.Timestamptz
+	if err := row.Scan(&result.ID, &result.RequestedBy, &result.QuestionID, &result.TreeID, &result.TreeVersionID, &result.TargetPersonID, &result.Status, &reportStatus, &executionMode, &result.AlgorithmVersion, &result.QualificationPolicyVersion, &result.MinReferenceSize, &referenceData, &result.FindingCount, &runError, &result.CreatedAt, &startedAt, &completedAt, &result.UpdatedAt); err != nil {
+		return Run{}, err
+	}
+	result.ReportStatus = textValue(reportStatus)
+	result.ExecutionMode = textValue(executionMode)
+	result.Error = textValue(runError)
+	result.ReferencePopulation = ReferencePopulation{}
+	if len(referenceData) > 0 {
+		_ = json.Unmarshal(referenceData, &result.ReferencePopulation)
+	}
+	if startedAt.Valid {
+		value := startedAt.Time
+		result.StartedAt = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time
+		result.CompletedAt = &value
+	}
+	return result, nil
+}
+
 const temporalFindingSelect = `
 	SELECT f.id::text, f.temporal_run_id::text, f.finding_type, f.title_ar, f.explanation_ar, f.status, f.severity,
 	       COALESCE(f.signals, '{}'::jsonb), COALESCE(f.algorithm_version, ''), COALESCE(f.created_by::text, ''),
 	       COALESCE(f.reviewed_by::text, ''), f.reviewed_at, COALESCE(f.review_note_ar, ''),
-	       COALESCE((SELECT question_id::text FROM platform_finding_reviews WHERE finding_id = f.id AND question_id IS NOT NULL ORDER BY created_at DESC LIMIT 1), ''),
+	       COALESCE((SELECT question_id::text FROM platform_finding_reviews WHERE finding_id = f.id AND question_id IS NOT NULL ORDER BY created_at DESC LIMIT 1), (SELECT question_id::text FROM question_findings WHERE finding_id = f.id ORDER BY question_id LIMIT 1), ''),
 	       f.created_at, f.updated_at
-	FROM platform_findings f`
+	FROM platform_findings f
+	JOIN temporal_analysis_runs temporal_run ON temporal_run.id = f.temporal_run_id`
 
 func scanTemporalFinding(row pgx.Row) (Finding, error) {
 	var result Finding

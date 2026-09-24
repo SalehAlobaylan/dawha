@@ -260,7 +260,7 @@ func (s *Service) ReviewFinding(ctx context.Context, actorID, findingID string, 
 	}
 	defer tx.Rollback(ctx)
 	var currentStatus, findingType, title, explanation string
-	if err := tx.QueryRow(ctx, `SELECT status, finding_type, title_ar, explanation_ar FROM platform_findings WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus, &findingType, &title, &explanation); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, finding_type, title_ar, explanation_ar FROM platform_findings WHERE id = $1 AND temporal_run_id IS NULL FOR UPDATE`, id).Scan(&currentStatus, &findingType, &title, &explanation); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Finding{}, ErrNotFound
 		}

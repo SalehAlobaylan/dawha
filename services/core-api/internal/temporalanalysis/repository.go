@@ -28,6 +28,8 @@ type edgeRow struct {
 	ExclusionReason string
 	ParentBirthFrom time.Time
 	ParentBirthTo   time.Time
+	ParentDeathFrom time.Time
+	ParentDeathTo   time.Time
 	ChildBirthFrom  time.Time
 	ChildBirthTo    time.Time
 }
@@ -56,26 +58,28 @@ func loadTreeScope(ctx context.Context, q queryer, treeID, versionID, targetPers
 	return result, nil
 }
 
-func loadGenerationEdges(ctx context.Context, q queryer, versionID string) ([]edgeRow, bool, error) {
+func loadGenerationEdges(ctx context.Context, q queryer, versionID, targetPersonID string) ([]edgeRow, bool, error) {
 	rows, err := q.Query(ctx, `
 		WITH candidate_edges AS (
 			SELECT tr.id AS relationship_id,
 			       parent.id AS parent_person_id,
 			       child.id AS child_person_id,
 			       tr.source_id,
-			       c.id AS claim_id,
+			       claim_data.claim_id,
 			       parent.identity_status AS parent_identity_status,
 			       parent.merged_into_id AS parent_merged_into_id,
 			       child.identity_status AS child_identity_status,
 			       child.merged_into_id AS child_merged_into_id,
 			       parent.birth_date_from AS parent_birth_from,
 			       parent.birth_date_to AS parent_birth_to,
+			       parent.death_date_from AS parent_death_from,
+			       parent.death_date_to AS parent_death_to,
 			       child.birth_date_from AS child_birth_from,
 			       child.birth_date_to AS child_birth_to,
 			       s.visibility AS source_visibility,
 			       s.dependency_status AS source_dependency_status,
-			       COALESCE(c.accepted_evidence, false) AS accepted_evidence,
-			       COALESCE(c.counter_evidence, false) AS counter_evidence
+			       COALESCE(claim_data.accepted_evidence, false) AS accepted_evidence,
+			       COALESCE(claim_data.counter_evidence, false) AS counter_evidence
 			FROM tree_relationships tr
 			JOIN tree_versions tv ON tv.id = tr.tree_version_id
 			JOIN tree_nodes parent_node ON parent_node.id = tr.subject_node_id
@@ -83,23 +87,27 @@ func loadGenerationEdges(ctx context.Context, q queryer, versionID string) ([]ed
 			JOIN people parent ON parent.id = parent_node.person_id
 			JOIN people child ON child.id = child_node.person_id
 			LEFT JOIN LATERAL (
-				SELECT c.id,
-				       EXISTS (
-				         SELECT 1 FROM claim_evidence ce
-				         JOIN source_statements ss ON ss.id = ce.source_statement_id
-				         WHERE ce.claim_id = c.id AND ss.source_id = tr.source_id AND ss.review_status = 'accepted'
-				       ) AS accepted_evidence,
-				       EXISTS (SELECT 1 FROM claim_counter_evidence cce WHERE cce.claim_id = c.id) AS counter_evidence
-				FROM claims c
-				WHERE c.subject_type = 'person'
-				  AND c.object_type = 'person'
-				  AND c.subject_id = parent.id
-				  AND c.object_id = child.id
-				  AND c.predicate = 'parent_of'
-				  AND c.status = 'supported'
-				ORDER BY accepted_evidence DESC, c.id
-				LIMIT 1
-			) c ON true
+				SELECT
+					(array_agg(candidate_claim.claim_id ORDER BY candidate_claim.accepted_evidence DESC, candidate_claim.claim_id))[1] AS claim_id,
+					COALESCE(bool_or(candidate_claim.accepted_evidence), false) AS accepted_evidence,
+					COALESCE(bool_or(candidate_claim.counter_evidence), false) AS counter_evidence
+				FROM (
+					SELECT c.id AS claim_id,
+					       EXISTS (
+					         SELECT 1 FROM claim_evidence ce
+					         JOIN source_statements ss ON ss.id = ce.source_statement_id
+					         WHERE ce.claim_id = c.id AND ce.relation = 'supports' AND ss.source_id = tr.source_id AND ss.review_status = 'accepted'
+					       ) AS accepted_evidence,
+					       EXISTS (SELECT 1 FROM claim_counter_evidence cce WHERE cce.claim_id = c.id) AS counter_evidence
+					FROM claims c
+					WHERE c.subject_type = 'person'
+					  AND c.object_type = 'person'
+					  AND c.subject_id = parent.id
+					  AND c.object_id = child.id
+					  AND c.predicate = 'parent_of'
+					  AND c.status = 'supported'
+				) candidate_claim
+			) claim_data ON true
 			LEFT JOIN sources s ON s.id = tr.source_id
 			WHERE tv.id = $1
 			  AND tv.state = 'published'
@@ -120,18 +128,25 @@ func loadGenerationEdges(ctx context.Context, q queryer, versionID string) ([]ed
 			         WHEN NOT accepted_evidence THEN 'unaccepted_evidence'
 			         WHEN counter_evidence THEN 'counter_evidence'
 			         WHEN parent_birth_from IS NULL OR parent_birth_to IS NULL OR child_birth_from IS NULL OR child_birth_to IS NULL
-			              OR parent_birth_from > parent_birth_to OR child_birth_from > child_birth_to OR parent_birth_from > child_birth_to THEN 'invalid_dates'
+			              OR parent_birth_from > parent_birth_to OR child_birth_from > child_birth_to OR parent_birth_from > child_birth_to
+			              OR (parent_death_from IS NOT NULL AND parent_death_to IS NOT NULL AND parent_death_from > parent_death_to) THEN 'invalid_dates'
+			         WHEN parent_death_to IS NOT NULL AND child_birth_from IS NOT NULL AND parent_death_to < child_birth_from THEN 'invalid_chronology'
 			         ELSE 'qualified'
 			       END AS exclusion_reason
 			FROM candidate_edges
+		), selected_edges AS (
+			SELECT DISTINCT ON (parent_person_id, child_person_id)
+			       relationship_id, parent_person_id, child_person_id, claim_id, source_id, exclusion_reason,
+			       parent_birth_from, parent_birth_to, parent_death_from, parent_death_to, child_birth_from, child_birth_to
+			FROM ranked_edges
+			ORDER BY parent_person_id, child_person_id, (exclusion_reason = 'qualified') DESC, relationship_id
 		)
-		SELECT DISTINCT ON (parent_person_id, child_person_id)
-		       relationship_id, parent_person_id, child_person_id, claim_id, source_id, exclusion_reason,
-		       parent_birth_from, parent_birth_to, child_birth_from, child_birth_to
-		FROM ranked_edges
-		ORDER BY parent_person_id, child_person_id, (exclusion_reason = 'qualified') DESC, relationship_id
+		SELECT relationship_id, parent_person_id, child_person_id, claim_id, source_id, exclusion_reason,
+		       parent_birth_from, parent_birth_to, parent_death_from, parent_death_to, child_birth_from, child_birth_to
+		FROM selected_edges
+		ORDER BY (parent_person_id = $3 OR child_person_id = $3) DESC, parent_person_id, child_person_id, relationship_id
 		LIMIT $2
-	`, versionID, MaximumReferenceEdges+1)
+	`, versionID, MaximumReferenceEdges+1, targetPersonID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -140,8 +155,8 @@ func loadGenerationEdges(ctx context.Context, q queryer, versionID string) ([]ed
 	for rows.Next() {
 		var item edgeRow
 		var relationshipID, parentID, childID, claimID, sourceID pgtype.UUID
-		var parentFrom, parentTo, childFrom, childTo pgtype.Date
-		if err := rows.Scan(&relationshipID, &parentID, &childID, &claimID, &sourceID, &item.ExclusionReason, &parentFrom, &parentTo, &childFrom, &childTo); err != nil {
+		var parentFrom, parentTo, parentDeathFrom, parentDeathTo, childFrom, childTo pgtype.Date
+		if err := rows.Scan(&relationshipID, &parentID, &childID, &claimID, &sourceID, &item.ExclusionReason, &parentFrom, &parentTo, &parentDeathFrom, &parentDeathTo, &childFrom, &childTo); err != nil {
 			return nil, false, err
 		}
 		item.RelationshipID = uuidString(relationshipID)
@@ -151,6 +166,8 @@ func loadGenerationEdges(ctx context.Context, q queryer, versionID string) ([]ed
 		item.SourceID = uuidString(sourceID)
 		item.ParentBirthFrom = dateValue(parentFrom)
 		item.ParentBirthTo = dateValue(parentTo)
+		item.ParentDeathFrom = dateValue(parentDeathFrom)
+		item.ParentDeathTo = dateValue(parentDeathTo)
 		item.ChildBirthFrom = dateValue(childFrom)
 		item.ChildBirthTo = dateValue(childTo)
 		items = append(items, item)

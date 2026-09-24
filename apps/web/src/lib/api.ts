@@ -61,6 +61,7 @@ import type {
   SourceProcessing,
   StartTemporalAnalysisInput,
   TemporalAnalysisRun,
+  TemporalAnalysisRunQuery,
   TemporalFinding,
   SuggestionRecord,
   SubmitSuggestionInput,
@@ -397,6 +398,7 @@ export async function startTemporalAnalysis(input: StartTemporalAnalysisInput): 
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -409,6 +411,25 @@ export async function fetchTemporalAnalysisRun(runId: string): Promise<TemporalA
     throw new ApiError("شغّل Core API أولاً.", 503);
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TemporalAnalysisRun;
+}
+
+export async function fetchLatestTemporalAnalysisRun(query: TemporalAnalysisRunQuery): Promise<TemporalAnalysisRun | null> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value) params.set(key, value);
+  }
+  const suffix = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs/latest${suffix ? `?${suffix}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (response.status === 404) {
+    return null;
+  }
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
@@ -440,6 +461,7 @@ export async function reviewTemporalFinding(findingId: string, input: ReviewTemp
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);

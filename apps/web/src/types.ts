@@ -508,6 +508,7 @@ export interface ResearchWorkspaceContext {
 
 export interface ResearchWorkspacePermissions {
   canRunResearch: boolean;
+  canRunTemporalAnalysis: boolean;
   canCreateClaim: boolean;
   canDisputeClaim: boolean;
   canLinkEvidence: boolean;
@@ -515,6 +516,7 @@ export interface ResearchWorkspacePermissions {
   canManageSelectedQuestion: boolean;
   canAttachFinding: boolean;
   canReviewFinding: boolean;
+  canReviewTemporalFinding: boolean;
   canAddNote: boolean;
   canReviewIdentityCandidate: boolean;
   canMergeIdentity: boolean;
@@ -586,9 +588,11 @@ export interface WorkspaceTreeRelationship {
 export interface WorkspaceTreeContext {
   treeId: string;
   treeNameAr: string;
+  visibility: string;
   treeVersionId: string;
   versionNumber: number;
   state: string;
+  targetPresent: boolean;
   nodes: WorkspaceTreeNode[];
   relationships: WorkspaceTreeRelationship[];
 }
@@ -946,6 +950,13 @@ export interface StartTemporalAnalysisInput {
   target_person_id: string;
   question_id?: string;
   min_reference_size?: number;
+}
+
+export interface TemporalAnalysisRunQuery {
+  question_id?: string;
+  tree_id?: string;
+  tree_version_id?: string;
+  target_person_id?: string;
 }
 
 export interface ReviewTemporalFindingInput {

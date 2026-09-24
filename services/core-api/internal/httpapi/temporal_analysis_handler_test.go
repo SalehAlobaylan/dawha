@@ -17,6 +17,7 @@ func TestTemporalAnalysisRoutesRequireAuthentication(t *testing.T) {
 	}{
 		{method: http.MethodPost, path: "/api/v1/temporal-analysis/runs", body: `{"tree_id":"00000000-0000-0000-0000-000000000001","tree_version_id":"00000000-0000-0000-0000-000000000002","target_person_id":"00000000-0000-0000-0000-000000000003"}`},
 		{method: http.MethodGet, path: "/api/v1/temporal-analysis/runs/00000000-0000-0000-0000-000000000004"},
+		{method: http.MethodGet, path: "/api/v1/temporal-analysis/runs/latest"},
 		{method: http.MethodGet, path: "/api/v1/temporal-analysis/findings"},
 		{method: http.MethodPost, path: "/api/v1/temporal-analysis/findings/00000000-0000-0000-0000-000000000005/review", body: `{"decision":"investigate"}`},
 	}

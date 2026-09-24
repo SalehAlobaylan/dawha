@@ -3,6 +3,7 @@ package temporalanalysis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -33,6 +34,15 @@ func TestTemporalAnalysisRunUsesQualifiedReferencePopulation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'researcher'`, actorID)
+	viewerID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث غير متعاون')`, viewerID, temporalTestEmail(viewerID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher')`, viewerID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'researcher'`, viewerID)
+	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, viewerID)
 	sourceID := uuid.New()
 	treeID := uuid.New()
 	versionID := uuid.New()
@@ -46,6 +56,11 @@ func TestTemporalAnalysisRunUsesQualifiedReferencePopulation(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state, published_by, published_at) VALUES ($1, $2, 1, 'published', $3, now())`, versionID, treeID, actorID); err != nil {
 		t.Fatal(err)
 	}
+	questionID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO open_questions (id, title_ar, status, priority, created_by) VALUES ($1, 'سؤال اختبار الإحصاء', 'open', 'normal', $2)`, questionID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM open_questions WHERE id = $1`, questionID)
 	people := []struct {
 		id        uuid.UUID
 		name      string
@@ -96,11 +111,11 @@ func TestTemporalAnalysisRunUsesQualifiedReferencePopulation(t *testing.T) {
 		}
 	}
 	defer pool.Exec(ctx, `DELETE FROM claims WHERE id = ANY($1::uuid[])`, claimIDs)
-	defer pool.Exec(ctx, `DELETE FROM temporal_analysis_runs WHERE tree_version_id = $1`, versionID)
 	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, peopleIDs)
 	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
+	defer pool.Exec(ctx, `DELETE FROM temporal_analysis_runs WHERE tree_version_id = $1`, versionID)
 	service := NewService(pool)
-	run, err := service.StartRun(ctx, actorID.String(), StartRunInput{TreeID: treeID.String(), TreeVersionID: versionID.String(), TargetPersonID: peopleIDs[7].String(), MinReferenceSize: 3})
+	run, err := service.StartRun(ctx, actorID.String(), StartRunInput{TreeID: treeID.String(), TreeVersionID: versionID.String(), TargetPersonID: peopleIDs[7].String(), QuestionID: questionID.String(), MinReferenceSize: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +136,39 @@ func TestTemporalAnalysisRunUsesQualifiedReferencePopulation(t *testing.T) {
 	if strings.Contains(string(encoded), "probability") || strings.Contains(string(encoded), "historicalProbability") {
 		t.Fatalf("finding contains a probability-like field: %s", encoded)
 	}
+	var linkedToQuestion bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM question_findings WHERE question_id = $1 AND finding_id = $2)`, questionID, findings[0].ID).Scan(&linkedToQuestion); err != nil {
+		t.Fatal(err)
+	}
+	if !linkedToQuestion {
+		t.Fatal("temporal finding was not linked to the run question")
+	}
+	latest, err := service.GetLatestRun(ctx, actorID.String(), questionID.String(), treeID.String(), versionID.String(), peopleIDs[7].String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.ID != run.ID {
+		t.Fatalf("latest run = %s, want %s", latest.ID, run.ID)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE trees SET visibility = 'private' WHERE id = $1`, treeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetRun(ctx, viewerID.String(), run.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected private run access to be forbidden, got %v", err)
+	}
+	privateFindings, err := service.ListFindings(ctx, viewerID.String(), run.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(privateFindings) != 0 {
+		t.Fatal("private temporal findings leaked to an unrelated researcher")
+	}
+	if _, err := service.ReviewFinding(ctx, viewerID.String(), findings[0].ID, ReviewInput{Decision: "dismiss"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected private review to be forbidden, got %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE trees SET visibility = 'public' WHERE id = $1`, treeID); err != nil {
+		t.Fatal(err)
+	}
 	contradictionFindings, err := contradiction.NewService(pool, nil).ListFindings(ctx, actorID.String(), "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -130,13 +178,32 @@ func TestTemporalAnalysisRunUsesQualifiedReferencePopulation(t *testing.T) {
 			t.Fatal("temporal finding leaked into contradiction findings")
 		}
 	}
-	reviewed, err := service.ReviewFinding(ctx, actorID.String(), findings[0].ID, ReviewInput{Decision: "investigate", NoteAR: "يحتاج فحصاً"})
+	if _, err := contradiction.NewService(pool, nil).ReviewFinding(ctx, actorID.String(), findings[0].ID, contradiction.ReviewInput{Decision: "dismiss"}); !errors.Is(err, contradiction.ErrNotFound) {
+		t.Fatalf("expected temporal finding review to be rejected by contradiction service, got %v", err)
+	}
+	reviewed, err := service.ReviewFinding(ctx, actorID.String(), findings[0].ID, ReviewInput{Decision: "investigate", NoteAR: "يحتاج فحصاً", CreateQuestion: true, QuestionTitleAR: "مراجعة فاصل زمني"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reviewed.Status != "investigating" || len(reviewed.Reviews) != 1 {
 		t.Fatalf("unexpected reviewed finding: %+v", reviewed)
 	}
+	repeated, err := service.ReviewFinding(ctx, actorID.String(), findings[0].ID, ReviewInput{Decision: "investigate", CreateQuestion: true, QuestionTitleAR: "مراجعة مكررة"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var investigationQuestions int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM open_questions WHERE title_ar = 'مراجعة فاصل زمني'`).Scan(&investigationQuestions); err != nil {
+		t.Fatal(err)
+	}
+	if repeated.Status != "investigating" || investigationQuestions != 1 {
+		t.Fatalf("repeated investigation was not idempotent: status=%s questions=%d", repeated.Status, investigationQuestions)
+	}
+	var investigationQuestionID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM open_questions WHERE title_ar = 'مراجعة فاصل زمني'`).Scan(&investigationQuestionID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM open_questions WHERE id = $1`, investigationQuestionID)
 	var claimStatus, relationshipStatus string
 	if err := pool.QueryRow(ctx, `SELECT status FROM claims WHERE id = $1`, claimIDs[3]).Scan(&claimStatus); err != nil {
 		t.Fatal(err)

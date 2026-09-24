@@ -29,6 +29,16 @@ func buildIntervalObservation(parentBirthFrom, parentBirthTo, childBirthFrom, ch
 	}, true
 }
 
+func validGenerationChronology(parentDeathFrom, parentDeathTo, childBirthFrom time.Time) bool {
+	if !parentDeathFrom.IsZero() && !parentDeathTo.IsZero() && parentDeathFrom.After(parentDeathTo) {
+		return false
+	}
+	if !parentDeathTo.IsZero() && !childBirthFrom.IsZero() && parentDeathTo.Before(childBirthFrom) {
+		return false
+	}
+	return true
+}
+
 func yearsBetween(from, to time.Time) float64 {
 	return to.Sub(from).Hours() / 24 / 365.2425
 }

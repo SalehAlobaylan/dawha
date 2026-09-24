@@ -43,6 +43,19 @@ func (h temporalAnalysisHandler) getRun(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h temporalAnalysisHandler) getLatestRun(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.GetLatestRun(r.Context(), user.ID, r.URL.Query().Get("question_id"), r.URL.Query().Get("tree_id"), r.URL.Query().Get("tree_version_id"), r.URL.Query().Get("target_person_id"))
+	if err != nil {
+		writeTemporalAnalysisError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h temporalAnalysisHandler) listFindings(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.requireUser(w, r)
 	if !ok {
@@ -93,7 +106,11 @@ func (h temporalAnalysisHandler) requireUser(w http.ResponseWriter, r *http.Requ
 	}
 	user, err := h.Auth.UserFromRequest(r.Context(), r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		if errors.Is(err, auth.ErrDatabaseUnavailable) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "خدمة المصادقة غير متاحة حالياً"})
+			return auth.User{}, false
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "يلزم تسجيل الدخول"})
 		return auth.User{}, false
 	}
 	return user, true
@@ -101,23 +118,23 @@ func (h temporalAnalysisHandler) requireUser(w http.ResponseWriter, r *http.Requ
 
 func writeTemporalAnalysisError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	message := "temporal analysis operation failed"
+	message := "تعذر إكمال التحليل الزمني."
 	switch {
 	case errors.Is(err, temporalanalysis.ErrValidation):
 		status = http.StatusBadRequest
-		message = err.Error()
+		message = "بيانات طلب التحليل الزمني غير صالحة."
 	case errors.Is(err, temporalanalysis.ErrForbidden):
 		status = http.StatusForbidden
-		message = err.Error()
+		message = "لا تملك صلاحية تنفيذ هذا الإجراء."
 	case errors.Is(err, temporalanalysis.ErrNotFound):
 		status = http.StatusNotFound
-		message = err.Error()
+		message = "لم يُعثر على المورد المطلوب."
 	case errors.Is(err, temporalanalysis.ErrConflict):
 		status = http.StatusConflict
-		message = err.Error()
+		message = "تغيرت حالة المورد أثناء المعالجة."
 	case errors.Is(err, temporalanalysis.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
-		message = "temporal analysis service is not configured"
+		message = "خدمة التحليل غير متاحة حالياً."
 	}
 	writeJSON(w, status, map[string]string{"error": message})
 }
