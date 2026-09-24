@@ -30,6 +30,7 @@ import type {
   QuestionSourceInput,
   ReviewSuggestionInput,
   ResearchClaim,
+  SearchResponse,
   SourceDetail,
   SourceMetadata,
   SuggestionRecord,
@@ -324,6 +325,27 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchSearch(filters: { q: string; kind?: string; status?: string; personId?: string; placeId?: string; sourceId?: string; entityId?: string; fromYear?: number; toYear?: number; limit?: number }): Promise<SearchResponse> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لبدء البحث.", 503);
+  }
+  const params = new URLSearchParams({ q: filters.q });
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.personId) params.set("person_id", filters.personId);
+  if (filters.placeId) params.set("place_id", filters.placeId);
+  if (filters.sourceId) params.set("source_id", filters.sourceId);
+  if (filters.entityId) params.set("entity_id", filters.entityId);
+  if (filters.fromYear !== undefined) params.set("from_year", String(filters.fromYear));
+  if (filters.toYear !== undefined) params.set("to_year", String(filters.toYear));
+  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+  const response = await fetch(`${apiBaseUrl}/api/v1/search?${params.toString()}`, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SearchResponse;
 }
 
 export async function fetchMapFeatures(filters: { fromYear?: number; toYear?: number; status?: string; placeId?: string } = {}): Promise<MapResponse> {

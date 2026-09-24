@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
 import { DictionaryPage } from "./components/DictionaryPage";
+import { SearchPage } from "./components/SearchPage";
 import { HomePage } from "./routes/index";
 import { InvitationPage } from "./routes/invitation";
 import { LoginPage } from "./routes/login";
@@ -69,6 +70,12 @@ const dictionaryRoute = createRoute({
   component: DictionaryPage,
 });
 
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/search",
+  component: SearchPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
@@ -91,6 +98,7 @@ export const routeTree = rootRoute.addChildren([
   placesRoute,
   questionsRoute,
   dictionaryRoute,
+  searchRoute,
   loginRoute,
   invitationRoute,
 ]);

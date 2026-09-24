@@ -21,6 +21,7 @@ const navigation = [
   { to: "/", label: "نظرة عامة", icon: LayoutDashboard },
   { to: "/tree", label: "شجرة بحث", icon: GitBranch },
   { to: "/research", label: "مكتب البحث", icon: Sparkles },
+  { to: "/search", label: "البحث الموحد", icon: Search },
   { to: "/sources", label: "المصادر", icon: BookOpen },
   { to: "/places", label: "المواضع", icon: Map },
   { to: "/questions", label: "الأسئلة", icon: CircleHelp },

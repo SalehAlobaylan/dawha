@@ -484,6 +484,31 @@ export interface MapFeature {
   toLatitude?: number;
 }
 
+export interface SearchResult {
+  id: string;
+  kind: string;
+  title: string;
+  subtitle?: string;
+  body?: string;
+  status?: string;
+  score: number;
+  route?: string;
+  sourceId?: string;
+}
+
+export interface SearchGroup {
+  key: string;
+  label: string;
+  items: SearchResult[];
+}
+
+export interface SearchResponse {
+  query: string;
+  normalizedQuery: string;
+  groups: SearchGroup[];
+  total: number;
+}
+
 export interface MapResponse {
   fromYear?: number;
   toYear?: number;
