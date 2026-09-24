@@ -37,6 +37,11 @@ describe("tree routes", () => {
     expect(router.buildLocation({ to: "/entity-resolution" }).href).toBe("/entity-resolution");
   });
 
+  it("builds the contradiction review route", () => {
+    const router = makeRouter("/contradictions");
+    expect(router.buildLocation({ to: "/contradictions" }).href).toBe("/contradictions");
+  });
+
   it("builds the public dictionary route", () => {
     const router = makeRouter("/dictionary");
     expect(router.buildLocation({ to: "/dictionary" }).href).toBe("/dictionary");

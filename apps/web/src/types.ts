@@ -394,6 +394,59 @@ export interface EntityResolutionMerge {
   reversalReasonAr?: string;
 }
 
+export interface ContradictionRun {
+  id: string;
+  requestedBy: string;
+  jobId?: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  algorithmVersion: string;
+  findingCount: number;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
+export interface ContradictionReview {
+  id: string;
+  reviewerId: string;
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  noteAr?: string;
+  questionId?: string;
+  createdAt: string;
+}
+
+export interface ContradictionFinding {
+  id: string;
+  runId?: string;
+  findingType: string;
+  titleAr: string;
+  explanationAr: string;
+  status: "needs_review" | "confirmed" | "dismissed" | "investigating";
+  severity: "low" | "medium" | "high";
+  signals: Record<string, unknown>;
+  claimIds: string[];
+  entityIds: string[];
+  algorithmVersion: string;
+  modelVersion?: string;
+  createdBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  questionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews: ContradictionReview[];
+}
+
+export interface ContradictionReviewInput {
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  note_ar?: string;
+  create_question?: boolean;
+  question_title_ar?: string;
+}
+
 export interface ClaimSummary {
   id: string;
   subjectType: string;

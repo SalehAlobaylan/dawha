@@ -7,11 +7,12 @@
   ],
   "scripts": {
     "predev": "docker compose up -d db",
-    "dev": "concurrently --kill-others-on-fail --names web,api,ai,worker \"npm:dev:web\" \"npm:dev:api\" \"npm:dev:ai\" \"npm:dev:worker\"",
+    "dev": "concurrently --kill-others-on-fail --names web,api,ai,worker,contradictions \"npm:dev:web\" \"npm:dev:api\" \"npm:dev:ai\" \"npm:dev:worker\" \"npm:dev:contradictions\"",
     "dev:web": "VITE_API_URL=${VITE_API_URL:-http://localhost:8080} npm --workspace apps/web run dev",
     "dev:api": "cd services/core-api && DATABASE_URL=${DATABASE_URL:-postgres://dawha:dawha_local@localhost:55432/dawha} SOURCE_STORAGE_DIR=${SOURCE_STORAGE_DIR:-../../.data/source-storage} go run ./cmd/api",
     "dev:ai": "cd services/ai-research && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
     "dev:worker": "cd services/core-api && DATABASE_URL=${DATABASE_URL:-postgres://dawha:dawha_local@localhost:55432/dawha} AI_RESEARCH_URL=${AI_RESEARCH_URL:-http://localhost:8000} SOURCE_STORAGE_DIR=${SOURCE_STORAGE_DIR:-../../.data/source-storage} go run ./cmd/source-processing",
+    "dev:contradictions": "cd services/core-api && DATABASE_URL=${DATABASE_URL:-postgres://dawha:dawha_local@localhost:55432/dawha} go run ./cmd/contradiction-detector",
     "build": "npm --workspace apps/web run build",
     "lint": "npm --workspace apps/web run lint",
     "typecheck": "npm --workspace apps/web run typecheck",

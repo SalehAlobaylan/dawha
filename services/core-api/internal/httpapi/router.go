@@ -11,6 +11,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/contradiction"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution"
@@ -77,6 +78,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	if jobsService == nil {
 		jobsService = jobs.NewService(dependencies.DB)
 	}
+	contradictionService := contradiction.NewService(dependencies.DB, jobsService)
+	contradictionHandler := contradictionHandler{Service: contradictionService, Auth: authService}
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewTextExtractor())
 	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
@@ -114,6 +117,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/entity-resolution/candidates/{candidateID}/review", entityResolutionHandler.reviewCandidate)
 	mux.HandleFunc("POST /api/v1/entity-resolution/candidates/{candidateID}/merge", entityResolutionHandler.mergeCandidate)
 	mux.HandleFunc("POST /api/v1/entity-resolution/merges/{mergeID}/reverse", entityResolutionHandler.reverseMerge)
+	mux.HandleFunc("POST /api/v1/contradictions/runs", contradictionHandler.start)
+	mux.HandleFunc("GET /api/v1/contradictions/runs/{runID}", contradictionHandler.getRun)
+	mux.HandleFunc("GET /api/v1/contradictions/findings", contradictionHandler.listFindings)
+	mux.HandleFunc("GET /api/v1/contradictions/findings/{findingID}", contradictionHandler.getFinding)
+	mux.HandleFunc("POST /api/v1/contradictions/findings/{findingID}/review", contradictionHandler.review)
 	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode": "demo",

@@ -12,6 +12,7 @@ import {
   Search,
   ScanSearch,
   Settings2,
+  ShieldAlert,
   Sparkles,
   X,
 } from "lucide-react";
@@ -23,6 +24,7 @@ const navigation = [
   { to: "/tree", label: "شجرة بحث", icon: GitBranch },
   { to: "/research", label: "مكتب البحث", icon: Sparkles },
   { to: "/entity-resolution", label: "مطابقة الهوية", icon: ScanSearch },
+  { to: "/contradictions", label: "فحص التعارضات", icon: ShieldAlert },
   { to: "/search", label: "البحث الموحد", icon: Search },
   { to: "/sources", label: "المصادر", icon: BookOpen },
   { to: "/places", label: "المواضع", icon: Map },

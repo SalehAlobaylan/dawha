@@ -12,6 +12,9 @@ import type {
   CreateSourceInput,
   CreateStatementInput,
   CreateTreeInput,
+  ContradictionFinding,
+  ContradictionReviewInput,
+  ContradictionRun,
   DisputeClaimInput,
   DisputeDetail,
   DisputeRecord,
@@ -276,6 +279,60 @@ export async function reverseEntityResolutionMerge(mergeId: string, reasonAr: st
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as EntityResolutionMerge;
+}
+
+export async function startContradictionRun(): Promise<ContradictionRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API وخدمة فحص التعارضات.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/runs`, { method: "POST", credentials: "include" });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ContradictionRun;
+}
+
+export async function fetchContradictionRun(runId: string): Promise<ContradictionRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ContradictionRun;
+}
+
+export async function fetchContradictionFindings(runId?: string, status?: string): Promise<ContradictionFinding[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  if (runId) params.set("run_id", runId);
+  if (status) params.set("status", status);
+  const query = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/findings${query ? `?${query}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: ContradictionFinding[] };
+  return payload.items ?? [];
+}
+
+export async function reviewContradictionFinding(findingId: string, input: ContradictionReviewInput): Promise<ContradictionFinding> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/findings/${findingId}/review`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as ContradictionFinding;
 }
 
 export async function fetchPublicTrees(): Promise<TreeSummary[]> {

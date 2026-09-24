@@ -94,6 +94,20 @@ type ClaimVersion struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ContradictionRun struct {
+	ID               pgtype.UUID
+	RequestedBy      pgtype.UUID
+	JobID            pgtype.UUID
+	Status           string
+	AlgorithmVersion string
+	FindingCount     int32
+	Error            pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	StartedAt        pgtype.Timestamptz
+	CompletedAt      pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Dispute struct {
 	ID            pgtype.UUID
 	TitleAr       string
@@ -396,6 +410,23 @@ type PlatformFinding struct {
 	ModelVersion     pgtype.Text
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	RunID            pgtype.UUID
+	CheckKey         pgtype.Text
+	CreatedBy        pgtype.UUID
+	ReviewedBy       pgtype.UUID
+	ReviewedAt       pgtype.Timestamptz
+	ReviewNoteAr     pgtype.Text
+	Severity         string
+}
+
+type PlatformFindingReview struct {
+	ID         pgtype.UUID
+	FindingID  pgtype.UUID
+	ReviewerID pgtype.UUID
+	Decision   string
+	NoteAr     pgtype.Text
+	QuestionID pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
 }
 
 type QuestionClaim struct {
