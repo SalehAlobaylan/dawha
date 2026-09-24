@@ -25,6 +25,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/temporalanalysis"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -80,6 +81,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	}
 	contradictionService := contradiction.NewService(dependencies.DB, jobsService)
 	contradictionHandler := contradictionHandler{Service: contradictionService, Auth: authService}
+	temporalAnalysisService := temporalanalysis.NewService(dependencies.DB)
+	temporalAnalysisHandler := temporalAnalysisHandler{Service: temporalAnalysisService, Auth: authService}
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewTextExtractor())
 	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
@@ -122,6 +125,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/contradictions/findings", contradictionHandler.listFindings)
 	mux.HandleFunc("GET /api/v1/contradictions/findings/{findingID}", contradictionHandler.getFinding)
 	mux.HandleFunc("POST /api/v1/contradictions/findings/{findingID}/review", contradictionHandler.review)
+	mux.HandleFunc("POST /api/v1/temporal-analysis/runs", temporalAnalysisHandler.start)
+	mux.HandleFunc("GET /api/v1/temporal-analysis/runs/{runID}", temporalAnalysisHandler.getRun)
+	mux.HandleFunc("GET /api/v1/temporal-analysis/findings", temporalAnalysisHandler.listFindings)
+	mux.HandleFunc("GET /api/v1/temporal-analysis/findings/{findingID}", temporalAnalysisHandler.getFinding)
+	mux.HandleFunc("POST /api/v1/temporal-analysis/findings/{findingID}/review", temporalAnalysisHandler.review)
 	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode": "demo",

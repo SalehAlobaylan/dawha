@@ -124,7 +124,7 @@ func (s *Service) ListFindings(ctx context.Context, actorID, runID, status strin
 	if err := requireRole(ctx, s.Pool, strings.TrimSpace(actorID), operatorRoles...); err != nil {
 		return nil, err
 	}
-	query := findingSelect + ` WHERE 1 = 1`
+	query := findingSelect + ` WHERE f.temporal_run_id IS NULL`
 	args := make([]any, 0, 2)
 	if strings.TrimSpace(runID) != "" {
 		id, err := uuid.Parse(strings.TrimSpace(runID))
@@ -177,7 +177,7 @@ func (s *Service) GetFinding(ctx context.Context, actorID, findingID string) (Fi
 }
 
 func (s *Service) getFinding(ctx context.Context, q queryer, id uuid.UUID) (Finding, error) {
-	finding, err := scanFinding(q.QueryRow(ctx, findingSelect+` WHERE f.id = $1`, id))
+	finding, err := scanFinding(q.QueryRow(ctx, findingSelect+` WHERE f.id = $1 AND f.temporal_run_id IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Finding{}, ErrNotFound
 	}

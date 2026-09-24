@@ -7,6 +7,7 @@ import { ApiError, addClaimEvidence, createClaim, createDispute, createQuestion,
 import type { CreateClaimInput, EntityResolutionReviewInput, EpistemicTone, GraphStats, ResearchQueryResult, ResearchRunDetail, ResearchWorkspaceSnapshot, WorkspaceClaim, WorkspaceFinding, WorkspaceIdentityCandidate, WorkspaceTimelineEvent } from "../types";
 import { demoTreeDetail } from "../lib/api";
 import { GraphPathsPanel, ResearchResultPanel } from "./research";
+import { TemporalAnalysisPanel } from "../components/TemporalAnalysisPanel";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
@@ -146,6 +147,7 @@ export function ResearchWorkspacePage() {
         <ClaimsPanel snapshot={snapshot} claimDraft={claimDraft} setClaimDraft={setClaimDraft} onCreateClaim={() => claimMutation.mutate()} claimPending={claimMutation.isPending} evidenceClaimId={evidenceClaimId} setEvidenceClaimId={setEvidenceClaimId} evidenceStatementId={evidenceStatementId} setEvidenceStatementId={setEvidenceStatementId} evidenceClaims={evidenceClaims} onLinkEvidence={() => evidenceMutation.mutate()} evidencePending={evidenceMutation.isPending} onDispute={(claim) => disputeMutation.mutate(claim)} disputePending={disputeMutation.isPending} canCreate={permissions.canCreateClaim} canLink={permissions.canLinkEvidence} canDispute={permissions.canDisputeClaim} />
         <TreePanel snapshot={snapshot} />
         <MapTimelinePanel snapshot={snapshot} />
+        <TemporalAnalysisPanel snapshot={snapshot} canRun={permissions.canRunResearch} />
         <SourcesPanel snapshot={snapshot} />
       </main>
       <aside className="workspace-side">

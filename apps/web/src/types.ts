@@ -841,6 +841,120 @@ export interface ContradictionReviewInput {
   question_title_ar?: string;
 }
 
+export interface TemporalReferencePopulation {
+  scopeType: string;
+  treeId: string;
+  treeVersionId: string;
+  versionNumber: number;
+  versionState: string;
+  referenceEdgeCount: number;
+  candidateEdgeCount: number;
+  excludedCounts: Record<string, number>;
+  datePolicy: string;
+  dependencyPolicy: string;
+  sourcePolicy: string;
+  claimPolicy: string;
+  treePolicy: string;
+  targetInPopulation: boolean;
+  truncated: boolean;
+  referenceBandAvailable: boolean;
+  q1Years: number;
+  medianYears: number;
+  q3Years: number;
+}
+
+export interface TemporalIntervalObservation {
+  lowerYears: number;
+  upperYears: number;
+  midpointYears: number;
+  parentBirthFrom: string;
+  parentBirthTo: string;
+  childBirthFrom: string;
+  childBirthTo: string;
+}
+
+export interface TemporalComparison {
+  method: string;
+  referenceN: number;
+  q1Years: number;
+  medianYears: number;
+  q3Years: number;
+  observed: TemporalIntervalObservation;
+  relation: "below_reference_range" | "above_reference_range" | "overlaps_reference_range";
+}
+
+export interface TemporalAnalysisRun {
+  id: string;
+  requestedBy: string;
+  questionId?: string;
+  treeId: string;
+  treeVersionId: string;
+  targetPersonId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  reportStatus: "succeeded" | "insufficient_reference" | "failed";
+  executionMode: "synchronous";
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  minReferenceSize: number;
+  referencePopulation: TemporalReferencePopulation;
+  findingCount: number;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
+export interface TemporalFindingReview {
+  id: string;
+  reviewerId: string;
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  noteAr?: string;
+  questionId?: string;
+  createdAt: string;
+}
+
+export interface TemporalFinding {
+  id: string;
+  runId: string;
+  temporalRunId: string;
+  findingType: string;
+  titleAr: string;
+  explanationAr: string;
+  status: "needs_review" | "confirmed" | "dismissed" | "investigating";
+  severity: "low" | "medium" | "high";
+  signals: Record<string, unknown>;
+  claimIds: string[];
+  entityIds: string[];
+  referencePopulation: TemporalReferencePopulation;
+  comparison: TemporalComparison;
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  createdBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  questionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews: TemporalFindingReview[];
+}
+
+export interface StartTemporalAnalysisInput {
+  tree_id: string;
+  tree_version_id: string;
+  target_person_id: string;
+  question_id?: string;
+  min_reference_size?: number;
+}
+
+export interface ReviewTemporalFindingInput {
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  note_ar?: string;
+  create_question?: boolean;
+  question_title_ar?: string;
+}
+
 export interface ClaimSummary {
   id: string;
   subjectType: string;

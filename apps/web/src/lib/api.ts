@@ -51,6 +51,7 @@ import type {
   ResearchWorkspaceSnapshot,
   ReviewSourceDependencyInput,
   ReviewSuggestionInput,
+  ReviewTemporalFindingInput,
   SearchResponse,
   SourceCandidate,
   SourceDetail,
@@ -58,6 +59,9 @@ import type {
   SourceFile,
   SourceMetadata,
   SourceProcessing,
+  StartTemporalAnalysisInput,
+  TemporalAnalysisRun,
+  TemporalFinding,
   SuggestionRecord,
   SubmitSuggestionInput,
   TreeActivity,
@@ -382,6 +386,65 @@ export async function reviewContradictionFinding(findingId: string, input: Contr
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as ContradictionFinding;
+}
+
+export async function startTemporalAnalysis(input: StartTemporalAnalysisInput): Promise<TemporalAnalysisRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتشغيل التحليل الزمني.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TemporalAnalysisRun;
+}
+
+export async function fetchTemporalAnalysisRun(runId: string): Promise<TemporalAnalysisRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TemporalAnalysisRun;
+}
+
+export async function fetchTemporalFindings(runId?: string, status?: string): Promise<TemporalFinding[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  if (runId) params.set("run_id", runId);
+  if (status) params.set("status", status);
+  const query = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/findings${query ? `?${query}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: TemporalFinding[] };
+  return payload.items ?? [];
+}
+
+export async function reviewTemporalFinding(findingId: string, input: ReviewTemporalFindingInput): Promise<TemporalFinding> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/findings/${findingId}/review`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TemporalFinding;
 }
 
 export async function fetchPublicTrees(): Promise<TreeSummary[]> {

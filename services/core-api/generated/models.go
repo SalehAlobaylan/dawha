@@ -417,6 +417,7 @@ type PlatformFinding struct {
 	ReviewedAt       pgtype.Timestamptz
 	ReviewNoteAr     pgtype.Text
 	Severity         string
+	TemporalRunID    pgtype.UUID
 }
 
 type PlatformFindingReview struct {
@@ -787,6 +788,28 @@ type SuggestionReview struct {
 	Decision     string
 	NoteAr       pgtype.Text
 	CreatedAt    pgtype.Timestamptz
+}
+
+type TemporalAnalysisRun struct {
+	ID                         pgtype.UUID
+	RequestedBy                pgtype.UUID
+	QuestionID                 pgtype.UUID
+	TreeID                     pgtype.UUID
+	TreeVersionID              pgtype.UUID
+	TargetPersonID             pgtype.UUID
+	Status                     string
+	ReportStatus               pgtype.Text
+	ExecutionMode              string
+	AlgorithmVersion           string
+	QualificationPolicyVersion string
+	MinReferenceSize           int32
+	ReferencePopulation        []byte
+	FindingCount               int32
+	Error                      pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	StartedAt                  pgtype.Timestamptz
+	CompletedAt                pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
 }
 
 type Tree struct {

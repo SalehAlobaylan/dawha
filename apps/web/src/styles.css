@@ -9964,6 +9964,136 @@ a {
   }
 }
 
+.temporal-analysis-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--rule);
+  background: rgba(243, 235, 221, 0.72);
+}
+
+.temporal-analysis-head,
+.temporal-finding-head,
+.temporal-finding-actions,
+.temporal-report-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.temporal-analysis-head {
+  align-items: flex-start;
+}
+
+.temporal-analysis-head h3 {
+  margin: 3px 0 5px;
+  font-size: 17px;
+}
+
+.temporal-analysis-head p,
+.temporal-analysis-hint,
+.temporal-finding p,
+.temporal-exclusions,
+.temporal-policy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.temporal-analysis-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.temporal-report {
+  display: grid;
+  gap: 10px;
+}
+
+.temporal-report-summary {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--olive);
+  background: var(--white-warm);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.temporal-report-summary strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.temporal-reference-band,
+.temporal-exclusions {
+  padding-inline-start: 4px;
+}
+
+.temporal-finding {
+  display: grid;
+  gap: 8px;
+  padding: 13px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.temporal-finding-head {
+  align-items: flex-start;
+}
+
+.temporal-finding-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.temporal-finding-head small,
+.temporal-finding-meta {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.temporal-finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.temporal-finding-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.temporal-finding-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  font-size: 10px;
+}
+
+.temporal-policy {
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+}
+
+@media (max-width: 700px) {
+  .temporal-analysis-panel {
+    padding: 14px;
+  }
+
+  .temporal-analysis-head,
+  .temporal-finding-head,
+  .temporal-finding-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .workspace-page {
   --workspace-rule: color-mix(in srgb, var(--rule) 82%, transparent);
 }
