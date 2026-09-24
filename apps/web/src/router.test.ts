@@ -22,6 +22,11 @@ describe("tree routes", () => {
     expect(router.buildLocation({ to: "/invitation/$token", params: { token: "token-1" } }).href).toBe("/invitation/token-1");
   });
 
+  it("builds the job operations route", () => {
+    const router = makeRouter("/jobs");
+    expect(router.buildLocation({ to: "/jobs" }).href).toBe("/jobs");
+  });
+
   it("builds the public search route", () => {
     const router = makeRouter("/search");
     expect(router.buildLocation({ to: "/search" }).href).toBe("/search");

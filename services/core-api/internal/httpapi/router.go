@@ -16,6 +16,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geography"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
@@ -61,6 +62,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	geographyHandler := geographyHandler{Service: geographyService}
 	searchService := search.NewService(dependencies.DB)
 	searchHandler := searchHandler{Service: searchService}
+	jobsService := jobs.NewService(dependencies.DB)
+	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	suggestionService := suggestions.NewService(dependencies.DB)
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
@@ -126,6 +129,12 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/map", geographyHandler.mapFeatures)
 	mux.HandleFunc("GET /api/v1/map/places/{placeID}", geographyHandler.placeMap)
 	mux.HandleFunc("GET /api/v1/search", searchHandler.search)
+	mux.HandleFunc("GET /api/v1/jobs", jobsHandler.list)
+	mux.HandleFunc("POST /api/v1/jobs", jobsHandler.enqueue)
+	mux.HandleFunc("POST /api/v1/jobs/claim", jobsHandler.claim)
+	mux.HandleFunc("POST /api/v1/jobs/recover-stale", jobsHandler.recover)
+	mux.HandleFunc("POST /api/v1/jobs/{jobID}/complete", jobsHandler.complete)
+	mux.HandleFunc("POST /api/v1/jobs/{jobID}/fail", jobsHandler.fail)
 	mux.HandleFunc("POST /api/v1/suggestions", suggestionHandler.submit)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}/suggestions", suggestionHandler.list)
 	mux.HandleFunc("PATCH /api/v1/suggestions/{suggestionID}", suggestionHandler.review)

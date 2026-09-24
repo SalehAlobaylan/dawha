@@ -90,6 +90,11 @@ export function AppShell() {
             <span>المحفوظات</span>
             <ChevronLeft className="nav-chevron" size={15} />
           </a>
+          <Link className="nav-link" to="/jobs" onClick={() => setMobileOpen(false)}>
+            <Settings2 size={17} strokeWidth={1.7} />
+            <span>مهام التشغيل</span>
+            <ChevronLeft className="nav-chevron" size={15} />
+          </Link>
         </nav>
 
         <div className="sidebar-bottom">

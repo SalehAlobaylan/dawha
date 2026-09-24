@@ -236,6 +236,7 @@ type Job struct {
 	IdempotencyKey pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	MaxAttempts    int32
 }
 
 type MigrationEvent struct {

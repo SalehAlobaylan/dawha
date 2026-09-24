@@ -516,6 +516,32 @@ export interface MapResponse {
   features: MapFeature[];
 }
 
+export interface JobView {
+  id: string;
+  type: string;
+  payload: unknown;
+  status: "queued" | "running" | "succeeded" | "failed" | "dead";
+  priority: number;
+  attempts: number;
+  maxAttempts: number;
+  runAt: string;
+  lockedAt?: string;
+  lockedBy?: string;
+  lastError?: string;
+  idempotencyKey?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnqueueJobInput {
+  type: string;
+  payload: unknown;
+  priority?: number;
+  run_at?: string;
+  idempotency_key?: string;
+  max_attempts?: number;
+}
+
 export interface TreeSummary {
   id: string;
   name: string;

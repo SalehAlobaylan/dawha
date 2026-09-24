@@ -19,8 +19,10 @@ import type {
   DictionaryDetail,
   DictionaryIndexResponse,
   DictionaryKind,
+  EnqueueJobInput,
   ForkTreeInput,
   InvitationCreated,
+  JobView,
   MapResponse,
   OpenQuestionRecord,
   QuestionClaimInput,
@@ -325,6 +327,58 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchJobs(status?: string): Promise<JobView[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض المهام.", 503);
+  }
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs${query}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: JobView[] };
+  return payload.items ?? [];
+}
+
+export async function enqueueJob(input: EnqueueJobInput): Promise<{ job: JobView; created: boolean }> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإضافة المهمة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { job: JobView; created: boolean };
+}
+
+export async function claimJob(workerId: string): Promise<JobView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لالتقاط المهمة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs/claim`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId }) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as JobView;
+}
+
+export async function completeJob(jobId: string, workerId: string): Promise<JobView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لإكمال المهمة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs/${jobId}/complete`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId }) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as JobView;
+}
+
+export async function failJob(jobId: string, workerId: string, error: string): Promise<JobView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لتسجيل فشل المهمة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs/${jobId}/fail`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId, error }) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as JobView;
+}
+
+export async function recoverStaleJobs(olderThanSeconds = 900): Promise<{ recovered: number; jobs: JobView[] }> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لاستعادة المهام العالقة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/jobs/recover-stale`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ older_than_seconds: olderThanSeconds }) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as { recovered: number; jobs: JobView[] };
 }
 
 export async function fetchSearch(filters: { q: string; kind?: string; status?: string; personId?: string; placeId?: string; sourceId?: string; entityId?: string; fromYear?: number; toYear?: number; limit?: number }): Promise<SearchResponse> {

@@ -24,7 +24,7 @@ UPDATE jobs
 SET status = 'running', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
 FROM claimed
 WHERE jobs.id = claimed.id
-RETURNING jobs.id, jobs.type, jobs.payload, jobs.status, jobs.priority, jobs.attempts, jobs.run_at, jobs.locked_at, jobs.locked_by, jobs.last_error, jobs.idempotency_key, jobs.created_at, jobs.updated_at
+RETURNING jobs.id, jobs.type, jobs.payload, jobs.status, jobs.priority, jobs.attempts, jobs.run_at, jobs.locked_at, jobs.locked_by, jobs.last_error, jobs.idempotency_key, jobs.created_at, jobs.updated_at, jobs.max_attempts
 `
 
 type ClaimJobsParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) ClaimJobs(ctx context.Context, arg ClaimJobsParams) ([]Job, er
 			&i.IdempotencyKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MaxAttempts,
 		); err != nil {
 			return nil, err
 		}

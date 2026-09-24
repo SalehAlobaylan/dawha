@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
 import { DictionaryPage } from "./components/DictionaryPage";
+import { JobsPage } from "./components/JobsPage";
 import { SearchPage } from "./components/SearchPage";
 import { HomePage } from "./routes/index";
 import { InvitationPage } from "./routes/invitation";
@@ -76,6 +77,12 @@ const searchRoute = createRoute({
   component: SearchPage,
 });
 
+const jobsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/jobs",
+  component: JobsPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
@@ -99,6 +106,7 @@ export const routeTree = rootRoute.addChildren([
   questionsRoute,
   dictionaryRoute,
   searchRoute,
+  jobsRoute,
   loginRoute,
   invitationRoute,
 ]);
