@@ -74,6 +74,71 @@ export interface SourceRecord {
   dependent?: boolean;
 }
 
+export interface TreeSummary {
+  id: string;
+  name: string;
+  description: string;
+  visibility: "private" | "unlisted" | "public";
+  ownerId: string;
+  updatedAt: string;
+  latestVersionId: string;
+  latestVersionNumber: number;
+  latestState: "draft" | "published" | "archived";
+  people: number;
+  relationships: number;
+  unresolved: number;
+}
+
+export interface TreeVersionRecord {
+  id: string;
+  number: number;
+  state: "draft" | "published" | "archived";
+  publicationNote: string;
+  publishedAt: string | null;
+  createdAt: string;
+}
+
+export interface TreeNodeRecord {
+  id: string;
+  personId: string;
+  displayName: string;
+  sortOrder: number;
+  years: string;
+  role: string;
+  tone: EpistemicTone;
+  sourceCount: number;
+  note: string;
+}
+
+export interface TreeRelationshipRecord {
+  id: string;
+  subjectNodeId: string;
+  objectNodeId: string;
+  predicate: string;
+  status: "interpreted" | "disputed" | "unresolved";
+}
+
+export interface TreeDetail {
+  tree: TreeSummary;
+  versions: TreeVersionRecord[];
+  nodes: TreeNodeRecord[];
+  relationships: TreeRelationshipRecord[];
+}
+
+export interface CreateTreeInput {
+  name_ar: string;
+  description_ar?: string;
+  visibility: "private" | "unlisted" | "public";
+  people: Array<{
+    canonical_name_ar: string;
+    gender?: "male" | "female" | "unknown";
+    birth_date_from?: string;
+    birth_date_to?: string;
+    death_date_from?: string;
+    death_date_to?: string;
+  }>;
+}
+
 export interface PlaceRecord {
   id: string;
   name: string;

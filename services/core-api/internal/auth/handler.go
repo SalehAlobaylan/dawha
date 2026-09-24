@@ -33,6 +33,12 @@ func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
+	token, err := h.Service.createSession(r.Context(), user.ID)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	h.setSessionCookie(w, token)
 	h.writeUser(w, http.StatusCreated, user)
 }
 

@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, GitCompareArrows, MapPin, Plus, ShieldCheck } from "lucide-react";
-import type { TreeNode } from "../types";
+import type { TreeNode, TreeRelationshipRecord } from "../types";
 import { StatusBadge } from "./StatusBadge";
 
-const connections = [
+const defaultConnections = [
   ["p-1", "p-2"],
   ["p-2", "p-3"],
   ["p-2", "p-5"],
@@ -12,21 +12,33 @@ const connections = [
   ["p-5", "p-4"],
 ];
 
-export function ResearchGraph({ selected, onSelect }: { selected: string; onSelect: (node: TreeNode) => void }) {
-  const nodes = useGraphNodes();
+interface ResearchGraphProps {
+  selected: string;
+  onSelect: (node: TreeNode) => void;
+  nodes?: TreeNode[];
+  relationships?: TreeRelationshipRecord[];
+  label?: string;
+}
+
+export function ResearchGraph({ selected, onSelect, nodes, relationships, label }: ResearchGraphProps) {
+  const defaultNodes = useGraphNodes();
+  const graphNodes = nodes ?? defaultNodes;
+  const graphConnections = relationships?.map((relationship) => [relationship.subjectNodeId, relationship.objectNodeId]) ?? defaultConnections;
+  const empty = nodes !== undefined && nodes.length === 0;
 
   return (
-    <div className="research-graph" aria-label="رسم شجرة تجريبي">
+    <div className="research-graph" aria-label={label ?? "رسم شجرة تجريبي"}>
       <div className="graph-grid-lines" />
       <svg className="graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        {connections.map(([from, to]) => {
-          const source = nodes.find((node) => node.id === from);
-          const target = nodes.find((node) => node.id === to);
+        {graphConnections.map(([from, to]) => {
+          const source = graphNodes.find((node) => node.id === from);
+          const target = graphNodes.find((node) => node.id === to);
           if (!source || !target) return null;
           return <line key={`${from}-${to}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
         })}
       </svg>
-      {nodes.map((node) => (
+      {empty ? <div className="graph-empty"><strong>لا توجد أشخاص في هذه المسودة بعد</strong><span>أضف أول شخص لبدء تفسير الشجرة.</span></div> : null}
+      {graphNodes.map((node) => (
         <button
           type="button"
           key={node.id}

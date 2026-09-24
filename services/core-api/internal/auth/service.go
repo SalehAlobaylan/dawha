@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -17,7 +18,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const sessionCookieName = "dawha_session"
+const SessionCookieName = "dawha_session"
+
+const sessionCookieName = SessionCookieName
 
 var (
 	ErrDatabaseUnavailable = errors.New("authentication database is unavailable")
@@ -138,6 +141,14 @@ func (s *Service) UserFromToken(ctx context.Context, token string) (User, error)
 	}
 	_, _ = s.Pool.Exec(ctx, `UPDATE auth_sessions SET last_seen_at = now() WHERE token_hash = $1`, HashToken(token))
 	return user, nil
+}
+
+func (s *Service) UserFromRequest(ctx context.Context, r *http.Request) (User, error) {
+	cookie, err := r.Cookie(SessionCookieName)
+	if err != nil {
+		return User{}, ErrInvalidCredentials
+	}
+	return s.UserFromToken(ctx, cookie.Value)
 }
 
 func (s *Service) RevokeToken(ctx context.Context, token string) error {

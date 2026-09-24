@@ -13,6 +13,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,17 +40,18 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	healthHandler := health.Handler{Pool: dependencies.DB}
 	authService := auth.NewService(dependencies.DB)
 	authHandler := auth.Handler{Service: authService, SecureCookies: dependencies.SecureCookies}
+	treeService := trees.NewService(dependencies.DB)
+	treeHandler := treeHandler{Service: treeService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, dashboard.Demo())
 	})
-	mux.HandleFunc("GET /api/v1/trees", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"mode":  "demo",
-			"items": []map[string]any{{"id": "tree-demo", "title_ar": "شجرة بيت العنبر", "state": "published", "version": "v3"}},
-		})
-	})
+	mux.HandleFunc("GET /api/v1/trees", treeHandler.list)
+	mux.HandleFunc("POST /api/v1/trees", treeHandler.create)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}", treeHandler.get)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}/versions", treeHandler.versions)
+	mux.HandleFunc("POST /api/v1/trees/{treeID}/publish", treeHandler.publish)
 	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode": "demo",
