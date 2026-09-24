@@ -22,6 +22,11 @@ describe("tree routes", () => {
     expect(router.buildLocation({ to: "/invitation/$token", params: { token: "token-1" } }).href).toBe("/invitation/token-1");
   });
 
+  it("builds the public dictionary route", () => {
+    const router = makeRouter("/dictionary");
+    expect(router.buildLocation({ to: "/dictionary" }).href).toBe("/dictionary");
+  });
+
   it("keeps the static tree route separate from dynamic resources", () => {
     const router = makeRouter("/tree/tree-1/versions/version-2");
     expect(router.state.location.pathname).toBe("/tree/tree-1/versions/version-2");

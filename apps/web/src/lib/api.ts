@@ -16,6 +16,9 @@ import type {
   DisputeDetail,
   DisputeRecord,
   DashboardData,
+  DictionaryDetail,
+  DictionaryIndexResponse,
+  DictionaryKind,
   ForkTreeInput,
   InvitationCreated,
   OpenQuestionRecord,
@@ -320,6 +323,29 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Promise<DictionaryIndexResponse> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الفهرس.", 503);
+  }
+  const params = new URLSearchParams({ kind, q: query });
+  const response = await fetch(`${apiBaseUrl}/api/v1/dictionary?${params.toString()}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DictionaryIndexResponse;
+}
+
+export async function fetchDictionaryDetail(kind: "families" | "tribes" | "people" | "places", id: string): Promise<DictionaryDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض صفحة القاموس.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/dictionary/${kind}/${id}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DictionaryDetail;
 }
 
 export async function submitSuggestion(input: SubmitSuggestionInput): Promise<SuggestionRecord> {

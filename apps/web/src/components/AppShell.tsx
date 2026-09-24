@@ -79,11 +79,11 @@ export function AppShell() {
         <div className="sidebar-divider" />
         <div className="sidebar-section-label">اكتشف</div>
         <nav className="secondary-nav" aria-label="روابط الاستكشاف">
-          <a className="nav-link" href="#dictionary" onClick={() => setMobileOpen(false)}>
+          <Link className="nav-link" to="/dictionary" onClick={() => setMobileOpen(false)}>
             <Compass size={17} strokeWidth={1.7} />
-            <span>فهرس العائلات</span>
+            <span>الفهرس العام</span>
             <ChevronLeft className="nav-chevron" size={15} />
-          </a>
+          </Link>
           <a className="nav-link" href="#saved" onClick={() => setMobileOpen(false)}>
             <Search size={17} strokeWidth={1.7} />
             <span>المحفوظات</span>

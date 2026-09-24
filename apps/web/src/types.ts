@@ -383,6 +383,81 @@ export interface ReviewSuggestionInput {
   question_title_ar?: string;
 }
 
+export type DictionaryKind = "families" | "tribes" | "branches" | "people" | "places" | "sources" | "questions" | "disputed-claims";
+
+export interface DictionaryIndexItem {
+  id: string;
+  kind: string;
+  nameAr: string;
+  secondaryAr?: string;
+  status?: string;
+  count: number;
+}
+
+export interface DictionaryIndexResponse {
+  kind: DictionaryKind;
+  query: string;
+  items: DictionaryIndexItem[];
+}
+
+export interface DictionaryAlias {
+  valueAr: string;
+  type: string;
+}
+
+export interface DictionaryReference {
+  id: string;
+  nameAr: string;
+  detailAr?: string;
+  status?: string;
+  sourceType?: string;
+}
+
+export interface DictionaryTreeReference {
+  id: string;
+  nameAr: string;
+  versionId: string;
+  versionNumber: number;
+}
+
+export interface DictionaryClaimReference {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  predicate: string;
+  objectType: string;
+  objectId: string;
+  status: string;
+  evidenceCount: number;
+}
+
+export interface DictionaryQuestionReference {
+  id: string;
+  titleAr: string;
+  status: string;
+  priority: string;
+  noteCount: number;
+}
+
+export interface DictionaryDetail {
+  kind: "family" | "tribe" | "person" | "place";
+  id: string;
+  nameAr: string;
+  descriptionAr?: string;
+  aliases: DictionaryAlias[];
+  historicalNames: DictionaryReference[];
+  branches: DictionaryReference[];
+  places: DictionaryReference[];
+  families: DictionaryReference[];
+  people: DictionaryReference[];
+  tribes: DictionaryReference[];
+  publishedTrees: DictionaryTreeReference[];
+  claims: DictionaryClaimReference[];
+  sources: DictionaryReference[];
+  questions: DictionaryQuestionReference[];
+  migrations: DictionaryReference[];
+}
+
 export interface TreeSummary {
   id: string;
   name: string;
