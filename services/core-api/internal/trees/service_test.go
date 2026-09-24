@@ -61,3 +61,44 @@ func TestPublishedOnlyForViewer(t *testing.T) {
 		t.Fatal("private trees should not be filtered as public versions")
 	}
 }
+
+func TestValidatePersonInputNormalizesDefaults(t *testing.T) {
+	person, err := validatePersonInput(PersonInput{CanonicalName: "  سارة  "})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if person.CanonicalName != "سارة" || person.Gender != "unknown" {
+		t.Fatalf("unexpected normalized person: %+v", person)
+	}
+}
+
+func TestValidateRelationshipInputDefaultsStatus(t *testing.T) {
+	relationship, err := validateRelationshipInput(AddRelationshipInput{
+		SubjectNodeID: " subject ",
+		ObjectNodeID:  " object ",
+		Predicate:     "parent_of",
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if relationship.SubjectNodeID != "subject" || relationship.ObjectNodeID != "object" || relationship.Status != "interpreted" {
+		t.Fatalf("unexpected normalized relationship: %+v", relationship)
+	}
+}
+
+func TestValidateRelationshipInputRejectsUnknownValues(t *testing.T) {
+	_, err := validateRelationshipInput(AddRelationshipInput{SubjectNodeID: "a", ObjectNodeID: "b", Predicate: "ancestor_of"})
+	if err != ErrValidation {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestParsePersonDatesRejectsInvertedRange(t *testing.T) {
+	_, _, _, _, err := parsePersonDates(PersonInput{
+		BirthDateFrom: "1200-01-01",
+		BirthDateTo:   "1100-01-01",
+	})
+	if err != ErrValidation {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}

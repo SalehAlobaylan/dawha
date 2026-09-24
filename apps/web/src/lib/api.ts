@@ -1,5 +1,5 @@
 import { demoDashboard, treeNodes } from "../data/demo";
-import type { CreateTreeInput, DashboardData, TreeDetail, TreeSummary } from "../types";
+import type { AddPersonInput, AddRelationshipInput, CreateTreeInput, DashboardData, TreeDetail, TreeSummary } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
 const demoTreeId = "tree-demo";
@@ -134,6 +134,38 @@ export async function createTree(input: CreateTreeInput): Promise<TreeDetail> {
     throw new ApiError("شغّل Core API أولاً لتفعيل إنشاء الشجرة.", 503);
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TreeDetail;
+}
+
+export async function addPerson(treeId: string, input: AddPersonInput): Promise<TreeDetail> {
+  if (!apiBaseUrl || treeId === demoTreeId) {
+    throw new ApiError("شغّل Core API وافتح مسودة حقيقية لتعديلها.", 409);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/people`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TreeDetail;
+}
+
+export async function addRelationship(treeId: string, input: AddRelationshipInput): Promise<TreeDetail> {
+  if (!apiBaseUrl || treeId === demoTreeId) {
+    throw new ApiError("شغّل Core API وافتح مسودة حقيقية لتعديلها.", 409);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/relationships`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

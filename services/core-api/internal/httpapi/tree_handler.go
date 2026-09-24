@@ -20,7 +20,7 @@ type publishTreeRequest struct {
 }
 
 func (h treeHandler) list(w http.ResponseWriter, r *http.Request) {
-	items, err := h.Service.ListPublicTrees(r.Context())
+	items, err := h.Service.ListAccessibleTrees(r.Context(), h.optionalUserID(r))
 	if err != nil {
 		if err == trees.ErrDatabaseUnavailable {
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -66,6 +66,42 @@ func (h treeHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail, err := h.Service.CreateTree(r.Context(), user.ID, input)
+	if err != nil {
+		writeTreeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, detail)
+}
+
+func (h treeHandler) addPerson(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.UserFromRequest(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	var input trees.PersonInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	detail, err := h.Service.AddPerson(r.Context(), r.PathValue("treeID"), user.ID, input)
+	if err != nil {
+		writeTreeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, detail)
+}
+
+func (h treeHandler) addRelationship(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.UserFromRequest(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	var input trees.AddRelationshipInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	detail, err := h.Service.AddRelationship(r.Context(), r.PathValue("treeID"), user.ID, input)
 	if err != nil {
 		writeTreeError(w, err)
 		return
@@ -128,6 +164,9 @@ func writeTreeError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 		message = err.Error()
 	case trees.ErrNoDraft:
+		status = http.StatusConflict
+		message = err.Error()
+	case trees.ErrDuplicateRelationship:
 		status = http.StatusConflict
 		message = err.Error()
 	case trees.ErrDatabaseUnavailable:

@@ -139,6 +139,22 @@ export interface CreateTreeInput {
   }>;
 }
 
+export interface AddPersonInput {
+  canonical_name_ar: string;
+  gender?: "male" | "female" | "unknown";
+  birth_date_from?: string;
+  birth_date_to?: string;
+  death_date_from?: string;
+  death_date_to?: string;
+}
+
+export interface AddRelationshipInput {
+  subject_node_id: string;
+  object_node_id: string;
+  predicate: "parent_of" | "spouse_of" | "sibling_of";
+  status: "interpreted" | "disputed" | "unresolved";
+}
+
 export interface PlaceRecord {
   id: string;
   name: string;

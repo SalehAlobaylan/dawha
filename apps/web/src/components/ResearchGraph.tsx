@@ -23,18 +23,23 @@ interface ResearchGraphProps {
 export function ResearchGraph({ selected, onSelect, nodes, relationships, label }: ResearchGraphProps) {
   const defaultNodes = useGraphNodes();
   const graphNodes = nodes ?? defaultNodes;
-  const graphConnections = relationships?.map((relationship) => [relationship.subjectNodeId, relationship.objectNodeId]) ?? defaultConnections;
+  const graphConnections = relationships?.map((relationship) => ({ from: relationship.subjectNodeId, to: relationship.objectNodeId, status: relationship.status })) ?? defaultConnections.map(([from, to]) => ({ from, to, status: "interpreted" }));
   const empty = nodes !== undefined && nodes.length === 0;
 
   return (
     <div className="research-graph" aria-label={label ?? "رسم شجرة تجريبي"}>
       <div className="graph-grid-lines" />
       <svg className="graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        {graphConnections.map(([from, to]) => {
-          const source = graphNodes.find((node) => node.id === from);
-          const target = graphNodes.find((node) => node.id === to);
+        <defs>
+          <marker id="graph-arrow" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L5,2.5 L0,5 z" />
+          </marker>
+        </defs>
+        {graphConnections.map((connection) => {
+          const source = graphNodes.find((node) => node.id === connection.from);
+          const target = graphNodes.find((node) => node.id === connection.to);
           if (!source || !target) return null;
-          return <line key={`${from}-${to}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
+          return <line key={`${connection.from}-${connection.to}`} className={`graph-line graph-line-${connection.status}`} markerEnd="url(#graph-arrow)" x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
         })}
       </svg>
       {empty ? <div className="graph-empty"><strong>لا توجد أشخاص في هذه المسودة بعد</strong><span>أضف أول شخص لبدء تفسير الشجرة.</span></div> : null}
@@ -171,7 +176,10 @@ export function TreeSummary() {
   );
 }
 
-export function EvidenceMiniList() {
+export function EvidenceMiniList({ sourceCount }: { sourceCount: number }) {
+  if (sourceCount === 0) {
+    return <div className="mini-evidence-empty">لم تُربط بهذه العقدة مصادر بعد.</div>;
+  }
   return (
     <div className="mini-evidence-list">
       <div className="mini-evidence-item">

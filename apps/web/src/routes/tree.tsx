@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, GitCompareArrows, LoaderCircle, LockKeyhole, Plus, Send, Share2, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, GitCompareArrows, Link2, LoaderCircle, LockKeyhole, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
-import { demoTreeDetail, createTree, fetchPublicTrees, fetchTree, publishTree, ApiError } from "../lib/api";
+import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, publishTree } from "../lib/api";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
-import type { TreeDetail, TreeNode } from "../types";
+import type { AddPersonInput, AddRelationshipInput, TreeDetail, TreeNode } from "../types";
 
 export function TreePage() {
   const queryClient = useQueryClient();
@@ -18,10 +18,21 @@ export function TreePage() {
   const [description, setDescription] = useState("");
   const [firstPerson, setFirstPerson] = useState("");
   const [visibility, setVisibility] = useState<"private" | "unlisted" | "public">("private");
+  const [editOpen, setEditOpen] = useState(false);
+  const [personName, setPersonName] = useState("");
+  const [personGender, setPersonGender] = useState<"male" | "female" | "unknown">("unknown");
+  const [birthDateFrom, setBirthDateFrom] = useState("");
+  const [birthDateTo, setBirthDateTo] = useState("");
+  const [deathDateFrom, setDeathDateFrom] = useState("");
+  const [deathDateTo, setDeathDateTo] = useState("");
+  const [parentNodeId, setParentNodeId] = useState("");
+  const [childNodeId, setChildNodeId] = useState("");
+  const [relationshipStatus, setRelationshipStatus] = useState<"interpreted" | "disputed" | "unresolved">("interpreted");
   const [message, setMessage] = useState("");
 
   const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
-  const treeId = activeTreeId ?? treesQuery.data?.[0]?.id ?? "tree-demo";
+  const availableTrees = treesQuery.data ?? [];
+  const treeId = activeTreeId ?? availableTrees[0]?.id ?? "tree-demo";
   const treeQuery = useQuery({
     queryKey: ["tree", treeId],
     queryFn: () => fetchTree(treeId),
@@ -33,6 +44,12 @@ export function TreePage() {
   const visibleNodeIds = new Set(visibleGraphNodes.map((node) => node.id));
   const visibleRelationships = detail.relationships.filter((relationship) => visibleNodeIds.has(relationship.subjectNodeId) && visibleNodeIds.has(relationship.objectNodeId));
   const selected = visibleGraphNodes.find((node) => node.id === selectedId) ?? visibleGraphNodes[0];
+  const canEditDraft = detail.tree.latestState === "draft" && detail.tree.id !== "tree-demo";
+
+  const updateDetail = async (updated: TreeDetail) => {
+    queryClient.setQueryData(["tree", updated.tree.id], updated);
+    await queryClient.invalidateQueries({ queryKey: ["trees"] });
+  };
 
   const createMutation = useMutation({
     mutationFn: createTree,
@@ -45,6 +62,32 @@ export function TreePage() {
       setDescription("");
       setFirstPerson("");
       setMessage(`أُنشئت «${created.tree.name}» كمسودة.`);
+    },
+    onError: (error) => setMessage(authMessage(error)),
+  });
+
+  const addPersonMutation = useMutation({
+    mutationFn: (input: AddPersonInput) => addPerson(detail.tree.id, input),
+    onSuccess: async (updated) => {
+      await updateDetail(updated);
+      setSelectedId(updated.nodes[updated.nodes.length - 1]?.id ?? "");
+      setPersonName("");
+      setBirthDateFrom("");
+      setBirthDateTo("");
+      setDeathDateFrom("");
+      setDeathDateTo("");
+      setMessage("أُضيف الشخص إلى المسودة الحالية.");
+    },
+    onError: (error) => setMessage(authMessage(error)),
+  });
+
+  const addRelationshipMutation = useMutation({
+    mutationFn: (input: AddRelationshipInput) => addRelationship(detail.tree.id, input),
+    onSuccess: async (updated) => {
+      await updateDetail(updated);
+      setParentNodeId("");
+      setChildNodeId("");
+      setMessage("أُضيفت العلاقة إلى تفسير المسودة.");
     },
     onError: (error) => setMessage(authMessage(error)),
   });
@@ -70,6 +113,30 @@ export function TreePage() {
     });
   };
 
+  const submitPerson = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    addPersonMutation.mutate({
+      canonical_name_ar: personName,
+      gender: personGender,
+      birth_date_from: birthDateFrom || undefined,
+      birth_date_to: birthDateTo || undefined,
+      death_date_from: deathDateFrom || undefined,
+      death_date_to: deathDateTo || undefined,
+    });
+  };
+
+  const submitRelationship = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    addRelationshipMutation.mutate({
+      subject_node_id: parentNodeId,
+      object_node_id: childNodeId,
+      predicate: "parent_of",
+      status: relationshipStatus,
+    });
+  };
+
   return (
     <div className="page-stack">
       <TopBar
@@ -79,8 +146,12 @@ export function TreePage() {
       />
       <div className="tree-page-toolbar">
         <div className="toolbar-breadcrumb"><span>الأشجار</span><b>/</b><strong>{detail.tree.name}</strong></div>
+        <label className="tree-selector-label">الملف الحالي<select className="tree-selector" aria-label="اختيار الشجرة" value={treeId} onChange={(event) => { setActiveTreeId(event.target.value); setSelectedId(""); }}>
+          {availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>)}
+        </select></label>
         <div className="toolbar-button-group">
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
+          <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)}><UserPlus size={15} /> تحرير المسودة</button>
           <button className="secondary-button" type="button"><Share2 size={15} /> مشاركة</button>
           <button className="secondary-button" type="button"><GitCompareArrows size={15} /> مقارنة النسخ</button>
           <button className="primary-button" type="button" onClick={() => publishMutation.mutate()} disabled={publishMutation.isPending}>
@@ -102,6 +173,41 @@ export function TreePage() {
           </div>
           <div className="tree-create-actions"><button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>إلغاء</button><button className="primary-button" type="submit" disabled={createMutation.isPending}>{createMutation.isPending ? "جارٍ الحفظ…" : "احفظ كمسودة"}<ArrowLeft size={15} /></button></div>
         </form>
+      ) : null}
+
+      {editOpen ? (
+        <section className="tree-edit-panel">
+          <div className="tree-edit-head">
+            <div><div className="eyebrow">تعديل تفسيري</div><h2>حرّر المسودة الحالية</h2><p>كل إضافة تُحفظ داخل نسخة الشجرة، ولا تتحول تلقائياً إلى حقيقة تاريخية.</p></div>
+            <StatusBadge tone="claim">نسخة محفوظة</StatusBadge>
+          </div>
+          {!canEditDraft ? <p className="tree-edit-note">هذه العرض نسخة منشورة أو تجريبية. افتح مسودة مملوكة لك لتفعيل التعديل.</p> : (
+            <div className="tree-edit-grid">
+              <form className="tree-edit-form" onSubmit={submitPerson}>
+                <div className="tree-edit-form-head"><div><h3>إضافة شخص</h3><p>أضف الاسم كما يظهر في السجل، مع تواريخ تقريبية عند توفرها.</p></div><UserPlus size={17} /></div>
+                <div className="tree-edit-fields">
+                  <label className="composer-label">الاسم بالعربية<input required value={personName} onChange={(event) => setPersonName(event.target.value)} placeholder="مثال: فاطمة بنت محمد" /></label>
+                  <label className="composer-label">الجنس<select value={personGender} onChange={(event) => setPersonGender(event.target.value as typeof personGender)}><option value="unknown">غير محدد</option><option value="female">أنثى</option><option value="male">ذكر</option></select></label>
+                  <label className="composer-label">من سنة الميلاد<input type="date" value={birthDateFrom} onChange={(event) => setBirthDateFrom(event.target.value)} /></label>
+                  <label className="composer-label">إلى سنة الميلاد<input type="date" value={birthDateTo} onChange={(event) => setBirthDateTo(event.target.value)} /></label>
+                  <label className="composer-label">من سنة الوفاة<input type="date" value={deathDateFrom} onChange={(event) => setDeathDateFrom(event.target.value)} /></label>
+                  <label className="composer-label">إلى سنة الوفاة<input type="date" value={deathDateTo} onChange={(event) => setDeathDateTo(event.target.value)} /></label>
+                </div>
+                <div className="tree-edit-actions"><button className="primary-button" type="submit" disabled={addPersonMutation.isPending}>{addPersonMutation.isPending ? "جارٍ الحفظ…" : "أضف إلى المسودة"}<Plus size={15} /></button></div>
+              </form>
+
+              <form className="tree-edit-form" onSubmit={submitRelationship}>
+                <div className="tree-edit-form-head"><div><h3>ربط أب وابن</h3><p>اختر ترتيب العلاقة؛ يبقى تصنيفها تفسيرياً داخل هذه الشجرة.</p></div><Link2 size={17} /></div>
+                {detail.nodes.length < 2 ? <p className="tree-edit-note">أضف شخصين أولاً حتى يمكنك ربطهما.</p> : <div className="tree-edit-fields">
+                  <label className="composer-label">الأب أو الوالد<select required value={parentNodeId} onChange={(event) => setParentNodeId(event.target.value)}><option value="">اختر الأب أو الوالد</option>{detail.nodes.map((node) => <option key={node.id} value={node.id}>{node.displayName}</option>)}</select></label>
+                  <label className="composer-label">الابن أو الابنة<select required value={childNodeId} onChange={(event) => setChildNodeId(event.target.value)}><option value="">اختر الابن أو الابنة</option>{detail.nodes.map((node) => <option key={node.id} value={node.id}>{node.displayName}</option>)}</select></label>
+                  <label className="composer-label">حالة التفسير<select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as typeof relationshipStatus)}><option value="interpreted">مفسر</option><option value="disputed">متنازع عليه</option><option value="unresolved">غير محسوم</option></select></label>
+                </div>}
+                <div className="tree-edit-actions"><button className="primary-button" type="submit" disabled={addRelationshipMutation.isPending || detail.nodes.length < 2}>{addRelationshipMutation.isPending ? "جارٍ الربط…" : "أضف العلاقة"}<Link2 size={15} /></button></div>
+              </form>
+            </div>
+          )}
+        </section>
       ) : null}
 
       <div className="tree-layout">
@@ -133,7 +239,7 @@ export function TreePage() {
             <div className="node-detail-alert"><StatusBadge tone={selected.tone}>{selected.tone === "disputed" ? "في مركز سؤال" : "ضمن التفسير"}</StatusBadge><span>{selected.sourceCount} إشارات مرتبطة</span></div>
             <div className="detail-block"><div className="detail-label">ملاحظة الباحث</div><p>{selected.note}</p></div>
             <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافاتطبقة كما هي.</p></div>
-            <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList /></div>
+            <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList sourceCount={selected.sourceCount} /></div>
             <Link to="/research" className="detail-cta">افتح هذا الشخص في مكتب البحث <ArrowLeft size={15} /></Link>
           </> : <div className="node-empty-state"><h2>لا يوجد شخص بعد</h2><p>احفظ مسودة، ثم أضف أول شخص لتبدأ الشجرة.</p></div>}
         </aside>
@@ -165,7 +271,7 @@ function toGraphNodes(detail: TreeDetail): TreeNode[] {
 
 function authMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 401) {
-    return "سجّل الدخول أولًا لإنشاء أو نشر شجرة.";
+    return "سجّل الدخول أولًا لإنشاء أو تعديل أو نشر شجرة.";
   }
   return error instanceof Error ? error.message : "تعذر إكمال العملية.";
 }

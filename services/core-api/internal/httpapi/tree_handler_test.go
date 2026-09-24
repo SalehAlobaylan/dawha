@@ -36,6 +36,25 @@ func TestCreateTreeRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestTreeEditRoutesRequireAuthentication(t *testing.T) {
+	cases := []struct {
+		path string
+		body string
+	}{
+		{path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/people", body: `{"canonical_name_ar":"شخص"}`},
+		{path: "/api/v1/trees/00000000-0000-0000-0000-000000000001/relationships", body: `{"subject_node_id":"a","object_node_id":"b","predicate":"parent_of"}`},
+	}
+	for _, testCase := range cases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(testCase.body))
+		request.Header.Set("Content-Type", "application/json")
+		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: expected status %d, got %d", testCase.path, http.StatusUnauthorized, recorder.Code)
+		}
+	}
+}
+
 func TestTreeErrorMapping(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -45,6 +64,7 @@ func TestTreeErrorMapping(t *testing.T) {
 		{trees.ErrNotFound, http.StatusNotFound},
 		{trees.ErrForbidden, http.StatusForbidden},
 		{trees.ErrNoDraft, http.StatusConflict},
+		{trees.ErrDuplicateRelationship, http.StatusConflict},
 		{trees.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {

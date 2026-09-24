@@ -1416,6 +1416,20 @@ a {
   stroke-width: 0.35;
 }
 
+.graph-lines marker path {
+  fill: rgba(110, 98, 87, 0.55);
+}
+
+.graph-line-disputed {
+  stroke: var(--red) !important;
+  stroke-dasharray: 4 2;
+}
+
+.graph-line-unresolved {
+  stroke: var(--olive) !important;
+  stroke-dasharray: 1 2;
+}
+
 .graph-node {
   position: absolute;
   z-index: 2;
@@ -2137,6 +2151,87 @@ a {
   margin-top: 17px;
 }
 
+.tree-edit-panel {
+  margin-bottom: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.tree-edit-head,
+.tree-edit-form-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tree-edit-head h2,
+.tree-edit-form-head h3 {
+  margin: 6px 0 0;
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 17px;
+}
+
+.tree-edit-head p,
+.tree-edit-form-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.tree-edit-note {
+  margin: 17px 0 0;
+  padding: 11px 13px;
+  border: 1px dashed var(--rule);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.tree-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.tree-edit-form {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  background: var(--canvas);
+}
+
+.tree-edit-form-head {
+  color: var(--ink);
+}
+
+.tree-edit-form-head svg {
+  flex: 0 0 auto;
+  color: var(--red);
+}
+
+.tree-edit-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 10px;
+  margin-top: 6px;
+}
+
+.tree-edit-form .composer-label {
+  margin-top: 12px;
+}
+
+.tree-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
 .node-empty-state {
   display: grid;
   min-height: 320px;
@@ -2172,6 +2267,26 @@ a {
   to {
     transform: rotate(360deg);
   }
+}
+
+.tree-selector-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.tree-selector {
+  min-width: 180px;
+  min-height: 33px;
+  padding: 0 9px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 10px;
 }
 
 .toolbar-breadcrumb,
@@ -2362,6 +2477,15 @@ a {
   color: var(--ink);
   font-size: 11px;
   line-height: 1.9;
+}
+
+.mini-evidence-empty {
+  padding: 10px;
+  border: 1px dashed var(--rule);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
 }
 
 .mini-evidence-list {
@@ -4658,6 +4782,15 @@ a {
     flex-direction: column;
   }
 
+  .tree-selector-label {
+    width: 100%;
+  }
+
+  .tree-selector {
+    min-width: 0;
+    flex: 1;
+  }
+
   .toolbar-button-group,
   .place-toolbar-actions {
     width: 100%;
@@ -4684,6 +4817,24 @@ a {
 
   .tree-create-grid .composer-label:nth-child(2) {
     grid-column: auto;
+  }
+
+  .tree-edit-panel {
+    padding: 17px;
+  }
+
+  .tree-edit-head,
+  .tree-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tree-edit-head {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tree-edit-fields {
+    grid-template-columns: 1fr;
   }
 
   .tree-explorer-head {

@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	ErrDatabaseUnavailable = errors.New("tree database is unavailable")
-	ErrNotFound            = errors.New("tree not found")
-	ErrForbidden           = errors.New("tree access is forbidden")
-	ErrNoDraft             = errors.New("tree has no draft version")
-	ErrValidation          = errors.New("tree input is invalid")
+	ErrDatabaseUnavailable   = errors.New("tree database is unavailable")
+	ErrNotFound              = errors.New("tree not found")
+	ErrForbidden             = errors.New("tree access is forbidden")
+	ErrNoDraft               = errors.New("tree has no draft version")
+	ErrDuplicateRelationship = errors.New("relationship already exists in this draft")
+	ErrValidation            = errors.New("tree input is invalid")
 )
 
 type CreateTreeInput struct {
@@ -36,6 +37,13 @@ type PersonInput struct {
 	BirthDateTo   string `json:"birth_date_to"`
 	DeathDateFrom string `json:"death_date_from"`
 	DeathDateTo   string `json:"death_date_to"`
+}
+
+type AddRelationshipInput struct {
+	SubjectNodeID string `json:"subject_node_id"`
+	ObjectNodeID  string `json:"object_node_id"`
+	Predicate     string `json:"predicate"`
+	Status        string `json:"status"`
 }
 
 type TreeSummary struct {
@@ -132,30 +140,12 @@ func (s *Service) CreateTree(ctx context.Context, ownerID string, input CreateTr
 	}
 
 	for index, person := range input.People {
-		birthFrom, err := parseDate(person.BirthDateFrom)
-		if err != nil {
-			return TreeDetail{}, err
-		}
-		birthTo, err := parseDate(person.BirthDateTo)
-		if err != nil {
-			return TreeDetail{}, err
-		}
-		deathFrom, err := parseDate(person.DeathDateFrom)
-		if err != nil {
-			return TreeDetail{}, err
-		}
-		deathTo, err := parseDate(person.DeathDateTo)
+		birthFrom, birthTo, deathFrom, deathTo, err := parsePersonDates(person)
 		if err != nil {
 			return TreeDetail{}, err
 		}
 		personID := uuid.New()
 		nodeID := uuid.New()
-		if birthFrom.Valid && birthTo.Valid && birthFrom.Time.After(birthTo.Time) {
-			return TreeDetail{}, ErrValidation
-		}
-		if deathFrom.Valid && deathTo.Valid && deathFrom.Time.After(deathTo.Time) {
-			return TreeDetail{}, ErrValidation
-		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO people (id, canonical_name_ar, normalized_name_ar, gender, birth_date_from, birth_date_to, death_date_from, death_date_to, created_by)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -183,6 +173,176 @@ func (s *Service) CreateTree(ctx context.Context, ownerID string, input CreateTr
 	return s.GetTree(ctx, treeID.String(), ownerID)
 }
 
+func (s *Service) AddPerson(ctx context.Context, treeID, ownerID string, input PersonInput) (TreeDetail, error) {
+	if s == nil || s.Pool == nil {
+		return TreeDetail{}, ErrDatabaseUnavailable
+	}
+	treeUUID, err := uuid.Parse(treeID)
+	if err != nil {
+		return TreeDetail{}, ErrNotFound
+	}
+	ownerUUID, err := uuid.Parse(ownerID)
+	if err != nil {
+		return TreeDetail{}, ErrForbidden
+	}
+	input, err = validatePersonInput(input)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	birthFrom, birthTo, deathFrom, deathTo, err := parsePersonDates(input)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	tree, err := s.treeSummary(ctx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if tree.OwnerID != ownerID {
+		return TreeDetail{}, ErrForbidden
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+
+	var sortOrder int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(MAX(sort_order), -1) + 1
+		FROM tree_nodes
+		WHERE tree_version_id = $1
+	`, versionID).Scan(&sortOrder); err != nil {
+		return TreeDetail{}, err
+	}
+	personID := uuid.New()
+	nodeID := uuid.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO people (id, canonical_name_ar, normalized_name_ar, gender, birth_date_from, birth_date_to, death_date_from, death_date_to, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, personID, input.CanonicalName, identity.NormalizeArabicName(input.CanonicalName), input.Gender, birthFrom, birthTo, deathFrom, deathTo, ownerUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar, sort_order)
+		VALUES ($1, $2, $3, $4, $5)
+	`, nodeID, versionID, personID, input.CanonicalName, sortOrder); err != nil {
+		return TreeDetail{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE trees SET updated_at = now() WHERE id = $1`, treeUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	auditValue, _ := json.Marshal(map[string]any{"tree_id": treeID, "version_id": uuidString(versionID), "node_id": nodeID.String(), "display_name_ar": input.CanonicalName})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+		VALUES ($1, 'person_added', 'tree_node', $2, $3)
+	`, ownerUUID, nodeID, auditValue); err != nil {
+		return TreeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TreeDetail{}, err
+	}
+	return s.GetTree(ctx, treeID, ownerID)
+}
+
+func (s *Service) AddRelationship(ctx context.Context, treeID, ownerID string, input AddRelationshipInput) (TreeDetail, error) {
+	if s == nil || s.Pool == nil {
+		return TreeDetail{}, ErrDatabaseUnavailable
+	}
+	treeUUID, err := uuid.Parse(treeID)
+	if err != nil {
+		return TreeDetail{}, ErrNotFound
+	}
+	ownerUUID, err := uuid.Parse(ownerID)
+	if err != nil {
+		return TreeDetail{}, ErrForbidden
+	}
+	input, err = validateRelationshipInput(input)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	subjectUUID, err := uuid.Parse(input.SubjectNodeID)
+	if err != nil {
+		return TreeDetail{}, ErrValidation
+	}
+	objectUUID, err := uuid.Parse(input.ObjectNodeID)
+	if err != nil {
+		return TreeDetail{}, ErrValidation
+	}
+	if subjectUUID == objectUUID {
+		return TreeDetail{}, ErrValidation
+	}
+	tree, err := s.treeSummary(ctx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	if tree.OwnerID != ownerID {
+		return TreeDetail{}, ErrForbidden
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	versionID, _, err := s.lockLatestDraft(ctx, tx, treeUUID)
+	if err != nil {
+		return TreeDetail{}, err
+	}
+	var nodeCount int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tree_nodes
+		WHERE tree_version_id = $1 AND id IN ($2, $3)
+	`, versionID, subjectUUID, objectUUID).Scan(&nodeCount); err != nil {
+		return TreeDetail{}, err
+	}
+	if nodeCount != 2 {
+		return TreeDetail{}, ErrValidation
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM tree_relationships
+			WHERE tree_version_id = $1
+			  AND subject_node_id = $2
+			  AND object_node_id = $3
+			  AND predicate = $4
+		)
+	`, versionID, subjectUUID, objectUUID, input.Predicate).Scan(&exists); err != nil {
+		return TreeDetail{}, err
+	}
+	if exists {
+		return TreeDetail{}, ErrDuplicateRelationship
+	}
+	relationshipID := uuid.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, relationshipID, versionID, subjectUUID, objectUUID, input.Predicate, input.Status, ownerUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE trees SET updated_at = now() WHERE id = $1`, treeUUID); err != nil {
+		return TreeDetail{}, err
+	}
+	auditValue, _ := json.Marshal(map[string]any{"tree_id": treeID, "version_id": uuidString(versionID), "relationship_id": relationshipID.String(), "predicate": input.Predicate, "status": input.Status})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+		VALUES ($1, 'relationship_added', 'tree_relationship', $2, $3)
+	`, ownerUUID, relationshipID, auditValue); err != nil {
+		return TreeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TreeDetail{}, err
+	}
+	return s.GetTree(ctx, treeID, ownerID)
+}
+
 func (s *Service) ListPublicTrees(ctx context.Context) ([]TreeSummary, error) {
 	if s == nil || s.Pool == nil {
 		return nil, ErrDatabaseUnavailable
@@ -208,7 +368,59 @@ func (s *Service) ListPublicTrees(ctx context.Context) ([]TreeSummary, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanTreeSummaries(rows)
+}
 
+func (s *Service) ListAccessibleTrees(ctx context.Context, viewerID string) ([]TreeSummary, error) {
+	if s == nil || s.Pool == nil {
+		return nil, ErrDatabaseUnavailable
+	}
+	if viewerID == "" {
+		return s.ListPublicTrees(ctx)
+	}
+	if _, err := uuid.Parse(viewerID); err != nil {
+		return nil, ErrForbidden
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT t.id, t.name_ar, t.description_ar, t.visibility, t.owner_id, t.updated_at,
+		       tv.id, tv.version_number, tv.state,
+		       (SELECT count(*) FROM tree_nodes tn WHERE tn.tree_version_id = tv.id),
+		       (SELECT count(*) FROM tree_relationships tr WHERE tr.tree_version_id = tv.id),
+		       (SELECT count(*) FROM tree_relationships tr WHERE tr.tree_version_id = tv.id AND tr.status = 'unresolved')
+		FROM trees t
+		JOIN LATERAL (
+			SELECT id, version_number, state
+			FROM tree_versions
+			WHERE tree_id = t.id
+			  AND (
+				  state = 'published'
+				  OR t.owner_id = $1
+				  OR EXISTS (
+					  SELECT 1
+					  FROM tree_collaborators tc
+					  WHERE tc.tree_id = t.id AND tc.user_id = $1
+				  )
+			  )
+			ORDER BY version_number DESC
+			LIMIT 1
+		) tv ON true
+		WHERE t.visibility = 'public'
+		   OR t.owner_id = $1
+		   OR EXISTS (
+			   SELECT 1
+			   FROM tree_collaborators tc
+			   WHERE tc.tree_id = t.id AND tc.user_id = $1
+		   )
+		ORDER BY t.updated_at DESC
+	`, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTreeSummaries(rows)
+}
+
+func scanTreeSummaries(rows pgx.Rows) ([]TreeSummary, error) {
 	items := make([]TreeSummary, 0)
 	for rows.Next() {
 		var item TreeSummary
@@ -323,19 +535,8 @@ func (s *Service) PublishLatestDraft(ctx context.Context, treeID, ownerID, note 
 		return TreeDetail{}, err
 	}
 	defer tx.Rollback(ctx)
-	var versionID pgtype.UUID
-	var versionNumber int
-	if err := tx.QueryRow(ctx, `
-		SELECT id, version_number
-		FROM tree_versions
-		WHERE tree_id = $1 AND state = 'draft'
-		ORDER BY version_number DESC
-		LIMIT 1
-		FOR UPDATE
-	`, treeUUID).Scan(&versionID, &versionNumber); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return TreeDetail{}, ErrNoDraft
-		}
+	versionID, versionNumber, err := s.lockLatestDraft(ctx, tx, treeUUID)
+	if err != nil {
 		return TreeDetail{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -386,6 +587,25 @@ func (s *Service) PublishLatestDraft(ctx context.Context, treeID, ownerID, note 
 		return TreeDetail{}, err
 	}
 	return s.GetTree(ctx, treeID, ownerID)
+}
+
+func (s *Service) lockLatestDraft(ctx context.Context, tx pgx.Tx, treeID uuid.UUID) (pgtype.UUID, int, error) {
+	var versionID pgtype.UUID
+	var versionNumber int
+	if err := tx.QueryRow(ctx, `
+		SELECT id, version_number
+		FROM tree_versions
+		WHERE tree_id = $1 AND state = 'draft'
+		ORDER BY version_number DESC
+		LIMIT 1
+		FOR UPDATE
+	`, treeID).Scan(&versionID, &versionNumber); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return pgtype.UUID{}, 0, ErrNoDraft
+		}
+		return pgtype.UUID{}, 0, err
+	}
+	return versionID, versionNumber, nil
 }
 
 func (s *Service) treeSummary(ctx context.Context, id uuid.UUID) (TreeSummary, error) {
@@ -595,23 +815,78 @@ func validateCreateInput(input CreateTreeInput) (CreateTreeInput, error) {
 		return CreateTreeInput{}, ErrValidation
 	}
 	for index := range input.People {
-		input.People[index].CanonicalName = strings.TrimSpace(input.People[index].CanonicalName)
-		input.People[index].Gender = strings.TrimSpace(input.People[index].Gender)
-		input.People[index].BirthDateFrom = strings.TrimSpace(input.People[index].BirthDateFrom)
-		input.People[index].BirthDateTo = strings.TrimSpace(input.People[index].BirthDateTo)
-		input.People[index].DeathDateFrom = strings.TrimSpace(input.People[index].DeathDateFrom)
-		input.People[index].DeathDateTo = strings.TrimSpace(input.People[index].DeathDateTo)
-		if input.People[index].Gender == "" {
-			input.People[index].Gender = "unknown"
+		person, err := validatePersonInput(input.People[index])
+		if err != nil {
+			return CreateTreeInput{}, err
 		}
-		if input.People[index].CanonicalName == "" || len([]rune(input.People[index].CanonicalName)) > 200 {
-			return CreateTreeInput{}, ErrValidation
-		}
-		if input.People[index].Gender != "male" && input.People[index].Gender != "female" && input.People[index].Gender != "unknown" {
-			return CreateTreeInput{}, ErrValidation
-		}
+		input.People[index] = person
 	}
 	return input, nil
+}
+
+func validatePersonInput(input PersonInput) (PersonInput, error) {
+	input.CanonicalName = strings.TrimSpace(input.CanonicalName)
+	input.Gender = strings.TrimSpace(input.Gender)
+	input.BirthDateFrom = strings.TrimSpace(input.BirthDateFrom)
+	input.BirthDateTo = strings.TrimSpace(input.BirthDateTo)
+	input.DeathDateFrom = strings.TrimSpace(input.DeathDateFrom)
+	input.DeathDateTo = strings.TrimSpace(input.DeathDateTo)
+	if input.Gender == "" {
+		input.Gender = "unknown"
+	}
+	if input.CanonicalName == "" || len([]rune(input.CanonicalName)) > 200 {
+		return PersonInput{}, ErrValidation
+	}
+	if input.Gender != "male" && input.Gender != "female" && input.Gender != "unknown" {
+		return PersonInput{}, ErrValidation
+	}
+	return input, nil
+}
+
+func validateRelationshipInput(input AddRelationshipInput) (AddRelationshipInput, error) {
+	input.SubjectNodeID = strings.TrimSpace(input.SubjectNodeID)
+	input.ObjectNodeID = strings.TrimSpace(input.ObjectNodeID)
+	input.Predicate = strings.TrimSpace(input.Predicate)
+	input.Status = strings.TrimSpace(input.Status)
+	if input.Status == "" {
+		input.Status = "interpreted"
+	}
+	if input.SubjectNodeID == "" || input.ObjectNodeID == "" {
+		return AddRelationshipInput{}, ErrValidation
+	}
+	if input.Predicate != "parent_of" && input.Predicate != "spouse_of" && input.Predicate != "sibling_of" {
+		return AddRelationshipInput{}, ErrValidation
+	}
+	if input.Status != "interpreted" && input.Status != "disputed" && input.Status != "unresolved" {
+		return AddRelationshipInput{}, ErrValidation
+	}
+	return input, nil
+}
+
+func parsePersonDates(input PersonInput) (pgtype.Date, pgtype.Date, pgtype.Date, pgtype.Date, error) {
+	birthFrom, err := parseDate(input.BirthDateFrom)
+	if err != nil {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, err
+	}
+	birthTo, err := parseDate(input.BirthDateTo)
+	if err != nil {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, err
+	}
+	deathFrom, err := parseDate(input.DeathDateFrom)
+	if err != nil {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, err
+	}
+	deathTo, err := parseDate(input.DeathDateTo)
+	if err != nil {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, err
+	}
+	if birthFrom.Valid && birthTo.Valid && birthFrom.Time.After(birthTo.Time) {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, ErrValidation
+	}
+	if deathFrom.Valid && deathTo.Valid && deathFrom.Time.After(deathTo.Time) {
+		return pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, pgtype.Date{}, ErrValidation
+	}
+	return birthFrom, birthTo, deathFrom, deathTo, nil
 }
 
 func parseDate(value string) (pgtype.Date, error) {
