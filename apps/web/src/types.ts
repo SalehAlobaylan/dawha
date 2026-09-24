@@ -206,6 +206,144 @@ export interface AddEvidenceInput {
   relation: "supports" | "contextualizes" | "contradicts" | "refutes";
 }
 
+export interface OpenQuestionRecord {
+  id: string;
+  titleAr: string;
+  descriptionAr?: string;
+  status: "open" | "under_investigation" | "resolved" | "reopened" | "archived";
+  priority: "low" | "normal" | "high";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  claimCount: number;
+  sourceCount: number;
+  disputeCount: number;
+  noteCount: number;
+}
+
+export interface QuestionClaimLink {
+  claimId: string;
+  role: "concerns" | "supports" | "opposes";
+  subjectType: string;
+  subjectId: string;
+  predicate: string;
+  objectType: string;
+  objectId: string;
+  status: string;
+}
+
+export interface QuestionSourceLink {
+  sourceId: string;
+  role: "context" | "supporting" | "counter_evidence" | "missing";
+  titleAr: string;
+}
+
+export interface QuestionDisputeLink {
+  disputeId: string;
+  titleAr: string;
+  status: string;
+}
+
+export interface QuestionNote {
+  id: string;
+  noteAr: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface QuestionActivity {
+  action: string;
+  entityType: string;
+  entityId: string;
+  createdAt: string;
+  after?: unknown;
+}
+
+export interface QuestionDetail {
+  question: OpenQuestionRecord;
+  claims: QuestionClaimLink[];
+  sources: QuestionSourceLink[];
+  disputes: QuestionDisputeLink[];
+  notes: QuestionNote[];
+  activity: QuestionActivity[];
+}
+
+export interface DisputeClaimLink {
+  claimId: string;
+  position: "concerns" | "supports" | "opposes" | "mentions";
+  subjectType: string;
+  subjectId: string;
+  predicate: string;
+  objectType: string;
+  objectId: string;
+  status: string;
+}
+
+export interface DisputeRecord {
+  id: string;
+  titleAr: string;
+  descriptionAr?: string;
+  status: "open" | "under_review" | "resolved" | "reopened" | "archived";
+  resolutionAr?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  claimCount: number;
+}
+
+export interface DisputeDetail {
+  dispute: DisputeRecord;
+  claims: DisputeClaimLink[];
+}
+
+export interface CreateQuestionInput {
+  title_ar: string;
+  description_ar?: string;
+  status?: OpenQuestionRecord["status"];
+  priority?: OpenQuestionRecord["priority"];
+}
+
+export interface UpdateQuestionInput {
+  title_ar?: string;
+  description_ar?: string;
+  status?: OpenQuestionRecord["status"];
+  priority?: OpenQuestionRecord["priority"];
+}
+
+export interface QuestionNoteInput {
+  note_ar: string;
+}
+
+export interface QuestionClaimInput {
+  claim_id: string;
+  role: QuestionClaimLink["role"];
+}
+
+export interface QuestionSourceInput {
+  source_id: string;
+  role: QuestionSourceLink["role"];
+}
+
+export interface QuestionDisputeInput {
+  dispute_id: string;
+}
+
+export interface CreateDisputeInput {
+  title_ar: string;
+  description_ar?: string;
+  status?: DisputeRecord["status"];
+}
+
+export interface UpdateDisputeInput {
+  status?: DisputeRecord["status"];
+  resolution_ar?: string;
+}
+
+export interface DisputeClaimInput {
+  claim_id: string;
+  position: "concerns" | "supports" | "opposes" | "mentions";
+}
+
 export interface TreeSummary {
   id: string;
   name: string;

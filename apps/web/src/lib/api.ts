@@ -6,13 +6,24 @@ import type {
   ClaimSummary,
   CollaboratorsResponse,
   CreateClaimInput,
+  CreateDisputeInput,
+  CreateQuestionInput,
   CreatePassageInput,
   CreateSourceInput,
   CreateStatementInput,
   CreateTreeInput,
+  DisputeClaimInput,
+  DisputeDetail,
+  DisputeRecord,
   DashboardData,
   ForkTreeInput,
   InvitationCreated,
+  OpenQuestionRecord,
+  QuestionClaimInput,
+  QuestionDetail,
+  QuestionDisputeInput,
+  QuestionNoteInput,
+  QuestionSourceInput,
   ResearchClaim,
   SourceDetail,
   SourceMetadata,
@@ -21,7 +32,9 @@ import type {
   TreeDiff,
   TreeInvitation,
   TreeSummary,
+  UpdateDisputeInput,
   UpdatePermissionInput,
+  UpdateQuestionInput,
   UpdateRelationshipInput,
 } from "../types";
 
@@ -304,6 +317,185 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function fetchQuestions(): Promise<OpenQuestionRecord[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الأسئلة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: OpenQuestionRecord[] };
+  return payload.items ?? [];
+}
+
+export async function fetchQuestion(questionId: string): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض السؤال.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function createQuestion(input: CreateQuestionInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لحفظ السؤال.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function updateQuestion(questionId: string, input: UpdateQuestionInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتحديث السؤال.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function addQuestionNote(questionId: string, input: QuestionNoteInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإضافة ملاحظة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/notes`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function linkQuestionClaim(questionId: string, input: QuestionClaimInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط الادعاء.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/claims`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function linkQuestionSource(questionId: string, input: QuestionSourceInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/sources`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function linkQuestionDispute(questionId: string, input: QuestionDisputeInput): Promise<QuestionDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط الخلاف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/disputes`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as QuestionDetail;
+}
+
+export async function fetchDisputes(): Promise<DisputeRecord[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض الخلافات.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/disputes`, { signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: DisputeRecord[] };
+  return payload.items ?? [];
+}
+
+export async function createDispute(input: CreateDisputeInput): Promise<DisputeDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإنشاء خلاف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/disputes`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DisputeDetail;
+}
+
+export async function updateDispute(disputeId: string, input: UpdateDisputeInput): Promise<DisputeDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتحديث الخلاف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${disputeId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DisputeDetail;
+}
+
+export async function linkDisputeClaim(disputeId: string, input: DisputeClaimInput): Promise<DisputeDetail> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لربط ادعاء بالخلاف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${disputeId}/claims`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DisputeDetail;
 }
 
 export async function fetchSources(): Promise<SourceMetadata[]> {

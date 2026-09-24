@@ -14,6 +14,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	collaborationHandler := collaborationHandler{Service: collaborationService, Auth: authService}
 	evidenceService := evidence.NewService(dependencies.DB)
 	evidenceHandler := evidenceHandler{Service: evidenceService, Auth: authService}
+	questionService := questions.NewService(dependencies.DB)
+	questionHandler := questionHandler{Service: questionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +96,19 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/claims", evidenceHandler.createClaim)
 	mux.HandleFunc("GET /api/v1/claims/{claimID}", evidenceHandler.getClaim)
 	mux.HandleFunc("POST /api/v1/claims/{claimID}/evidence", evidenceHandler.addEvidence)
+	mux.HandleFunc("GET /api/v1/questions", questionHandler.listQuestions)
+	mux.HandleFunc("POST /api/v1/questions", questionHandler.createQuestion)
+	mux.HandleFunc("GET /api/v1/questions/{questionID}", questionHandler.getQuestion)
+	mux.HandleFunc("PATCH /api/v1/questions/{questionID}", questionHandler.updateQuestion)
+	mux.HandleFunc("POST /api/v1/questions/{questionID}/notes", questionHandler.addNote)
+	mux.HandleFunc("POST /api/v1/questions/{questionID}/claims", questionHandler.linkClaim)
+	mux.HandleFunc("POST /api/v1/questions/{questionID}/sources", questionHandler.linkSource)
+	mux.HandleFunc("POST /api/v1/questions/{questionID}/disputes", questionHandler.linkDispute)
+	mux.HandleFunc("GET /api/v1/disputes", questionHandler.listDisputes)
+	mux.HandleFunc("POST /api/v1/disputes", questionHandler.createDispute)
+	mux.HandleFunc("GET /api/v1/disputes/{disputeID}", questionHandler.getDispute)
+	mux.HandleFunc("PATCH /api/v1/disputes/{disputeID}", questionHandler.updateDispute)
+	mux.HandleFunc("POST /api/v1/disputes/{disputeID}/claims", questionHandler.linkDisputeClaim)
 	mux.HandleFunc("POST /api/v1/normalize-name", normalizeName)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)

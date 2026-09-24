@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft, CircleHelp, Filter, MessageCircleQuestion, Plus, Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { demoDashboard } from "../data/demo";
+import { QuestionWorkspace } from "../components/QuestionWorkspace";
 import { StatusBadge } from "../components/StatusBadge";
 import { TopBar } from "../components/TopBar";
 
@@ -23,6 +24,8 @@ export function QuestionsPage() {
     <div className="page-stack">
       <TopBar eyebrow="الأسئلة / البحث المفتوح" title="الخلاف مساحة، لا مشكلة" description="الأسئلة المفتوحة تحفظ ما لا يستطيع الدليل الحالي حسمه، وتمنح البحث اتجاهه." />
       <section className="questions-hero"><div><div className="eyebrow">دفتر الأسئلة</div><h2>ما الذي<br /><em>يستحق أن يُفتح؟</em></h2><p>89 سؤالاً بين يديك الآن. بعضها قديم، وبعضها جديد، والجميع أكثر أمانة من إجابة متعجلة.</p><div className="questions-hero-actions"><button className="primary-button" type="button"><Plus size={15} /> افتح سؤالاً</button><span><MessageCircleQuestion size={14} /> 17 تحتاج أولوية</span></div></div><div className="questions-orbit"><div className="question-orbit-ring ring-a" /><div className="question-orbit-ring ring-b" /><div className="question-orbit-core">؟</div><span className="orbit-label orbit-label-a">أدلة</span><span className="orbit-label orbit-label-b">فجوات</span><span className="orbit-label orbit-label-c">إمكانات</span></div></section>
+
+      <QuestionWorkspace />
 
       <section className="question-metrics"><div><strong>٨٩</strong><span>سؤال مفتوح</span><small>+6 هذا الشهر</small></div><div><strong>١٧</strong><span>عالية الأولوية</span><small>تحتاج باحثاً</small></div><div><strong>٢٣</strong><span>تحت التحقيق</span><small>نشاط حديث</small></div><div><strong>٤١</strong><span>مؤرشفة</span><small>يمكن إعادة فتحها</small></div><div className="question-metric-note"><Sparkles size={17} /><span>السؤال الجيد لا يغلق الباب؛ يجعل الخطوة التالية واضحة.</span></div></section>
 
