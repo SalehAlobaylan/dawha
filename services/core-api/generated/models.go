@@ -435,6 +435,28 @@ type SpatialEvidence struct {
 	CreatedAt               pgtype.Timestamptz
 }
 
+type Suggestion struct {
+	ID          pgtype.UUID
+	TreeID      pgtype.UUID
+	VersionID   pgtype.UUID
+	NodeID      pgtype.UUID
+	SubmittedBy pgtype.UUID
+	TextAr      string
+	Status      string
+	QuestionID  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type SuggestionReview struct {
+	ID           pgtype.UUID
+	SuggestionID pgtype.UUID
+	ReviewerID   pgtype.UUID
+	Decision     string
+	NoteAr       pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+}
+
 type Tree struct {
 	ID              pgtype.UUID
 	NameAr          string

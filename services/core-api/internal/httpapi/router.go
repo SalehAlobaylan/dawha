@@ -16,6 +16,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -51,6 +52,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	evidenceHandler := evidenceHandler{Service: evidenceService, Auth: authService}
 	questionService := questions.NewService(dependencies.DB)
 	questionHandler := questionHandler{Service: questionService, Auth: authService}
+	suggestionService := suggestions.NewService(dependencies.DB)
+	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +112,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/disputes/{disputeID}", questionHandler.getDispute)
 	mux.HandleFunc("PATCH /api/v1/disputes/{disputeID}", questionHandler.updateDispute)
 	mux.HandleFunc("POST /api/v1/disputes/{disputeID}/claims", questionHandler.linkDisputeClaim)
+	mux.HandleFunc("POST /api/v1/suggestions", suggestionHandler.submit)
+	mux.HandleFunc("GET /api/v1/trees/{treeID}/suggestions", suggestionHandler.list)
+	mux.HandleFunc("PATCH /api/v1/suggestions/{suggestionID}", suggestionHandler.review)
 	mux.HandleFunc("POST /api/v1/normalize-name", normalizeName)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)

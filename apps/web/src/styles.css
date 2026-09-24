@@ -6995,6 +6995,287 @@ a {
   }
 }
 
+.suggestion-panel {
+  margin-bottom: 18px;
+  padding: 20px 22px;
+  border: 1px solid rgba(56, 111, 86, 0.22);
+  background: rgba(243, 235, 221, 0.54);
+  box-shadow: var(--shadow-card);
+}
+
+.suggestion-panel-head,
+.suggestion-submit-footer,
+.suggestion-review-heading,
+.suggestion-queue-item-head,
+.suggestion-actions {
+  display: flex;
+  align-items: center;
+}
+
+.suggestion-panel-head {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.suggestion-panel-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(56, 111, 86, 0.1);
+  color: var(--green);
+}
+
+.suggestion-panel-head > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+
+.suggestion-panel-head h2 {
+  margin: 6px 0 3px;
+  font-family: "Noto Kufi Arabic", sans-serif;
+  font-size: 17px;
+}
+
+.suggestion-panel-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.suggestion-version {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid rgba(56, 111, 86, 0.2);
+  border-radius: 999px;
+  color: var(--green);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.suggestion-panel-message,
+.suggestion-panel-error {
+  margin-top: 13px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 111, 86, 0.2);
+  background: rgba(56, 111, 86, 0.07);
+  color: var(--green);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.suggestion-panel-error {
+  border-color: rgba(153, 68, 56, 0.24);
+  background: rgba(153, 68, 56, 0.07);
+  color: var(--red);
+}
+
+.suggestion-submit-form {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.suggestion-submit-form .composer-label {
+  margin-top: 0;
+}
+
+.suggestion-submit-form textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.suggestion-submit-footer {
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.suggestion-submit-footer small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.suggestion-submit-footer .primary-button {
+  flex: 0 0 auto;
+}
+
+.suggestion-review-section {
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--rule);
+}
+
+.suggestion-review-heading {
+  justify-content: space-between;
+  color: var(--ink);
+}
+
+.suggestion-review-heading small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.suggestion-review-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.suggestion-review-fields .composer-label {
+  margin-top: 0;
+}
+
+.suggestion-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 11px;
+}
+
+.suggestion-queue-item {
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.suggestion-queue-item-head {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.suggestion-queue-item-head > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.suggestion-queue-item-head strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.suggestion-queue-item-head small,
+.suggestion-queue-item-head > span {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.suggestion-queue-item > p {
+  margin: 10px 0 0;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.suggestion-question-link {
+  display: block;
+  margin-top: 7px;
+  color: var(--green);
+  font-size: 9px;
+}
+
+.suggestion-review-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+  padding-inline-start: 9px;
+  border-inline-start: 2px solid var(--rule);
+}
+
+.suggestion-review-history > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.suggestion-review-history span,
+.suggestion-review-history small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.suggestion-review-history small {
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.suggestion-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.suggestion-actions .secondary-button,
+.suggestion-actions .danger-button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+
+.suggestion-actions .danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(153, 68, 56, 0.22);
+  background: rgba(153, 68, 56, 0.07);
+  color: var(--red);
+  cursor: pointer;
+}
+
+.suggestion-actions .danger-button:hover {
+  background: rgba(153, 68, 56, 0.13);
+}
+
+.suggestion-empty {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .suggestion-panel {
+    padding: 16px;
+  }
+
+  .suggestion-panel-head {
+    flex-wrap: wrap;
+  }
+
+  .suggestion-version {
+    margin-inline-start: 44px;
+  }
+
+  .suggestion-submit-footer,
+  .suggestion-review-fields {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .suggestion-review-fields {
+    display: flex;
+  }
+
+  .suggestion-submit-footer .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

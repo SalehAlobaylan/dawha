@@ -344,6 +344,45 @@ export interface DisputeClaimInput {
   position: "concerns" | "supports" | "opposes" | "mentions";
 }
 
+export interface SuggestionReview {
+  id: string;
+  reviewerId: string;
+  reviewerName: string;
+  decision: "accepted" | "rejected" | "converted";
+  noteAr?: string;
+  createdAt: string;
+}
+
+export interface SuggestionRecord {
+  id: string;
+  treeId: string;
+  versionId: string;
+  versionNumber: number;
+  nodeId: string;
+  treeName: string;
+  nodeName: string;
+  textAr: string;
+  status: "pending" | "accepted" | "rejected" | "converted";
+  questionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviewCount: number;
+  reviews: SuggestionReview[];
+}
+
+export interface SubmitSuggestionInput {
+  tree_id: string;
+  version_id: string;
+  node_id: string;
+  text_ar: string;
+}
+
+export interface ReviewSuggestionInput {
+  decision: SuggestionReview["decision"];
+  note_ar?: string;
+  question_title_ar?: string;
+}
+
 export interface TreeSummary {
   id: string;
   name: string;

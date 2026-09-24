@@ -24,9 +24,12 @@ import type {
   QuestionDisputeInput,
   QuestionNoteInput,
   QuestionSourceInput,
+  ReviewSuggestionInput,
   ResearchClaim,
   SourceDetail,
   SourceMetadata,
+  SuggestionRecord,
+  SubmitSuggestionInput,
   TreeActivity,
   TreeDetail,
   TreeDiff,
@@ -317,6 +320,50 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDiff;
+}
+
+export async function submitSuggestion(input: SubmitSuggestionInput): Promise<SuggestionRecord> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لإرسال المقترح.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/suggestions`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SuggestionRecord;
+}
+
+export async function fetchSuggestions(treeId: string): Promise<SuggestionRecord[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض طابور المراجعة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/suggestions`, { credentials: "include", signal: AbortSignal.timeout(3000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: SuggestionRecord[] };
+  return payload.items ?? [];
+}
+
+export async function reviewSuggestion(suggestionId: string, input: ReviewSuggestionInput): Promise<SuggestionRecord> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لحفظ قرار المراجعة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/suggestions/${suggestionId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SuggestionRecord;
 }
 
 export async function fetchQuestions(): Promise<OpenQuestionRecord[]> {
