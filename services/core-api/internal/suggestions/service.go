@@ -326,12 +326,12 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 		}); err != nil {
 			return SuggestionView{}, err
 		}
-		if err := s.settleReview(ctx, tx, id, reviewerUUID, input, questionID, status); err != nil {
+		if err := settleReview(ctx, tx, id, reviewerUUID, input, questionID, status); err != nil {
 			return SuggestionView{}, err
 		}
 	} else {
 		if input.Decision == "converted" || input.Decision == "accepted" {
-			createdID, err := s.createSuggestionQuestion(ctx, tx, id, reviewerUUID, textAR, input.QuestionTitleAR, input.Decision)
+			createdID, err := createSuggestionQuestion(ctx, tx, id, reviewerUUID, textAR, input.QuestionTitleAR, input.Decision)
 			if err != nil {
 				return SuggestionView{}, err
 			}
@@ -340,7 +340,7 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 		if _, err := writeReview(ctx, tx, id, reviewerUUID, input); err != nil {
 			return SuggestionView{}, err
 		}
-		if err := s.settleReview(ctx, tx, id, reviewerUUID, input, questionID, status); err != nil {
+		if err := settleReview(ctx, tx, id, reviewerUUID, input, questionID, status); err != nil {
 			return SuggestionView{}, err
 		}
 	}
@@ -353,7 +353,7 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 // settleReview stores the review decision on the suggestion and writes the audit event
 // that closes the transaction. It runs after the change and the review row exist, so a
 // failing audit write takes the whole decision with it.
-func (s *Service) settleReview(ctx context.Context, tx pgx.Tx, id, reviewerUUID uuid.UUID, input ReviewInput, questionID *uuid.UUID, previousStatus string) error {
+func settleReview(ctx context.Context, tx pgx.Tx, id, reviewerUUID uuid.UUID, input ReviewInput, questionID *uuid.UUID, previousStatus string) error {
 	if _, err := tx.Exec(ctx, `UPDATE suggestions SET status = $1, question_id = $2, updated_at = now() WHERE id = $3`, input.Decision, nullableUUID(questionID), id); err != nil {
 		return err
 	}
@@ -377,7 +377,7 @@ func writeReview(ctx context.Context, tx pgx.Tx, id, reviewerUUID uuid.UUID, inp
 // createSuggestionQuestion records the proposer's text as an open question, so a review
 // that changes nothing in the graph still leaves a traceable artifact instead of a bare
 // status. The suggestion text is preserved verbatim as the question description.
-func (s *Service) createSuggestionQuestion(ctx context.Context, tx pgx.Tx, id, reviewerUUID uuid.UUID, textAR, titleAR, decision string) (uuid.UUID, error) {
+func createSuggestionQuestion(ctx context.Context, tx pgx.Tx, id, reviewerUUID uuid.UUID, textAR, titleAR, decision string) (uuid.UUID, error) {
 	createdID := uuid.New()
 	title := strings.TrimSpace(titleAR)
 	if title == "" {

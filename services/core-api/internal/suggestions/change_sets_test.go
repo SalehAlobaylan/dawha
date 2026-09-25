@@ -163,9 +163,8 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 
 func TestChangeSetAcceptsEveryTypedTarget(t *testing.T) {
 	cases := []struct {
-		name     string
-		change   ChangeSet
-		question bool
+		name   string
+		change ChangeSet
 	}{
 		{name: "person", change: ChangeSet{Target: ChangeTargetPerson, Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "أبو الفضل"}}},
 		{name: "relationship", change: ChangeSet{Target: ChangeTargetRelationship, Relationship: &RelationshipChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"}}},
