@@ -304,6 +304,10 @@ func (s *Service) Workspace(ctx context.Context, input WorkspaceInput, actorID s
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
+	history, err = s.filterResearchRunSummariesWithExecutor(ctx, tx, actorUUID.String(), history)
+	if err != nil {
+		return WorkspaceSnapshot{}, err
+	}
 	mapFeatures, err := s.workspaceMapFeatures(ctx, entityType, entityID, claims)
 	if err != nil {
 		return WorkspaceSnapshot{}, err

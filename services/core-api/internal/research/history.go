@@ -61,7 +61,11 @@ func (s *Service) ListRuns(ctx context.Context, actorID, questionID string) ([]R
 	if err != nil {
 		return nil, err
 	}
-	return listRuns(ctx, s.Pool, questionUUID, includeAnswer)
+	summaries, err := listRuns(ctx, s.Pool, questionUUID, includeAnswer)
+	if err != nil {
+		return nil, err
+	}
+	return s.filterResearchRunSummaries(ctx, actorID, summaries)
 }
 
 func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRunDetail, error) {
@@ -75,6 +79,15 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 	includeAnswer, err := s.canViewResearchHistory(ctx, actorID)
 	if err != nil {
 		return ResearchRunDetail{}, err
+	}
+	if includeAnswer {
+		allowed, accessErr := s.canAccessPersistedRun(ctx, runUUID, actorID)
+		if accessErr != nil {
+			return ResearchRunDetail{}, accessErr
+		}
+		if !allowed {
+			return ResearchRunDetail{}, ErrForbidden
+		}
 	}
 	summary, err := scanRunSummary(s.Pool.QueryRow(ctx, `
 		SELECT rr.id, rr.question_id, rr.query, rr.status, rr.insufficient_evidence,
@@ -106,8 +119,194 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 		if err != nil {
 			return ResearchRunDetail{}, err
 		}
+		graphPaths, err = s.filterPersistedGraphPaths(ctx, actorID, graphPaths)
+		if err != nil {
+			return ResearchRunDetail{}, err
+		}
+		summary.GraphPathCount = len(graphPaths)
+		if len(graphPaths) == 0 {
+			summary.GraphOperation = ""
+			summary.GraphMaxDepth = 0
+			summary.GraphTruncated = false
+		}
 	}
 	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths}, nil
+}
+
+func (s *Service) filterResearchRunSummaries(ctx context.Context, actorID string, summaries []ResearchRunSummary) ([]ResearchRunSummary, error) {
+	return s.filterResearchRunSummariesWithExecutor(ctx, s.Pool, actorID, summaries)
+}
+
+func (s *Service) filterResearchRunSummariesWithExecutor(ctx context.Context, executor historyExecutor, actorID string, summaries []ResearchRunSummary) ([]ResearchRunSummary, error) {
+	filtered := make([]ResearchRunSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		allowed, err := s.canAccessPersistedRunWithExecutor(ctx, executor, optionalUUID(summary.ID), actorID)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			filtered = append(filtered, summary)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Service) canAccessPersistedRun(ctx context.Context, runID uuid.UUID, actorID string) (bool, error) {
+	return s.canAccessPersistedRunWithExecutor(ctx, s.Pool, runID, actorID)
+}
+
+func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executor historyExecutor, runID uuid.UUID, actorID string) (bool, error) {
+	actorUUID := uuid.Nil
+	if strings.TrimSpace(actorID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(actorID))
+		if err != nil {
+			return false, ErrForbidden
+		}
+		actorUUID = parsed
+	}
+	treeRows, err := executor.Query(ctx, `SELECT DISTINCT tree_id::text FROM research_graph_paths WHERE run_id = $1 AND tree_id IS NOT NULL`, runID)
+	if err != nil {
+		return false, err
+	}
+	treeIDs := make([]uuid.UUID, 0)
+	for treeRows.Next() {
+		var treeID string
+		if err := treeRows.Scan(&treeID); err != nil {
+			treeRows.Close()
+			return false, err
+		}
+		treeIDs = append(treeIDs, optionalUUID(treeID))
+	}
+	if err := treeRows.Err(); err != nil {
+		treeRows.Close()
+		return false, err
+	}
+	treeRows.Close()
+	for _, treeID := range treeIDs {
+		allowed, accessErr := s.canViewPersistedTreeWithExecutor(ctx, executor, treeID, actorUUID)
+		if accessErr != nil {
+			return false, accessErr
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
+	sourceRows, err := executor.Query(ctx, `SELECT DISTINCT evidence.source_id::text FROM research_graph_path_evidence evidence WHERE evidence.run_id = $1 AND evidence.source_id IS NOT NULL AND (evidence.statement_id IS NOT NULL OR evidence.passage_id IS NOT NULL OR evidence.claim_id IS NOT NULL)`, runID)
+	if err != nil {
+		return false, err
+	}
+	sourceIDs := make([]uuid.UUID, 0)
+	for sourceRows.Next() {
+		var sourceID string
+		if err := sourceRows.Scan(&sourceID); err != nil {
+			sourceRows.Close()
+			return false, err
+		}
+		sourceIDs = append(sourceIDs, optionalUUID(sourceID))
+	}
+	if err := sourceRows.Err(); err != nil {
+		sourceRows.Close()
+		return false, err
+	}
+	sourceRows.Close()
+	for _, sourceID := range sourceIDs {
+		allowed, accessErr := canViewPersistedSource(ctx, executor, sourceID, actorUUID)
+		if accessErr != nil {
+			return false, accessErr
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string, paths []GraphPath) ([]GraphPath, error) {
+	actorUUID := uuid.Nil
+	if strings.TrimSpace(actorID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(actorID))
+		if err != nil {
+			return nil, ErrForbidden
+		}
+		actorUUID = parsed
+	}
+	filtered := make([]GraphPath, 0, len(paths))
+	for _, path := range paths {
+		if path.TreeScope.TreeID != "" {
+			allowed, err := s.canViewPersistedTree(ctx, optionalUUID(path.TreeScope.TreeID), actorUUID)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				continue
+			}
+		}
+		for index := range path.Edges {
+			if path.Edges[index].SourceID == "" {
+				continue
+			}
+			allowed, err := canViewPersistedSource(ctx, s.Pool, optionalUUID(path.Edges[index].SourceID), actorUUID)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				path.Edges[index].SourceID = ""
+			}
+		}
+		keptEvidence := make([]GraphEvidenceRef, 0, len(path.EvidenceRefs))
+		for _, evidence := range path.EvidenceRefs {
+			if evidence.SourceID != "" {
+				allowed, err := canViewPersistedSource(ctx, s.Pool, optionalUUID(evidence.SourceID), actorUUID)
+				if err != nil {
+					return nil, err
+				}
+				if !allowed {
+					if graphEvidenceIsDirect(evidence) {
+						continue
+					}
+					evidence.SourceID = ""
+					evidence.Title = ""
+					evidence.Excerpt = ""
+					evidence.LocatorAR = ""
+				}
+			}
+			keptEvidence = append(keptEvidence, evidence)
+		}
+		path.EvidenceRefs = keptEvidence
+		path.EvidenceBacked = false
+		for _, evidence := range path.EvidenceRefs {
+			if graphEvidenceIsDirect(evidence) {
+				path.EvidenceBacked = true
+				break
+			}
+		}
+		path.StructuralOnly = !path.EvidenceBacked
+		path.Explanation = graphExplanation(path.Operation, path.Status, path.StructuralOnly)
+		filtered = append(filtered, path)
+	}
+	return filtered, nil
+}
+
+func canViewPersistedSource(ctx context.Context, executor historyExecutor, sourceID, actorID uuid.UUID) (bool, error) {
+	if sourceID == uuid.Nil {
+		return false, nil
+	}
+	var allowed bool
+	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND (s.visibility = 'public' OR s.created_by = $2 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))))`, sourceID, actorID).Scan(&allowed)
+	return allowed, err
+}
+
+func (s *Service) canViewPersistedTree(ctx context.Context, treeID, actorID uuid.UUID) (bool, error) {
+	return s.canViewPersistedTreeWithExecutor(ctx, s.Pool, treeID, actorID)
+}
+
+func (s *Service) canViewPersistedTreeWithExecutor(ctx context.Context, executor historyExecutor, treeID, actorID uuid.UUID) (bool, error) {
+	if treeID == uuid.Nil {
+		return false, nil
+	}
+	var allowed bool
+	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM trees t WHERE t.id = $1 AND (t.visibility = 'public' OR t.owner_id = $2 OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2)))`, treeID, actorID).Scan(&allowed)
+	return allowed, err
 }
 
 func listRuns(ctx context.Context, executor historyExecutor, questionID uuid.UUID, includeAnswer bool) ([]ResearchRunSummary, error) {

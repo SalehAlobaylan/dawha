@@ -27,6 +27,31 @@ func TestNormalizeGraphInput(t *testing.T) {
 	}
 }
 
+func TestNormalizeShortestRelationshipInput(t *testing.T) {
+	valid, err := validateQueryInput(QueryInput{
+		Question:       "سؤال",
+		GraphOperation: GraphOperationShortestPath,
+		GraphStartType: "person",
+		GraphStartID:   "10000000-0000-0000-0000-000000000001",
+		GraphEndType:   "person",
+		GraphEndID:     "10000000-0000-0000-0000-000000000002",
+		TreeID:         "b0000000-0000-0000-0000-000000000001",
+		TreeVersionID:  "b1000000-0000-0000-0000-000000000001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid.GraphMaxDepth != GraphDefaultDepth {
+		t.Fatalf("shortest path depth = %d, want %d", valid.GraphMaxDepth, GraphDefaultDepth)
+	}
+	if _, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationShortestPath, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndType: "person", GraphEndID: "10000000-0000-0000-0000-000000000001"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected same-endpoint validation error, got %v", err)
+	}
+	if _, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationShortestPath, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndType: "person", GraphEndID: "10000000-0000-0000-0000-000000000002"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected scoped shortest-path validation error, got %v", err)
+	}
+}
+
 func TestNormalizeGraphInputRejectsInvalidCombinations(t *testing.T) {
 	cases := []QueryInput{
 		{Question: "سؤال", GraphOperation: "unknown"},
@@ -133,6 +158,21 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	if len(result.Paths) != 0 {
 		t.Fatalf("unrelated researcher saw private tree paths: %+v", result.Paths)
 	}
+	ownerResult, err := service.retrieveGraph(context.Background(), input, ownerID.String())
+	if err != nil || len(ownerResult.Paths) == 0 || ownerResult.Paths[0].TreeScope.TreeID != treeID.String() {
+		t.Fatalf("owner path scope was not persisted in retrieval: %+v", ownerResult.Paths)
+	}
+	runIDText, _, err := service.startRun(context.Background(), input, viewerID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM research_runs WHERE id = $1`, runIDText)
+	if err := service.persistRun(context.Background(), runIDText, QueryResult{Answer: "إجابة", GraphPaths: ownerResult.Paths, GraphStats: ownerResult.Stats}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetRun(context.Background(), viewerID.String(), runIDText); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unrelated researcher accessed private graph history: %v", err)
+	}
 	treeItems, err := service.retrieveTreeInterpretations(context.Background(), retrievalContext{Input: input, Normalized: "عبدالله", ActorID: viewerID.String()})
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +190,10 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	if len(result.Paths) == 0 {
 		t.Fatal("resource collaborator did not see private tree path")
 	}
+	detail, err := service.GetRun(context.Background(), viewerID.String(), runIDText)
+	if err != nil || len(detail.GraphPaths) == 0 {
+		t.Fatalf("resource collaborator could not read private graph history: %v", err)
+	}
 	if result.Paths[0].Status != "contested" {
 		t.Fatalf("disputed tree path status = %q", result.Paths[0].Status)
 	}
@@ -163,6 +207,78 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	}
 	if len(reverseResult.Paths) == 0 || len(reverseResult.Paths[0].Edges) == 0 || reverseResult.Paths[0].Edges[0].FromNodeID == reverseResult.Paths[0].Edges[0].PathFromNodeID {
 		t.Fatalf("edge direction lost traversal semantics: %+v", reverseResult.Paths)
+	}
+}
+
+func TestGraphShortestRelationshipPathIsBoundedAndDirectional(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	defer pool.Close()
+
+	ownerID := uuid.New()
+	treeID := uuid.New()
+	versionID := uuid.New()
+	personIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	nodeIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	edgeIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مالك شجرة المسار')`, ownerID, "shortest-path-"+ownerID.String()+"@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ownerID)
+	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) SELECT p.id, p.name, p.name, $1 FROM (VALUES ($2::uuid, 'الشخص أ'), ($3::uuid, 'الشخص ب'), ($4::uuid, 'الشخص ج'), ($5::uuid, 'الشخص د'), ($6::uuid, 'الشخص هـ')) AS p(id, name)`, ownerID, personIDs[0], personIDs[1], personIDs[2], personIDs[3], personIDs[4]); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, personIDs)
+	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة المسار', 'public', $2)`, treeID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state) VALUES ($1, $2, 1, 'published')`, versionID, treeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar) VALUES ($1, $3, $4, 'الشخص أ'), ($2, $3, $5, 'الشخص ب'), ($6, $3, $7, 'الشخص ج'), ($8, $3, $9, 'الشخص د'), ($10, $3, $11, 'الشخص هـ')`, nodeIDs[0], nodeIDs[1], versionID, personIDs[0], personIDs[1], nodeIDs[2], personIDs[2], nodeIDs[3], personIDs[3], nodeIDs[4], personIDs[4]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, created_by) VALUES ($1, $2, $3, $4, 'parent_of', 'interpreted', $5), ($6, $2, $4, $7, 'sibling_of', 'interpreted', $5), ($8, $2, $3, $9, 'parent_of', 'interpreted', $5), ($10, $2, $9, $11, 'parent_of', 'interpreted', $5), ($12, $2, $11, $7, 'parent_of', 'interpreted', $5)`, edgeIDs[0], versionID, nodeIDs[0], nodeIDs[2], ownerID, edgeIDs[1], nodeIDs[1], edgeIDs[2], nodeIDs[3], edgeIDs[3], nodeIDs[4], edgeIDs[4]); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationShortestPath, GraphStartType: "person", GraphStartID: personIDs[0].String(), GraphEndType: "person", GraphEndID: personIDs[1].String(), TreeID: treeID.String(), TreeVersionID: versionID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Pool: pool}
+	result, err := service.retrieveGraph(ctx, input, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Paths) != 1 || result.Paths[0].Depth != 2 || len(result.Paths[0].Nodes) != 3 || len(result.Paths[0].Edges) != 2 {
+		t.Fatalf("unexpected shortest paths: %+v", result.Paths)
+	}
+	path := result.Paths[0]
+	if path.AlgorithmVersion != GraphShortestPathAlgorithm || !path.StructuralOnly || path.EvidenceBacked || path.TreeScope.TreeID != treeID.String() || path.TreeScope.TreeVersionID != versionID.String() {
+		t.Fatalf("unexpected shortest path metadata: %+v", path)
+	}
+	if path.Edges[0].Predicate != "parent_of" || path.Edges[1].Predicate != "sibling_of" {
+		t.Fatalf("unexpected shortest path predicates: %+v", path.Edges)
+	}
+	reverseInput, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationShortestPath, GraphStartType: "person", GraphStartID: personIDs[1].String(), GraphEndType: "person", GraphEndID: personIDs[0].String(), TreeID: treeID.String(), TreeVersionID: versionID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverse, err := service.retrieveGraph(ctx, reverseInput, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reverse.Paths) != 1 || len(reverse.Paths[0].Edges) == 0 || reverse.Paths[0].Edges[0].FromNodeID == reverse.Paths[0].Edges[0].PathFromNodeID {
+		t.Fatalf("shortest path traversal direction was lost: %+v", reverse.Paths)
 	}
 }
 

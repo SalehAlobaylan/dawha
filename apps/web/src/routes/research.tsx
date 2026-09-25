@@ -23,10 +23,13 @@ export function ResearchPage() {
   const [graphOperation, setGraphOperation] = useState<GraphOperation | "">("");
   const [graphStartID, setGraphStartID] = useState("");
   const [graphEndID, setGraphEndID] = useState("");
+  const [graphTreeID, setGraphTreeID] = useState(() => isUuid(contextSearch.treeId) ? contextSearch.treeId : "");
+  const [graphTreeVersionID, setGraphTreeVersionID] = useState(() => isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : "");
   const [graphMaxDepth, setGraphMaxDepth] = useState(2);
   const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
   const contextualEntityID = isUuid(contextSearch.entityId) ? contextSearch.entityId : "";
   const graphStartIDValue = graphOperation === "source_entities" ? graphStartID : graphStartID || contextualEntityID;
+  const graphEndRequired = graphOperation === "common_ancestor_path" || graphOperation === "evidence_connection" || graphOperation === "geographic_path" || graphOperation === "shortest_relationship_path";
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
     if (!normalized) return sources.slice(0, 3);
@@ -40,7 +43,6 @@ export function ResearchPage() {
     setResearchError("");
     try {
       const graphStartType = graphStartTypeFor(graphOperation, contextualEntityType);
-      const graphEndRequired = graphOperation === "common_ancestor_path" || graphOperation === "evidence_connection" || graphOperation === "geographic_path";
       const graphInput = graphOperation ? {
         graph_operation: graphOperation,
         graph_start_type: graphStartType,
@@ -48,6 +50,8 @@ export function ResearchPage() {
         graph_end_type: graphOperation === "geographic_path" ? "place" as const : graphOperation === "source_entities" ? undefined : graphStartType,
         graph_end_id: graphEndRequired ? graphEndID || undefined : undefined,
         graph_max_depth: graphMaxDepth,
+        tree_id: graphOperation === "shortest_relationship_path" ? graphTreeID || undefined : undefined,
+        tree_version_id: graphOperation === "shortest_relationship_path" ? graphTreeVersionID || undefined : undefined,
       } : {};
       setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: contextualEntityID || undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined, ...graphInput }));
     } catch (error) {
@@ -101,8 +105,8 @@ export function ResearchPage() {
             <div className="research-graph-mode">
               <div className="research-graph-mode-copy"><GitBranch size={15} /><div><strong>مسار 관계</strong><small>اجعل الاستعلام يستخدم بنية relationships محدودة، مع إبقاء الأدلة قابلة للتتبع.</small></div></div>
               <div className="research-graph-fields">
-                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
-                {graphOperation ? <><label>نقطة البداية<input value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : "نقطة النهاية"}<input value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}</> : null}
+                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
+                {graphOperation ? <><label>نقطة البداية<input required value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphOperation === "shortest_relationship_path" ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
               </div>
             </div>
             {researchError ? <p className="research-query-error">{researchError}</p> : null}
@@ -143,7 +147,7 @@ export function ResearchPage() {
 
 function graphStartTypeFor(operation: GraphOperation | "", entityType: "person" | "family" | "branch" | undefined): "person" | "family" | "branch" | "source" {
   if (operation === "source_entities") return "source";
-  if (operation === "common_ancestor_path") return "person";
+  if (operation === "common_ancestor_path" || operation === "shortest_relationship_path") return "person";
   return entityType ?? "person";
 }
 
@@ -215,13 +219,13 @@ export function GraphPathsPanel({ paths, stats }: { paths: GraphPath[]; stats?: 
     <section className="research-graph-panel" aria-label="مسارات العلاقات">
       <div className="research-graph-panel-head">
         <div><div className="eyebrow">مسار العلاقات</div><h3>بنية العلاقات القابلة للتتبع</h3></div>
-        <span>{stats?.pathCount ?? paths.length} مسار · عمق {stats?.maxDepth ?? 0}</span>
+        <span>{stats?.pathCount ?? paths.length} مسار · عمق {stats?.maxDepth ?? 0}{stats?.operation === "shortest_relationship_path" ? " · أقرب مسار" : ""}</span>
       </div>
       {paths.length ? paths.map((path) => (
         <article className="research-graph-path" key={path.id}>
           <div className="research-graph-path-head">
-            <div><strong>{graphOperationLabel(path.operation)}</strong><small>{path.explanation}</small></div>
-            <StatusBadge tone={graphPathTone(path)}>{path.status}</StatusBadge>
+            <div><strong>{graphOperationLabel(path.operation)}</strong><small>{path.explanation}</small>{path.treeScope.treeId ? <small>النطاق: {path.treeScope.treeId.slice(0, 8)}{path.treeScope.versionNumber ? ` · النسخة ${path.treeScope.versionNumber}` : ""}</small> : null}</div>
+            <StatusBadge tone={graphPathTone(path)}>{graphStatusLabel(path.status)}</StatusBadge>
           </div>
           <div className="research-graph-nodes" aria-label="العقد في المسار">
             {path.nodes.map((node, index) => <span key={`${path.id}-${node.id}-${index}`}><b>{node.label || node.id.slice(0, 8)}</b><small>{node.type}</small></span>)}
@@ -230,11 +234,11 @@ export function GraphPathsPanel({ paths, stats }: { paths: GraphPath[]; stats?: 
             {path.edges.map((edge) => {
               const from = graphNodeLabel(path, edge.fromNodeId);
               const to = graphNodeLabel(path, edge.toNodeId);
-              return <div key={`${path.id}-${edge.id}-${edge.position}`}><Link2 size={12} /><span><strong>{from}</strong> <small>— {edge.predicate || edge.type} →</small> <strong>{to}</strong></span><small>{edge.pathFromNodeId && edge.pathFromNodeId !== edge.fromNodeId ? "اتجاه المسار معكوس · " : ""}{edge.status || "بدون حالة"}{edge.sourceId ? ` · ${edge.sourceId.slice(0, 8)}` : ""}</small></div>;
+              return <div key={`${path.id}-${edge.id}-${edge.position}`}><Link2 size={12} /><span><strong>{from}</strong> <small>— {graphPredicateLabel(edge.predicate || edge.type)} →</small> <strong>{to}</strong></span><small>{edge.pathFromNodeId && edge.pathFromNodeId !== edge.fromNodeId ? "اتجاه المسار معكوس · " : ""}{edge.status || "بدون حالة"}{edge.sourceId ? ` · ${edge.sourceId.slice(0, 8)}` : ""}</small></div>;
             })}
           </div> : null}
           {path.evidenceRefs.length ? <div className="research-graph-evidence">
-            {path.evidenceRefs.map((evidence) => <details key={`${path.id}-${evidence.id}-${evidence.relation ?? ""}`}><summary><FileSearch size={12} /><span>{evidence.title || evidence.type}</span><small>{evidence.relation || evidence.reviewStatus || "مرجع"}</small></summary><p>{evidence.excerpt || "لا يوجد مقتطف متاح."}</p><small>{evidence.locatorAr || "بدون موقع"}{evidence.claimId ? ` · ادعاء ${evidence.claimId.slice(0, 8)}` : ""}</small></details>)}
+            {path.evidenceRefs.map((evidence) => <details key={`${path.id}-${evidence.id}-${evidence.relation ?? ""}`}><summary><FileSearch size={12} /><span>{evidence.title || graphEvidenceTypeLabel(evidence.type, evidence.layer)}</span><small>{evidence.relation || evidence.reviewStatus || "مرجع"}</small></summary><p>{evidence.excerpt || "لا يوجد مقتطف متاح."}</p><small>{evidence.locatorAr || "بدون موقع"}{evidence.claimId ? ` · ادعاء ${evidence.claimId.slice(0, 8)}` : ""}</small></details>)}
           </div> : null}
           {path.truncated ? <p className="research-graph-warning"><CircleAlert size={13} /> تم قص المسار عند الحد الآمن؛ المتابعة تحتاج فحصاً إضافياً.</p> : null}
           {path.structuralOnly ? <p className="research-graph-warning"><CircleAlert size={13} /> هذا مسار بنيوي ولا يحتوي على دليل مصدرّي ظاهر.</p> : null}
@@ -249,8 +253,35 @@ function graphNodeLabel(path: GraphPath, nodeId: string): string {
 }
 
 function graphOperationLabel(operation: GraphOperation): string {
-  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
   return labels[operation];
+}
+
+function graphStatusLabel(status: string): string {
+  if (status === "structural") return "بنيوي";
+  if (status === "complete") return "مكتمل";
+  if (status === "contested") return "متنازع عليه";
+  if (status === "partial") return "جزئي";
+  if (status === "evidence_backed") return "مرتبط بأدلة";
+  if (status === "truncated") return "مقصور";
+  if (status === "not_found") return "غير موجود";
+  return status;
+}
+
+function graphPredicateLabel(value: string): string {
+  if (value === "parent_of") return "أب/أم";
+  if (value === "spouse_of") return "زوج/زوجة";
+  if (value === "sibling_of") return "شقيق/شقيقة";
+  if (value === "tree_relationship") return "علاقة شجرة";
+  return value;
+}
+
+function graphEvidenceTypeLabel(type: string, layer?: string): string {
+  if (layer === "tree_interpretation" || type === "tree_relationship") return "مرجع تفسير الشجرة";
+  if (type === "source_statement") return "عبارة مصدر";
+  if (type === "source_passage") return "مقطع مصدر";
+  if (type === "migration_event") return "حدث انتقال";
+  return type;
 }
 
 function graphPathTone(path: GraphPath): EpistemicTone {

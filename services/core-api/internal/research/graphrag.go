@@ -21,7 +21,9 @@ const (
 	GraphOperationBranchClaims   = "branch_claims"
 	GraphOperationSourceEntities = "source_entities"
 	GraphOperationGeographic     = "geographic_path"
+	GraphOperationShortestPath   = "shortest_relationship_path"
 	GraphAlgorithmVersion        = "graphrag-v1"
+	GraphShortestPathAlgorithm   = "graphrag-shortest-tree-v1"
 	GraphDefaultDepth            = 2
 	GraphMaxDepth                = 3
 	GraphMaxPaths                = 5
@@ -34,6 +36,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationBranchClaims:   {},
 	GraphOperationSourceEntities: {},
 	GraphOperationGeographic:     {},
+	GraphOperationShortestPath:   {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -81,7 +84,7 @@ func normalizeGraphInput(input QueryInput) (QueryInput, error) {
 		switch input.GraphOperation {
 		case GraphOperationSourceEntities:
 			input.GraphStartID = input.SourceID
-		case GraphOperationBranchClaims, GraphOperationCommonAncestor, GraphOperationEvidence, GraphOperationGeographic:
+		case GraphOperationBranchClaims, GraphOperationCommonAncestor, GraphOperationEvidence, GraphOperationGeographic, GraphOperationShortestPath:
 			if input.EntityID != "" {
 				input.GraphStartID = input.EntityID
 			} else {
@@ -104,7 +107,7 @@ func normalizeGraphInput(input QueryInput) (QueryInput, error) {
 			}
 		}
 	}
-	if input.GraphOperation == GraphOperationCommonAncestor && input.GraphEndType == "" {
+	if (input.GraphOperation == GraphOperationCommonAncestor || input.GraphOperation == GraphOperationShortestPath) && input.GraphEndType == "" {
 		input.GraphEndType = "person"
 	}
 	if input.GraphOperation == GraphOperationEvidence && input.GraphEndType == "" {
@@ -153,6 +156,10 @@ func validateGraphEndpointCombination(input QueryInput) error {
 		}
 	case GraphOperationEvidence:
 		if !isGraphEntityType(input.GraphStartType) || input.GraphEndType != input.GraphStartType || input.GraphEndID == "" {
+			return ErrValidation
+		}
+	case GraphOperationShortestPath:
+		if input.GraphStartType != "person" || input.GraphEndType != "person" || input.GraphStartID == "" || input.GraphEndID == "" || input.GraphStartID == input.GraphEndID || input.TreeID == "" || input.TreeVersionID == "" {
 			return ErrValidation
 		}
 	case GraphOperationBranchClaims:
@@ -223,6 +230,8 @@ func (s *Service) retrieveGraph(ctx context.Context, input QueryInput, actorID s
 		rows, err = tx.Query(queryCtx, branchClaimsGraphQuery, input.GraphStartID, input.GraphStartType, nullableUUID(actorUUID), GraphMaxEdges)
 	case GraphOperationSourceEntities:
 		rows, err = tx.Query(queryCtx, sourceEntitiesGraphQuery, input.GraphStartID, nullableUUID(actorUUID), GraphMaxPaths, GraphMaxEdges, input.GraphMaxDepth)
+	case GraphOperationShortestPath:
+		rows, err = tx.Query(queryCtx, shortestRelationshipGraphQuery, input.GraphStartID, input.GraphEndID, nullableUUID(actorUUID), nullableUUID(optionalUUID(input.TreeID)), nullableUUID(optionalUUID(input.TreeVersionID)), input.GraphMaxDepth, GraphMaxPaths, GraphMaxEdges)
 	case GraphOperationGeographic:
 		geographicQuery := geographicGraphQuery
 		if input.GraphStartType == "place" {
@@ -287,7 +296,7 @@ func scanGraphQueryRow(rows pgx.Rows, operation string) (GraphPath, error) {
 		EvidenceBacked:   evidenceBacked,
 		StructuralOnly:   structuralOnly,
 		TreeScope:        GraphTreeScope{TreeID: textValue(treeID), TreeVersionID: textValue(treeVersionID), VersionNumber: int(versionNumber), VersionState: textValue(versionState)},
-		AlgorithmVersion: GraphAlgorithmVersion,
+		AlgorithmVersion: graphAlgorithmVersion(rowOperation),
 	}
 	if err := json.Unmarshal(nodes, &path.Nodes); err != nil {
 		return GraphPath{}, err
@@ -302,12 +311,22 @@ func scanGraphQueryRow(rows pgx.Rows, operation string) (GraphPath, error) {
 	return path, nil
 }
 
+func graphAlgorithmVersion(operation string) string {
+	if operation == GraphOperationShortestPath {
+		return GraphShortestPathAlgorithm
+	}
+	return GraphAlgorithmVersion
+}
+
 func graphPathID(path GraphPath, nodes, edges, evidence []byte) string {
 	key := strings.Join([]string{path.Operation, path.Status, fmt.Sprintf("%d", path.Depth), path.TreeScope.TreeID, path.TreeScope.TreeVersionID, string(nodes), string(edges), string(evidence)}, "|")
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(key)).String()
 }
 
 func graphExplanation(operation, status string, structuralOnly bool) string {
+	if operation == GraphOperationShortestPath {
+		return "أقصر مسار علائقي داخل تفسير شجرة منشورة؛ يصف بنية التفسير ولا يثبت علاقة تاريخية نهائية."
+	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."
 	}
@@ -393,8 +412,15 @@ func normalizeGraphPaths(paths []GraphPath) []GraphPath {
 			paths[index].EvidenceRefs = paths[index].EvidenceRefs[:GraphMaxEdges]
 			paths[index].Truncated = true
 		}
-		paths[index].EvidenceBacked = len(paths[index].EvidenceRefs) > 0
-		paths[index].StructuralOnly = !paths[index].EvidenceBacked
+		directEvidence := false
+		for _, evidence := range paths[index].EvidenceRefs {
+			if graphEvidenceIsDirect(evidence) {
+				directEvidence = true
+				break
+			}
+		}
+		paths[index].EvidenceBacked = directEvidence
+		paths[index].StructuralOnly = !directEvidence
 		if paths[index].Status == "complete" {
 			for _, evidence := range paths[index].EvidenceRefs {
 				if evidence.Relation == "contradicts" || evidence.Relation == "refutes" || evidence.Relation == "counter_evidence" {
@@ -406,6 +432,18 @@ func normalizeGraphPaths(paths []GraphPath) []GraphPath {
 		paths[index].Explanation = graphExplanation(paths[index].Operation, paths[index].Status, paths[index].StructuralOnly)
 	}
 	return paths
+}
+
+func graphEvidenceIsDirect(value GraphEvidenceRef) bool {
+	if value.StatementID != "" || value.PassageID != "" || value.ClaimID != "" {
+		return true
+	}
+	switch strings.ToLower(value.Layer) {
+	case "source_statement", "source_passage", "research_claim":
+		return true
+	default:
+		return false
+	}
 }
 
 func graphEvidenceRefKey(value GraphEvidenceRef) string {
@@ -447,7 +485,7 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 			path.ID = pathKey
 		}
 		if path.AlgorithmVersion == "" {
-			path.AlgorithmVersion = GraphAlgorithmVersion
+			path.AlgorithmVersion = graphAlgorithmVersion(path.Operation)
 		}
 		if path.Explanation == "" {
 			path.Explanation = graphExplanation(path.Operation, path.Status, path.StructuralOnly)
@@ -577,7 +615,7 @@ func graphPassageCitations(paths []GraphPath, existing []Citation) []Citation {
 }
 
 func graphStatsForPaths(operation string, maxDepth int, paths []GraphPath) GraphStats {
-	stats := GraphStats{Operation: operation, MaxDepth: maxDepth, AlgorithmVersion: GraphAlgorithmVersion}
+	stats := GraphStats{Operation: operation, MaxDepth: maxDepth, AlgorithmVersion: graphAlgorithmVersion(operation)}
 	for _, path := range paths {
 		stats.PathCount++
 		stats.NodeCount += len(path.Nodes)
@@ -637,12 +675,145 @@ func validateGraphPaths(paths []GraphPath, maxDepth int) error {
 		if path.EvidenceBacked && path.StructuralOnly {
 			return ErrValidation
 		}
-		if !path.EvidenceBacked && len(path.EvidenceRefs) > 0 {
-			return ErrValidation
-		}
 	}
 	return nil
 }
+
+const shortestRelationshipGraphQuery = `
+WITH RECURSIVE
+parameters AS (
+  SELECT $1::uuid AS start_person_id, $2::uuid AS end_person_id, $3::uuid AS actor_id,
+         $4::uuid AS tree_id, $5::uuid AS tree_version_id, $6::integer AS max_depth,
+         $7::integer AS max_paths, $8::integer AS max_edges
+),
+visible_versions AS (
+  SELECT tv.id AS tree_version_id, tv.tree_id, tv.version_number, tv.state AS version_state, t.name_ar, t.owner_id
+  FROM tree_versions tv
+  JOIN trees t ON t.id = tv.tree_id
+  CROSS JOIN parameters p
+  WHERE tv.state = 'published'
+    AND (p.tree_id IS NULL OR t.id = p.tree_id)
+    AND (p.tree_version_id IS NULL OR tv.id = p.tree_version_id)
+    AND (t.visibility = 'public' OR (p.actor_id IS NOT NULL AND (t.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = p.actor_id))))
+),
+start_nodes AS (
+  SELECT v.tree_version_id, v.tree_id, v.version_number, v.version_state, v.name_ar, tn.id AS node_id, tn.person_id, tn.display_name_ar
+  FROM visible_versions v
+  JOIN tree_nodes tn ON tn.tree_version_id = v.tree_version_id
+  CROSS JOIN parameters p
+  WHERE tn.person_id = p.start_person_id
+),
+end_nodes AS (
+  SELECT v.tree_version_id, v.tree_id, v.version_number, v.version_state, v.name_ar, tn.id AS node_id, tn.person_id, tn.display_name_ar
+  FROM visible_versions v
+  JOIN tree_nodes tn ON tn.tree_version_id = v.tree_version_id
+  CROSS JOIN parameters p
+  WHERE tn.person_id = p.end_person_id
+),
+relationship_edges AS (
+  SELECT tr.id AS edge_id, tr.tree_version_id,
+         tr.subject_node_id AS semantic_from_node_id, tr.object_node_id AS semantic_to_node_id,
+         tr.predicate, tr.status, tr.source_id,
+         CASE WHEN tr.source_id IS NULL OR s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR v.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = v.tree_id AND tc.user_id = p.actor_id))) THEN tr.source_id ELSE NULL END AS visible_source_id,
+         CASE WHEN tr.source_id IS NULL OR s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR v.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = v.tree_id AND tc.user_id = p.actor_id))) THEN s.title_ar ELSE NULL END AS visible_source_title
+  FROM tree_relationships tr
+  JOIN visible_versions v ON v.tree_version_id = tr.tree_version_id
+  LEFT JOIN sources s ON s.id = tr.source_id
+  CROSS JOIN parameters p
+  WHERE tr.predicate IN ('parent_of', 'spouse_of', 'sibling_of')
+),
+undirected_edges AS (
+  SELECT edge_id, tree_version_id, semantic_from_node_id, semantic_to_node_id, predicate, status, visible_source_id, visible_source_title, semantic_from_node_id AS from_node_id, semantic_to_node_id AS to_node_id
+  FROM relationship_edges
+  UNION ALL
+  SELECT edge_id, tree_version_id, semantic_from_node_id, semantic_to_node_id, predicate, status, visible_source_id, visible_source_title, semantic_to_node_id AS from_node_id, semantic_from_node_id AS to_node_id
+  FROM relationship_edges
+),
+walk (
+  tree_version_id, tree_id, version_number, version_state, tree_name, node_id, person_id, display_name_ar,
+  depth, node_ids, visited_ids, edge_ids, saturated
+) AS (
+  SELECT tree_version_id, tree_id, version_number, version_state, name_ar, node_id, person_id, display_name_ar,
+         0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], ARRAY[]::uuid[], false
+  FROM start_nodes
+  UNION ALL
+  SELECT next_walk.tree_version_id, next_walk.tree_id, next_walk.version_number, next_walk.version_state, next_walk.tree_name,
+         next_walk.next_node_id, next_walk.person_id, next_walk.display_name_ar, next_walk.next_depth,
+         next_walk.next_node_ids, next_walk.next_visited_ids, next_walk.next_edge_ids, next_walk.next_saturated
+  FROM (
+    SELECT w.tree_version_id, w.tree_id, w.version_number, w.version_state, w.tree_name,
+           e.to_node_id AS next_node_id, next_node.person_id, next_node.display_name_ar,
+           w.depth + 1 AS next_depth, w.node_ids || e.to_node_id AS next_node_ids,
+           w.visited_ids || e.to_node_id AS next_visited_ids, w.edge_ids || e.edge_id AS next_edge_ids,
+           (w.saturated OR count(*) OVER () > $8) AS next_saturated,
+           row_number() OVER (ORDER BY w.depth, e.edge_id, w.node_ids::text) AS expansion_rank
+    FROM walk w
+    JOIN undirected_edges e ON e.tree_version_id = w.tree_version_id AND e.from_node_id = w.node_id
+    JOIN tree_nodes next_node ON next_node.id = e.to_node_id AND next_node.tree_version_id = e.tree_version_id
+    CROSS JOIN parameters p
+    WHERE w.depth < p.max_depth AND NOT e.to_node_id = ANY(w.visited_ids)
+  ) next_walk
+  WHERE next_walk.expansion_rank <= $8
+),
+end_candidates AS (
+  SELECT w.*, min(w.depth) OVER (PARTITION BY w.tree_version_id) AS minimum_depth
+  FROM walk w
+  JOIN end_nodes en ON en.tree_version_id = w.tree_version_id AND en.node_id = w.node_id
+),
+ranked_paths AS (
+  SELECT ec.*, row_number() OVER (ORDER BY ec.depth, ec.version_number, ec.tree_version_id, ec.node_ids::text, ec.edge_ids::text) AS path_order,
+         count(*) OVER () AS candidate_count
+  FROM end_candidates ec
+  WHERE ec.depth = ec.minimum_depth
+),
+limited_paths AS (
+  SELECT * FROM ranked_paths WHERE path_order <= $7
+),
+path_edges AS (
+  SELECT lp.path_order, edge_order, e.edge_id, e.semantic_from_node_id, e.semantic_to_node_id,
+         current_node.node_id AS path_from_node_id, next_node.node_id AS path_to_node_id,
+         e.predicate, e.status, e.visible_source_id, e.visible_source_title
+  FROM limited_paths lp
+  CROSS JOIN LATERAL unnest(lp.edge_ids) WITH ORDINALITY AS edge_ids(edge_id, edge_order)
+  JOIN relationship_edges e ON e.edge_id = edge_ids.edge_id
+  JOIN LATERAL (SELECT n.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n(node_id, ordinality) WHERE n.ordinality = edge_ids.edge_order) current_node ON TRUE
+  JOIN LATERAL (SELECT n.node_id FROM unnest(lp.node_ids) WITH ORDINALITY AS n(node_id, ordinality) WHERE n.ordinality = edge_ids.edge_order + 1) next_node ON TRUE
+),
+path_nodes AS (
+  SELECT lp.path_order, jsonb_agg(jsonb_build_object('id', tn.id::text, 'type', 'person', 'label', tn.display_name_ar, 'personId', tn.person_id::text, 'treeNodeId', tn.id::text, 'position', n.node_order - 1) ORDER BY n.node_order) AS nodes
+  FROM limited_paths lp
+  CROSS JOIN LATERAL unnest(lp.node_ids) WITH ORDINALITY AS n(node_id, node_order)
+  JOIN tree_nodes tn ON tn.id = n.node_id AND tn.tree_version_id = lp.tree_version_id
+  GROUP BY lp.path_order
+),
+path_edges_json AS (
+  SELECT path_order,
+         jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'tree_relationship', 'fromNodeId', semantic_from_node_id::text, 'toNodeId', semantic_to_node_id::text, 'pathFromNodeId', path_from_node_id::text, 'pathToNodeId', path_to_node_id::text, 'predicate', predicate, 'status', status, 'sourceId', visible_source_id, 'treeRelationshipId', edge_id::text, 'position', edge_order - 1) ORDER BY edge_order) AS edges,
+         bool_or(status IN ('disputed', 'contested', 'contradicted')) AS contested,
+         bool_or(status = 'unresolved') AS partial,
+         bool_or(saturated) AS saturated
+  FROM (
+    SELECT pe.*, lp.saturated FROM path_edges pe JOIN limited_paths lp ON lp.path_order = pe.path_order
+  ) path_edges_with_state
+  GROUP BY path_order
+),
+path_refs AS (
+  SELECT path_order, jsonb_agg(jsonb_build_object('id', edge_id::text, 'type', 'tree_relationship', 'layer', 'tree_interpretation', 'relation', 'supports', 'sourceId', visible_source_id, 'title', visible_source_title, 'status', status) ORDER BY edge_order) AS refs
+  FROM path_edges
+  WHERE visible_source_id IS NOT NULL
+  GROUP BY path_order
+)
+SELECT 'shortest_relationship_path',
+       CASE WHEN COALESCE(pe.contested, false) THEN 'contested' WHEN COALESCE(pe.partial, false) THEN 'partial' ELSE 'structural' END,
+       lp.version_number::integer, lp.tree_id::text, lp.tree_version_id::text, lp.version_state,
+       lp.depth::integer, (lp.candidate_count > $7 OR lp.depth >= $6 OR COALESCE(pe.saturated, false)),
+       false, true, pn.nodes, COALESCE(pe.edges, '[]'::jsonb), COALESCE(pr.refs, '[]'::jsonb)
+FROM limited_paths lp
+LEFT JOIN path_nodes pn ON pn.path_order = lp.path_order
+LEFT JOIN path_edges_json pe ON pe.path_order = lp.path_order
+LEFT JOIN path_refs pr ON pr.path_order = lp.path_order
+ORDER BY lp.path_order
+`
 
 const commonAncestorGraphQuery = `
 WITH RECURSIVE
