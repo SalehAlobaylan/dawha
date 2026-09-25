@@ -455,7 +455,7 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
-export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison" | "ancestor_frontier" | "source_dependency_neighborhood";
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison" | "ancestor_frontier" | "source_dependency_neighborhood" | "source_dependency_communities";
 
 export interface GraphTreeScope {
   treeId?: string;
@@ -749,6 +749,58 @@ export interface GraphSourceDependencyNeighborhoodResult {
   path: GraphPath;
 }
 
+export interface GraphSourceDependencyCommunitiesInput {
+  source_id: string;
+  max_depth?: number;
+  min_community_size?: number;
+}
+
+export interface GraphSourceDependencyCommunitiesLimits {
+  maxDepth: number;
+  maxNodes: number;
+  maxEdges: number;
+  minCommunitySize: number;
+}
+
+export interface GraphSourceDependencyCommunity {
+  communityId: string;
+  sourceIds: string[];
+  size: number;
+  internalEdgeCount: number;
+  externalEdgeCount: number;
+  edgeStatusCounts: GraphSourceDependencyStatusCount[];
+}
+
+export interface GraphSourceDependencyCommunitiesSummary {
+  rootSourceId: string;
+  pathId: string;
+  inputFingerprint: string;
+  edgeSetFingerprint: string;
+  partitionFingerprint: string;
+  partitionCount: number;
+  reportedCommunityCount: number;
+  subthresholdCommunityCount: number;
+  largestCommunitySize: number;
+  maxDepthReached: number;
+  limits: GraphSourceDependencyCommunitiesLimits;
+  communities: GraphSourceDependencyCommunity[];
+  truncated: boolean;
+  truncationReasons: string[];
+  cycleDetected: boolean;
+  status: string;
+}
+
+export interface GraphSourceDependencyCommunitiesResult {
+  runId: string;
+  createdAt: string;
+  operation: GraphOperation;
+  algorithmVersion: string;
+  structuralOnly: boolean;
+  limits: GraphSourceDependencyCommunitiesLimits;
+  summary: GraphSourceDependencyCommunitiesSummary;
+  path: GraphPath;
+}
+
 export interface ResearchRetrievalStats {
   lexicalCandidates: number;
   vectorCandidates: number;
@@ -1031,6 +1083,7 @@ export interface ResearchRunDetail extends ResearchRunSummary {
   comparison?: GraphBranchStructureComparisonResult;
   ancestorFrontier?: GraphAncestorFrontierSummary;
   sourceDependencyNeighborhood?: GraphSourceDependencyNeighborhoodSummary;
+  sourceDependencyCommunities?: GraphSourceDependencyCommunitiesSummary;
 }
 
 export interface ResearchWorkspaceSnapshot {

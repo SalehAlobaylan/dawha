@@ -27,6 +27,7 @@ const (
 	GraphOperationBranchComparison   = "branch_structure_comparison"
 	GraphOperationAncestorFrontier   = "ancestor_frontier"
 	GraphOperationSourceDependency   = "source_dependency_neighborhood"
+	GraphOperationSourceCommunities  = "source_dependency_communities"
 	GraphAlgorithmVersion            = "graphrag-v1"
 	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
 	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
@@ -34,6 +35,8 @@ const (
 	GraphBranchComparisonAlgorithm   = "graphrag-branch-structure-tree-v1"
 	GraphAncestorFrontierAlgorithm   = "graphrag-ancestor-frontier-tree-v1"
 	GraphSourceDependencyAlgorithm   = "graphrag-source-dependency-neighborhood-v1"
+	GraphSourceCommunitiesAlgorithm  = "graphrag-source-dependency-greedy-modularity-v1"
+	GraphSourceCommunityMaxSize      = 20
 	GraphDefaultDepth                = 2
 	GraphMaxDepth                    = 3
 	GraphMaxPaths                    = 5
@@ -53,6 +56,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationBranchComparison:   {},
 	GraphOperationAncestorFrontier:   {},
 	GraphOperationSourceDependency:   {},
+	GraphOperationSourceCommunities:  {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -189,6 +193,8 @@ func validateGraphEndpointCombination(input QueryInput) error {
 	case GraphOperationAncestorFrontier:
 		return ErrValidation
 	case GraphOperationSourceDependency:
+		return ErrValidation
+	case GraphOperationSourceCommunities:
 		return ErrValidation
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
@@ -360,6 +366,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationSourceDependency {
 		return GraphSourceDependencyAlgorithm
 	}
+	if operation == GraphOperationSourceCommunities {
+		return GraphSourceCommunitiesAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -389,6 +398,12 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 			return "حيّز اعتماد مصادر محدود وجزئي؛ يصف علاقات الاعتماد المرئية ولا يثبت استقلال المصدر أو صحته."
 		}
 		return "حيّز اعتماد مصادر محدود؛ يصف علاقات الاعتماد المرئية ولا يثبت استقلال المصدر أو صحته."
+	}
+	if operation == GraphOperationSourceCommunities {
+		if status == "partial" {
+			return "مجتمعات اعتماد مصادر محدودة وجزئية؛ تصف تجميعاً خوارزمياً ولا تثبت الاستقلال أو الاعتماد."
+		}
+		return "مجتمعات اعتماد مصادر محدودة؛ تصف تجميعاً خوارزمياً داخل النطاق المرئي ولا تثبت الاستقلال أو الاعتماد."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."

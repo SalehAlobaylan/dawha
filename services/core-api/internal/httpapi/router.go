@@ -203,6 +203,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/research/graph/branch-structure-comparison", researchHandler.branchStructureComparison)
 	mux.HandleFunc("POST /api/v1/research/graph/ancestor-frontier", researchHandler.ancestorFrontier)
 	mux.HandleFunc("POST /api/v1/research/graph/source-dependency-neighborhood", researchHandler.sourceDependencyNeighborhood)
+	mux.HandleFunc("POST /api/v1/research/graph/source-dependency-communities", researchHandler.sourceDependencyCommunities)
 	mux.HandleFunc("POST /api/v1/research-agent/runs", researchAgentHandler.start)
 	mux.HandleFunc("GET /api/v1/research-agent/runs/latest", researchAgentHandler.getLatestRun)
 	mux.HandleFunc("GET /api/v1/research-agent/runs/{runID}", researchAgentHandler.getRun)

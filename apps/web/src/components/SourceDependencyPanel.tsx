@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, RefreshCw, ShieldAlert, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { ApiError, createSourceDependency, detectSourceDependencies, fetchSourceDependencies, queryGraphSourceDependencyNeighborhood, reviewSourceDependency } from "../lib/api";
+import { ApiError, createSourceDependency, detectSourceDependencies, fetchSourceDependencies, queryGraphSourceDependencyCommunities, queryGraphSourceDependencyNeighborhood, reviewSourceDependency } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
-import type { CreateSourceDependencyInput, GraphSourceDependencyNeighborhoodResult, SourceDependency, SourceDependencyGraph, SourceDependencyType, SourceMetadata } from "../types";
+import type { CreateSourceDependencyInput, GraphSourceDependencyCommunitiesResult, GraphSourceDependencyNeighborhoodResult, SourceDependency, SourceDependencyGraph, SourceDependencyType, SourceMetadata } from "../types";
 
 interface SourceDependencyPanelProps {
   source: SourceMetadata;
@@ -19,7 +19,11 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [neighborhood, setNeighborhood] = useState<GraphSourceDependencyNeighborhoodResult | null>(null);
-  useEffect(() => setNeighborhood(null), [source.id, source.visibility]);
+  const [communities, setCommunities] = useState<GraphSourceDependencyCommunitiesResult | null>(null);
+  useEffect(() => {
+    setNeighborhood(null);
+    setCommunities(null);
+  }, [source.id, source.visibility]);
   const graphQuery = useQuery({
     queryKey: ["source-dependencies", source.id],
     queryFn: () => fetchSourceDependencies(source.id),
@@ -30,6 +34,7 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
     queryClient.setQueryData(["source-dependencies", source.id], graph);
     setMessage(successMessage);
     setNeighborhood(null);
+    setCommunities(null);
     setEvidence("");
     setReviewNotes({});
     await queryClient.invalidateQueries({ queryKey: ["source", source.id] });
@@ -58,6 +63,18 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
       setMessage(errorMessage(error));
     },
   });
+  const communitiesMutation = useMutation({
+    mutationFn: () => queryGraphSourceDependencyCommunities({ source_id: source.id, max_depth: 2, min_community_size: 2 }),
+    onSuccess: (result) => {
+      if (result.summary.rootSourceId !== source.id) return;
+      setCommunities(result);
+      setMessage("اكتمل تجميع المجتمعات داخل النطاق المرئي.");
+    },
+    onError: (error) => {
+      setCommunities(null);
+      setMessage(errorMessage(error));
+    },
+  });
   const reviewMutation = useMutation({
     mutationFn: ({ dependencyID, decision }: { dependencyID: string; decision: "confirmed" | "rejected" }) => reviewSourceDependency(dependencyID, { decision, note_ar: reviewNotes[dependencyID] || undefined }),
     onSuccess: (graph) => refresh(graph, "حُفظ قرار المراجعة دون تغيير المصدر."),
@@ -65,6 +82,7 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
   });
   const graph = graphQuery.data ?? emptyGraph(source.id);
   const targets = allSources.filter((item) => item.id !== source.id);
+  const sourceLabel = (sourceID: string) => allSources.find((item) => item.id === sourceID)?.titleAr ?? sourceID.slice(0, 8);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!targetSourceID) return;
@@ -82,6 +100,9 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
         <div className="source-dependency-head-actions">
           <button className="secondary-button" type="button" onClick={() => neighborhoodMutation.mutate()} disabled={source.visibility !== "public" || neighborhoodMutation.isPending}>
             {source.visibility !== "public" ? "المصدر غير مرئي" : neighborhoodMutation.isPending ? "جارٍ الاستكشاف…" : "استكشف الحيّز"}
+          </button>
+          <button className="secondary-button" type="button" onClick={() => communitiesMutation.mutate()} disabled={source.visibility !== "public" || communitiesMutation.isPending}>
+            {source.visibility !== "public" ? "المصدر غير مرئي" : communitiesMutation.isPending ? "جارٍ التجميع…" : "استكشف المجتمعات"}
           </button>
           <button className="secondary-button" type="button" onClick={() => detectMutation.mutate()} disabled={detectMutation.isPending}>
             <RefreshCw size={14} /> {detectMutation.isPending ? "جارٍ الفحص…" : "فحص التشابه"}
@@ -101,6 +122,12 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
         <p>يعرض هذا الحيّز علاقات الاعتماد النشطة فقط؛ لا يثبت استقلال المصدر أو صحته.</p>
         {neighborhood.summary.truncated || neighborhood.summary.cycleDetected ? <div className="source-dependency-neighborhood-warning" role="status">{neighborhood.summary.truncated ? `تم اقتطاع الحيّز: ${neighborhood.summary.truncationReasons.join("، ")}.` : ""}{neighborhood.summary.truncated && neighborhood.summary.cycleDetected ? " " : ""}{neighborhood.summary.cycleDetected ? "رُصدت دورة داخل النطاق المرئي." : ""}</div> : null}
         <details><summary>المصادر والحواف</summary><div className="source-dependency-neighborhood-list">{neighborhood.path.nodes.map((node) => <span key={node.id}>{node.id.slice(0, 8)} · عمق {node.depth ?? 0}</span>)}{neighborhood.path.edges.map((edge) => <span key={edge.id}>{edge.fromNodeId.slice(0, 8)} → {edge.toNodeId.slice(0, 8)} · {edge.predicate || "علاقة"} · {edge.status || "غير مصنفة"}</span>)}</div></details>
+      </div> : null}
+      {communities && communities.summary.rootSourceId === source.id && source.visibility === "public" ? <div className="source-dependency-communities">
+        <div className="source-dependency-communities-summary"><strong>مجتمعات الاعتماد</strong><span>{communities.summary.reportedCommunityCount} مجموعة</span><span>{communities.summary.subthresholdCommunityCount} دون الحد</span><span>أكبر مجموعة {communities.summary.largestCommunitySize}</span><span>عمق {communities.summary.maxDepthReached}</span><span>الحد الأدنى {communities.summary.limits.minCommunitySize}</span><span>{communities.summary.status === "structural" ? "بنيوي" : "جزئي"}</span></div>
+        <p>التجميع خوارزمي داخل النطاق المرئي؛ لا يثبت استقلال المصادر أو صحة الاعتماد.</p>
+        {communities.summary.truncated || communities.summary.cycleDetected ? <div className="source-dependency-neighborhood-warning" role="status">{communities.summary.truncated ? `تم اقتطاع النطاق: ${communities.summary.truncationReasons.join("، ")}.` : ""}{communities.summary.truncated && communities.summary.cycleDetected ? " " : ""}{communities.summary.cycleDetected ? "رُصدت دورة داخل النطاق المرئي." : ""}</div> : null}
+        {communities.summary.communities.length ? <div className="source-dependency-community-list">{communities.summary.communities.map((community) => <article className="source-dependency-community" key={community.communityId}><div className="source-dependency-community-head"><strong>{community.size} مصادر</strong><span>{community.internalEdgeCount} داخلية · {community.externalEdgeCount} خارجية</span></div><div className="source-dependency-community-members">{community.sourceIds.map((sourceID) => <span key={sourceID}>{sourceID === communities.summary.rootSourceId ? "★ " : ""}{sourceLabel(sourceID)}</span>)}</div><small>{community.edgeStatusCounts.map((status) => `${communityStatusLabel(status.status)}: ${status.count}`).join(" · ") || "بلا حواف داخلية"}</small></article>)}</div> : <p className="evidence-empty">لم تبلغ أي مجموعة الحد الأدنى.</p>}
       </div> : null}
       <form className="source-dependency-form" onSubmit={submit}>
         <label className="composer-label">المصدر المرتبط<select required value={targetSourceID} onChange={(event) => setTargetSourceID(event.target.value)}><option value="">اختر مصدراً</option>{targets.map((item) => <option value={item.id} key={item.id}>{item.titleAr}</option>)}</select></label>
@@ -162,6 +189,12 @@ function signalText(dependency: SourceDependency): string {
     if (signal.type === "shared_claim_sequence") return "تسلسل ادعاءات مشترك";
     return "";
   }).filter(Boolean).join(" · ");
+}
+
+function communityStatusLabel(value: string): string {
+  if (value === "confirmed") return "مؤكدة";
+  if (value === "needs_review") return "تحتاج مراجعة";
+  return value || "غير مصنفة";
 }
 
 function errorMessage(error: unknown): string {

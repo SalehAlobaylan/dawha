@@ -45,6 +45,7 @@ type ResearchRunDetail struct {
 	Comparison                   *GraphBranchStructureComparisonResult     `json:"comparison,omitempty"`
 	AncestorFrontier             *GraphAncestorFrontierSummary             `json:"ancestorFrontier,omitempty"`
 	SourceDependencyNeighborhood *GraphSourceDependencyNeighborhoodSummary `json:"sourceDependencyNeighborhood,omitempty"`
+	SourceDependencyCommunities  *GraphSourceDependencyCommunitiesSummary  `json:"sourceDependencyCommunities,omitempty"`
 }
 
 type historyExecutor interface {
@@ -116,6 +117,7 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 	var comparison *GraphBranchStructureComparisonResult
 	var ancestorFrontier *GraphAncestorFrontierSummary
 	var sourceDependencyNeighborhood *GraphSourceDependencyNeighborhoodSummary
+	var sourceDependencyCommunities *GraphSourceDependencyCommunitiesSummary
 	if includeAnswer {
 		contexts, err = runContexts(ctx, s.Pool, runUUID)
 		if err != nil {
@@ -149,8 +151,14 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 				return ResearchRunDetail{}, err
 			}
 		}
+		if graphPathsContainOperation(graphPaths, GraphOperationSourceCommunities) {
+			sourceDependencyCommunities, err = runGraphSourceDependencyCommunities(ctx, s.Pool, runUUID)
+			if err != nil {
+				return ResearchRunDetail{}, err
+			}
+		}
 	}
-	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths, Comparison: comparison, AncestorFrontier: ancestorFrontier, SourceDependencyNeighborhood: sourceDependencyNeighborhood}, nil
+	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths, Comparison: comparison, AncestorFrontier: ancestorFrontier, SourceDependencyNeighborhood: sourceDependencyNeighborhood, SourceDependencyCommunities: sourceDependencyCommunities}, nil
 }
 
 func graphPathsContainOperation(paths []GraphPath, operation string) bool {
@@ -253,29 +261,33 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 			SELECT node->>'id' AS identifier
 			FROM research_graph_paths rgp
 			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rgp.nodes, '[]'::jsonb)) node
-			WHERE rgp.run_id = $1 AND rgp.operation = $2
+			WHERE rgp.run_id = $1 AND rgp.operation IN ($2, $3)
 			UNION
 			SELECT edge.from_node_id::text
 			FROM research_graph_edges edge
 			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
-			WHERE edge.run_id = $1 AND rgp.operation = $2
+			WHERE edge.run_id = $1 AND rgp.operation IN ($2, $3)
 			UNION
 			SELECT edge.to_node_id::text
 			FROM research_graph_edges edge
 			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
-			WHERE edge.run_id = $1 AND rgp.operation = $2
+			WHERE edge.run_id = $1 AND rgp.operation IN ($2, $3)
 			UNION
 			SELECT neighborhood.root_source_id::text
 			FROM research_graph_source_dependency_neighborhoods neighborhood
 			WHERE neighborhood.run_id = $1
 			UNION
+			SELECT community.root_source_id::text
+			FROM research_graph_source_dependency_communities community
+			WHERE community.run_id = $1
+			UNION
 			SELECT context.scope_id::text
 			FROM research_run_contexts context
 			JOIN research_runs run ON run.id = context.run_id
-			WHERE context.run_id = $1 AND context.scope_type = 'source' AND run.graph_operation = $2
+			WHERE context.run_id = $1 AND context.scope_type = 'source' AND run.graph_operation IN ($2, $3)
 		) identifiers
 		WHERE identifier IS NOT NULL
-	`, runID, GraphOperationSourceDependency)
+	`, runID, GraphOperationSourceDependency, GraphOperationSourceCommunities)
 	if err != nil {
 		return false, err
 	}
@@ -325,7 +337,7 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 				continue
 			}
 		}
-		if path.Operation == GraphOperationSourceDependency {
+		if isSourceDependencyGraphOperation(path.Operation) {
 			visible, err := graphSourceDependencyPathVisible(ctx, s.Pool, path)
 			if err != nil {
 				return nil, err

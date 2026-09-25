@@ -9953,6 +9953,72 @@ a {
   font-size: 10px;
 }
 
+.source-dependency-communities {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.source-dependency-communities-summary,
+.source-dependency-community-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.source-dependency-communities-summary {
+  align-items: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.source-dependency-communities-summary strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.source-dependency-communities p,
+.source-dependency-community small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.source-dependency-community-list {
+  display: grid;
+  gap: 8px;
+}
+
+.source-dependency-community {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.source-dependency-community-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.source-dependency-community-head strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.source-dependency-community-members span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .source-dependency-form {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1.4fr) auto;
@@ -10044,6 +10110,7 @@ a {
 
   .source-dependency-head,
   .source-dependency-row-head,
+  .source-dependency-community-head,
   .source-dependency-actions {
     align-items: stretch;
     flex-direction: column;

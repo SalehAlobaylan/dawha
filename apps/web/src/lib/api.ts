@@ -51,6 +51,8 @@ import type {
   GraphAncestorFrontierResult,
   GraphSourceDependencyNeighborhoodInput,
   GraphSourceDependencyNeighborhoodResult,
+  GraphSourceDependencyCommunitiesInput,
+  GraphSourceDependencyCommunitiesResult,
   ResearchQueryInput,
   ResearchQueryResult,
   ResearchRunDetail,
@@ -277,6 +279,23 @@ export async function queryGraphSourceDependencyNeighborhood(input: GraphSourceD
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as GraphSourceDependencyNeighborhoodResult;
+}
+
+export async function queryGraphSourceDependencyCommunities(input: GraphSourceDependencyCommunitiesInput): Promise<GraphSourceDependencyCommunitiesResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لتفعيل مجتمعات اعتماد المصادر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/source-dependency-communities`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as GraphSourceDependencyCommunitiesResult;
 }
 
 export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {

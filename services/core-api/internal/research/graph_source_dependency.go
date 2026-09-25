@@ -15,6 +15,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func isSourceDependencyGraphOperation(operation string) bool {
+	return operation == GraphOperationSourceDependency || operation == GraphOperationSourceCommunities
+}
+
 type GraphSourceDependencyNeighborhoodInput struct {
 	SourceID string `json:"source_id"`
 	MaxDepth int    `json:"max_depth,omitempty"`
@@ -80,29 +84,9 @@ func (s *Service) GraphSourceDependencyNeighborhood(ctx context.Context, input G
 	if err != nil {
 		return GraphSourceDependencyNeighborhoodResult{}, err
 	}
-	actorUUID, err := graphActorUUID(actorID)
+	row, err := s.retrieveGraphSourceDependencyNeighborhood(ctx, normalized, actorID)
 	if err != nil {
 		return GraphSourceDependencyNeighborhoodResult{}, err
-	}
-	queryCtx, cancel := context.WithTimeout(ctx, graphQueryTimeout)
-	defer cancel()
-	tx, err := s.Pool.BeginTx(queryCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead})
-	if err != nil {
-		return GraphSourceDependencyNeighborhoodResult{}, graphRetrievalError(err)
-	}
-	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(queryCtx, `SET LOCAL statement_timeout = '2000ms'`); err != nil {
-		return GraphSourceDependencyNeighborhoodResult{}, graphRetrievalError(err)
-	}
-	if err := validateGraphSourceDependencyRoot(queryCtx, tx, normalized.SourceID); err != nil {
-		return GraphSourceDependencyNeighborhoodResult{}, err
-	}
-	row, err := queryGraphSourceDependencyNeighborhood(queryCtx, tx, normalized.SourceID, actorUUID, normalized.MaxDepth)
-	if err != nil {
-		return GraphSourceDependencyNeighborhoodResult{}, err
-	}
-	if err := tx.Rollback(context.Background()); err != nil {
-		return GraphSourceDependencyNeighborhoodResult{}, graphRetrievalError(err)
 	}
 	runID, createdAt, err := s.startRun(ctx, QueryInput{Question: "حيّز اعتماد المصادر", GraphOperation: GraphOperationSourceDependency, GraphStartType: "source", GraphStartID: normalized.SourceID, SourceID: normalized.SourceID, GraphMaxDepth: normalized.MaxDepth}, actorID)
 	if err != nil {
@@ -120,6 +104,34 @@ func (s *Service) GraphSourceDependencyNeighborhood(ctx context.Context, input G
 		return GraphSourceDependencyNeighborhoodResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) retrieveGraphSourceDependencyNeighborhood(ctx context.Context, normalized GraphSourceDependencyNeighborhoodInput, actorID string) (graphSourceDependencyRow, error) {
+	actorUUID, err := graphActorUUID(actorID)
+	if err != nil {
+		return graphSourceDependencyRow{}, err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, graphQueryTimeout)
+	defer cancel()
+	tx, err := s.Pool.BeginTx(queryCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return graphSourceDependencyRow{}, graphRetrievalError(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(queryCtx, `SET LOCAL statement_timeout = '2000ms'`); err != nil {
+		return graphSourceDependencyRow{}, graphRetrievalError(err)
+	}
+	if err := validateGraphSourceDependencyRoot(queryCtx, tx, normalized.SourceID); err != nil {
+		return graphSourceDependencyRow{}, err
+	}
+	row, err := queryGraphSourceDependencyNeighborhood(queryCtx, tx, normalized.SourceID, actorUUID, normalized.MaxDepth)
+	if err != nil {
+		return graphSourceDependencyRow{}, err
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		return graphSourceDependencyRow{}, graphRetrievalError(err)
+	}
+	return row, nil
 }
 
 func normalizeGraphSourceDependencyNeighborhoodInput(input GraphSourceDependencyNeighborhoodInput) (GraphSourceDependencyNeighborhoodInput, error) {
@@ -250,6 +262,20 @@ func graphSourceDependencyHasCycle(path GraphPath) bool {
 	return visited != len(indegree)
 }
 
+func graphSourceDependencyTruncationReasons(row graphSourceDependencyRow) []string {
+	reasons := make([]string, 0, 3)
+	if row.DepthTruncated {
+		reasons = append(reasons, "depth_limit")
+	}
+	if row.NodesTruncated || row.TraversalSaturated {
+		reasons = append(reasons, "node_limit")
+	}
+	if row.EdgesTruncated {
+		reasons = append(reasons, "edge_limit")
+	}
+	return reasons
+}
+
 func summarizeGraphSourceDependencyNeighborhood(row graphSourceDependencyRow, fingerprint string) GraphSourceDependencyNeighborhoodSummary {
 	depthCounts := make(map[int]int)
 	for _, node := range row.Path.Nodes {
@@ -277,16 +303,7 @@ func summarizeGraphSourceDependencyNeighborhood(row graphSourceDependencyRow, fi
 	for _, status := range statuses {
 		edgeStatusCounts = append(edgeStatusCounts, GraphSourceDependencyStatusCount{Status: status, Count: statusCounts[status]})
 	}
-	reasons := make([]string, 0, 3)
-	if row.DepthTruncated {
-		reasons = append(reasons, "depth_limit")
-	}
-	if row.NodesTruncated || row.TraversalSaturated {
-		reasons = append(reasons, "node_limit")
-	}
-	if row.EdgesTruncated {
-		reasons = append(reasons, "edge_limit")
-	}
+	reasons := graphSourceDependencyTruncationReasons(row)
 	status := row.Path.Status
 	if status == "" {
 		status = "structural"
