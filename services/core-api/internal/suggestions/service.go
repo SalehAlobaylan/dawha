@@ -309,6 +309,17 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 		return SuggestionView{}, ErrConflict
 	}
 	if plan != nil {
+		// canReview decides the review; applying a change set writes to the shared
+		// research tables, which a tree review right does not reach. Applying a change
+		// takes the same global write role the evidence service already requires, so a
+		// collaborator on one tree cannot become a writer on the whole graph.
+		globalWrite, err := canWriteGlobally(ctx, tx, reviewerUUID)
+		if err != nil {
+			return SuggestionView{}, err
+		}
+		if !globalWrite {
+			return SuggestionView{}, ErrForbidden
+		}
 		applied, err := applyChangeSet(ctx, tx, *plan, reviewerUUID)
 		if err != nil {
 			return SuggestionView{}, err
@@ -498,6 +509,37 @@ func canReview(ctx context.Context, q dbExecutor, treeID, actorID uuid.UUID) (bo
 			)
 		)
 	`, treeID, actorID).Scan(&allowed)
+	return allowed, err
+}
+
+// canWriteGlobally reports whether the actor may write to the records a change set
+// targets: person aliases, entity relationships, claims and claim evidence. The role set
+// is the one evidence.AddEvidence and evidence.CreateClaim already require, so a change
+// set can never open a write path the evidence service would refuse. canReview stays the
+// gate for the decision itself.
+func canWriteGlobally(ctx context.Context, q dbExecutor, actorID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
+	`, actorID).Scan(&allowed)
+	return allowed, err
+}
+
+// canManageClaim mirrors the evidence service rule for a claim: its creator, or a holder
+// of a global write role, may attach evidence to it. A claim the actor may not manage
+// answers exactly like a claim that does not exist, so the check cannot be used to probe
+// which claims exist.
+func canManageClaim(ctx context.Context, q dbExecutor, claimID, actorID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM claims c
+			WHERE c.id = $1 AND (
+				c.created_by = $2
+				OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
+			)
+		)
+	`, claimID, actorID).Scan(&allowed)
 	return allowed, err
 }
 
@@ -875,15 +917,18 @@ func applyClaimChange(ctx context.Context, tx pgx.Tx, plan claimPlan, reviewerID
 }
 
 // applySourceLinkChange attaches a source statement or passage to a claim as evidence.
-// The link travels on the caller's executor so the same query can run inside the
-// suggestion review transaction or on a pool.
+// The claim must be one the reviewer could attach evidence to through the evidence
+// service, and the check runs before the claim is even looked up, so a refused link is a
+// refusal to manage rather than a hint about which claims exist. The link travels on the
+// caller's executor so the same query can run inside the suggestion review transaction or
+// on a pool.
 func applySourceLinkChange(ctx context.Context, q dbExecutor, plan sourceLinkPlan, reviewerID uuid.UUID) (appliedChange, error) {
-	var claimExists bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM claims WHERE id = $1)`, plan.claimID).Scan(&claimExists); err != nil {
+	allowed, err := canManageClaim(ctx, q, plan.claimID, reviewerID)
+	if err != nil {
 		return appliedChange{}, err
 	}
-	if !claimExists {
-		return appliedChange{}, ErrNotFound
+	if !allowed {
+		return appliedChange{}, ErrForbidden
 	}
 	var statementSource, passageSource uuid.UUID
 	if plan.statementArg != nil {
