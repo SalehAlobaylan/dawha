@@ -38,6 +38,33 @@ test.describe("create and publish a tree", () => {
     await expect(page.getByRole("list", { name: "نسخ الشجرة" }).getByText("نسخة معاينة")).toBeVisible();
   });
 
+  test("the publish banner names the version that was published, not the draft it opened", async ({ page, request }) => {
+    await waitForApi(request);
+    const account = newAccount("publish-banner");
+    await registerThroughUi(page, account);
+
+    await page.goto("/tree");
+    await page.getByRole("button", { name: "شجرة جديدة" }).click();
+    await page.getByLabel("اسم الشجرة").fill(`شجرة ${account.displayName}`);
+    await page.getByLabel("الظهور").selectOption("public");
+    await page.getByRole("button", { name: /احفظ كمسودة/ }).click();
+    // The draft that is about to be published is version 1, and the page says so
+    // before anything is published.
+    await expect(page.getByText("النسخة 1 من 1")).toBeVisible();
+
+    await page.getByRole("button", { name: /نشر المسودة/ }).click();
+
+    // The banner names the version that was published: 1. The version the API
+    // selected in its response is the draft it opened, so reading the number from
+    // there is how this used to announce "نُشرت النسخة 2" for a version 1 publish.
+    const banner = page.locator(".tree-action-message");
+    await expect(banner).toContainText("نُشرت النسخة 1");
+    await expect(banner).not.toContainText("نُشرت النسخة 2");
+    // And the page really has moved on to the new draft, so the assertion above is
+    // not passing on a number that happens to be stale.
+    await expect(page.getByText("النسخة 2 من 2")).toBeVisible();
+  });
+
   test("a signed-out visitor cannot create a tree", async ({ page, request }) => {
     await waitForApi(request);
     await page.context().clearCookies();

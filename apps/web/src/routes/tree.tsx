@@ -10,7 +10,7 @@ import { ForkDiffPanel } from "../components/ForkDiffPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { SuggestionPanel } from "../components/SuggestionPanel";
 import { TopBar } from "../components/TopBar";
-import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, UpdateRelationshipInput } from "../types";
+import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, TreeVersionRecord, UpdateRelationshipInput } from "../types";
 
 export type TreePageProps = {
   routeTreeId?: string;
@@ -181,9 +181,15 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const publishMutation = useMutation({
     mutationFn: () => publishTree(detail.tree.id, "نشر نسخة جديدة من التفسير"),
     onSuccess: async (published) => {
+      // Publishing seals the latest draft and opens a new one, so the version the
+      // response selects is the draft that was just opened, not the version that
+      // was published. The number is read from the sealed version the response
+      // itself carries, and falls back to the draft this mutation started from -
+      // which is the draft the API seals - rather than to a guessed number.
+      const publishedNumber = newestPublishedVersion(published)?.number ?? selectedVersion.number;
       await updateDetail(published);
       navigateToTreeVersion(published.tree.id, published.selectedVersion.id);
-      setMessage(`نُشرت النسخة ${published.selectedVersion.number}، وفُتحت مسودة جديدة للتعديل.`);
+      setMessage(`نُشرت النسخة ${publishedNumber}، وفُتحت مسودة جديدة للتعديل.`);
     },
     onError: (error) => setMessage(authMessage(error)),
   });
@@ -399,6 +405,19 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The version a publish response sealed: the newest published version it lists.
+ * Publishing always closes the latest draft, so after a publish the highest
+ * published number is the version that was just published - which is not the
+ * version the response selects, because that is the draft it opened.
+ */
+function newestPublishedVersion(detail: TreeDetail): TreeVersionRecord | null {
+  return detail.versions.reduce<TreeVersionRecord | null>(
+    (newest, version) => (version.state === "published" && (newest === null || version.number > newest.number) ? version : newest),
+    null,
   );
 }
 
