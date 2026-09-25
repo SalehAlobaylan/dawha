@@ -26,12 +26,14 @@ const (
 	GraphOperationRelationshipImpact = "relationship_impact"
 	GraphOperationBranchComparison   = "branch_structure_comparison"
 	GraphOperationAncestorFrontier   = "ancestor_frontier"
+	GraphOperationSourceDependency   = "source_dependency_neighborhood"
 	GraphAlgorithmVersion            = "graphrag-v1"
 	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
 	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
 	GraphRelationshipImpactAlgorithm = "graphrag-impact-tree-v1"
 	GraphBranchComparisonAlgorithm   = "graphrag-branch-structure-tree-v1"
 	GraphAncestorFrontierAlgorithm   = "graphrag-ancestor-frontier-tree-v1"
+	GraphSourceDependencyAlgorithm   = "graphrag-source-dependency-neighborhood-v1"
 	GraphDefaultDepth                = 2
 	GraphMaxDepth                    = 3
 	GraphMaxPaths                    = 5
@@ -50,6 +52,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationRelationshipImpact: {},
 	GraphOperationBranchComparison:   {},
 	GraphOperationAncestorFrontier:   {},
+	GraphOperationSourceDependency:   {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -184,6 +187,8 @@ func validateGraphEndpointCombination(input QueryInput) error {
 	case GraphOperationBranchComparison:
 		return ErrValidation
 	case GraphOperationAncestorFrontier:
+		return ErrValidation
+	case GraphOperationSourceDependency:
 		return ErrValidation
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
@@ -352,6 +357,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationAncestorFrontier {
 		return GraphAncestorFrontierAlgorithm
 	}
+	if operation == GraphOperationSourceDependency {
+		return GraphSourceDependencyAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -375,6 +383,12 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 	}
 	if operation == GraphOperationAncestorFrontier {
 		return "إطار أسلاف محدود داخل تفسير شجرة منشورة؛ يصف البنية 방향ية ولا يثبت نسباً تاريخياً."
+	}
+	if operation == GraphOperationSourceDependency {
+		if status == "partial" {
+			return "حيّز اعتماد مصادر محدود وجزئي؛ يصف علاقات الاعتماد المرئية ولا يثبت استقلال المصدر أو صحته."
+		}
+		return "حيّز اعتماد مصادر محدود؛ يصف علاقات الاعتماد المرئية ولا يثبت استقلال المصدر أو صحته."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."

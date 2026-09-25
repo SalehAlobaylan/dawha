@@ -119,6 +119,32 @@ func (h researchHandler) ancestorFrontier(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h researchHandler) sourceDependencyNeighborhood(w http.ResponseWriter, r *http.Request) {
+	if h.Service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "research service is not configured"})
+		return
+	}
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	var input research.GraphSourceDependencyNeighborhoodInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.GraphSourceDependencyNeighborhood(r.Context(), input, actorID)
+	if err != nil {
+		if h.Logger != nil {
+			h.Logger.Error("source dependency neighborhood failed", "error", err)
+		}
+		writeResearchError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h researchHandler) workspace(w http.ResponseWriter, r *http.Request) {
 	if h.Service == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "research service is not configured"})

@@ -40,10 +40,11 @@ type ResearchRunContext struct {
 
 type ResearchRunDetail struct {
 	ResearchRunSummary
-	Contexts         []ResearchRunContext                  `json:"contexts"`
-	GraphPaths       []GraphPath                           `json:"graphPaths"`
-	Comparison       *GraphBranchStructureComparisonResult `json:"comparison,omitempty"`
-	AncestorFrontier *GraphAncestorFrontierSummary         `json:"ancestorFrontier,omitempty"`
+	Contexts                     []ResearchRunContext                      `json:"contexts"`
+	GraphPaths                   []GraphPath                               `json:"graphPaths"`
+	Comparison                   *GraphBranchStructureComparisonResult     `json:"comparison,omitempty"`
+	AncestorFrontier             *GraphAncestorFrontierSummary             `json:"ancestorFrontier,omitempty"`
+	SourceDependencyNeighborhood *GraphSourceDependencyNeighborhoodSummary `json:"sourceDependencyNeighborhood,omitempty"`
 }
 
 type historyExecutor interface {
@@ -114,6 +115,7 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 	graphPaths := make([]GraphPath, 0)
 	var comparison *GraphBranchStructureComparisonResult
 	var ancestorFrontier *GraphAncestorFrontierSummary
+	var sourceDependencyNeighborhood *GraphSourceDependencyNeighborhoodSummary
 	if includeAnswer {
 		contexts, err = runContexts(ctx, s.Pool, runUUID)
 		if err != nil {
@@ -141,8 +143,23 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 		if err != nil {
 			return ResearchRunDetail{}, err
 		}
+		if graphPathsContainOperation(graphPaths, GraphOperationSourceDependency) {
+			sourceDependencyNeighborhood, err = runGraphSourceDependencyNeighborhood(ctx, s.Pool, runUUID)
+			if err != nil {
+				return ResearchRunDetail{}, err
+			}
+		}
 	}
-	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths, Comparison: comparison, AncestorFrontier: ancestorFrontier}, nil
+	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths, Comparison: comparison, AncestorFrontier: ancestorFrontier, SourceDependencyNeighborhood: sourceDependencyNeighborhood}, nil
+}
+
+func graphPathsContainOperation(paths []GraphPath, operation string) bool {
+	for _, path := range paths {
+		if path.Operation == operation {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) filterResearchRunSummaries(ctx context.Context, actorID string, summaries []ResearchRunSummary) ([]ResearchRunSummary, error) {
@@ -230,6 +247,61 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 			return false, nil
 		}
 	}
+	sourceGraphRows, err := executor.Query(ctx, `
+		SELECT DISTINCT identifier
+		FROM (
+			SELECT node->>'id' AS identifier
+			FROM research_graph_paths rgp
+			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rgp.nodes, '[]'::jsonb)) node
+			WHERE rgp.run_id = $1 AND rgp.operation = $2
+			UNION
+			SELECT edge.from_node_id::text
+			FROM research_graph_edges edge
+			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
+			WHERE edge.run_id = $1 AND rgp.operation = $2
+			UNION
+			SELECT edge.to_node_id::text
+			FROM research_graph_edges edge
+			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
+			WHERE edge.run_id = $1 AND rgp.operation = $2
+			UNION
+			SELECT neighborhood.root_source_id::text
+			FROM research_graph_source_dependency_neighborhoods neighborhood
+			WHERE neighborhood.run_id = $1
+			UNION
+			SELECT context.scope_id::text
+			FROM research_run_contexts context
+			JOIN research_runs run ON run.id = context.run_id
+			WHERE context.run_id = $1 AND context.scope_type = 'source' AND run.graph_operation = $2
+		) identifiers
+		WHERE identifier IS NOT NULL
+	`, runID, GraphOperationSourceDependency)
+	if err != nil {
+		return false, err
+	}
+	graphSourceIDs := make([]uuid.UUID, 0)
+	for sourceGraphRows.Next() {
+		var sourceID string
+		if err := sourceGraphRows.Scan(&sourceID); err != nil {
+			sourceGraphRows.Close()
+			return false, err
+		}
+		graphSourceIDs = append(graphSourceIDs, optionalUUID(sourceID))
+	}
+	if err := sourceGraphRows.Err(); err != nil {
+		sourceGraphRows.Close()
+		return false, err
+	}
+	sourceGraphRows.Close()
+	for _, sourceID := range graphSourceIDs {
+		allowed, accessErr := canViewPersistedPublicSource(ctx, executor, sourceID)
+		if accessErr != nil {
+			return false, accessErr
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
 	return true, nil
 }
 
@@ -250,6 +322,15 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 				return nil, err
 			}
 			if !allowed {
+				continue
+			}
+		}
+		if path.Operation == GraphOperationSourceDependency {
+			visible, err := graphSourceDependencyPathVisible(ctx, s.Pool, path)
+			if err != nil {
+				return nil, err
+			}
+			if !visible {
 				continue
 			}
 		}
@@ -299,12 +380,53 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 	return filtered, nil
 }
 
+func graphSourceDependencyPathVisible(ctx context.Context, executor historyExecutor, path GraphPath) (bool, error) {
+	sourceSet := make(map[uuid.UUID]struct{}, len(path.Nodes)+len(path.Edges))
+	add := func(value string) bool {
+		sourceID := optionalUUID(value)
+		if sourceID == uuid.Nil {
+			return false
+		}
+		sourceSet[sourceID] = struct{}{}
+		return true
+	}
+	for _, node := range path.Nodes {
+		if node.Type == "source" && !add(node.ID) {
+			return false, nil
+		}
+	}
+	for _, edge := range path.Edges {
+		if !add(edge.FromNodeID) || !add(edge.ToNodeID) {
+			return false, nil
+		}
+	}
+	for sourceID := range sourceSet {
+		allowed, err := canViewPersistedPublicSource(ctx, executor, sourceID)
+		if err != nil {
+			return false, err
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func canViewPersistedSource(ctx context.Context, executor historyExecutor, sourceID, actorID uuid.UUID) (bool, error) {
 	if sourceID == uuid.Nil {
 		return false, nil
 	}
 	var allowed bool
 	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND (s.visibility = 'public' OR s.created_by = $2 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))))`, sourceID, actorID).Scan(&allowed)
+	return allowed, err
+}
+
+func canViewPersistedPublicSource(ctx context.Context, executor historyExecutor, sourceID uuid.UUID) (bool, error) {
+	if sourceID == uuid.Nil {
+		return false, nil
+	}
+	var allowed bool
+	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND s.visibility = 'public')`, sourceID).Scan(&allowed)
 	return allowed, err
 }
 

@@ -361,7 +361,7 @@ function graphNodeLabel(path: GraphPath, nodeId: string): string {
 }
 
 function graphOperationLabel(operation: GraphOperation): string {
-  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", relationship_impact: "أثر العلاقة على الأبناء", branch_structure_comparison: "مقارنة بنية الفروع", ancestor_frontier: "إطار الأسلاف", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", relationship_impact: "أثر العلاقة على الأبناء", branch_structure_comparison: "مقارنة بنية الفروع", ancestor_frontier: "إطار الأسلاف", source_dependency_neighborhood: "حيّز اعتماد المصادر", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
   return labels[operation];
 }
 

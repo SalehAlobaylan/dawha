@@ -711,6 +711,21 @@ type ResearchGraphPathEvidence struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ResearchGraphSourceDependencyNeighborhood struct {
+	RunID              pgtype.UUID
+	PathID             pgtype.UUID
+	RootSourceID       pgtype.UUID
+	AlgorithmVersion   string
+	InputFingerprint   string
+	EdgeSetFingerprint string
+	Limits             []byte
+	Summary            []byte
+	Status             string
+	Truncated          bool
+	TruncationReasons  []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ResearchQuestionCandidate struct {
 	ID                     pgtype.UUID
 	RunID                  pgtype.UUID

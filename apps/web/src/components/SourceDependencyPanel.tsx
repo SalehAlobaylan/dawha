@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, RefreshCw, ShieldAlert, X } from "lucide-react";
-import { FormEvent, useState } from "react";
-import { ApiError, createSourceDependency, detectSourceDependencies, fetchSourceDependencies, reviewSourceDependency } from "../lib/api";
+import { FormEvent, useEffect, useState } from "react";
+import { ApiError, createSourceDependency, detectSourceDependencies, fetchSourceDependencies, queryGraphSourceDependencyNeighborhood, reviewSourceDependency } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
-import type { CreateSourceDependencyInput, SourceDependency, SourceDependencyGraph, SourceDependencyType, SourceMetadata } from "../types";
+import type { CreateSourceDependencyInput, GraphSourceDependencyNeighborhoodResult, SourceDependency, SourceDependencyGraph, SourceDependencyType, SourceMetadata } from "../types";
 
 interface SourceDependencyPanelProps {
   source: SourceMetadata;
@@ -18,6 +18,8 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
   const [evidence, setEvidence] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
+  const [neighborhood, setNeighborhood] = useState<GraphSourceDependencyNeighborhoodResult | null>(null);
+  useEffect(() => setNeighborhood(null), [source.id, source.visibility]);
   const graphQuery = useQuery({
     queryKey: ["source-dependencies", source.id],
     queryFn: () => fetchSourceDependencies(source.id),
@@ -27,6 +29,7 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
   const refresh = async (graph: SourceDependencyGraph, successMessage: string) => {
     queryClient.setQueryData(["source-dependencies", source.id], graph);
     setMessage(successMessage);
+    setNeighborhood(null);
     setEvidence("");
     setReviewNotes({});
     await queryClient.invalidateQueries({ queryKey: ["source", source.id] });
@@ -42,6 +45,18 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
     mutationFn: () => detectSourceDependencies(source.id),
     onSuccess: (graph) => refresh(graph, `اكتمل الفحص: ${graph.detectedCount} مرشحة جديدة.`),
     onError: (error) => setMessage(errorMessage(error)),
+  });
+  const neighborhoodMutation = useMutation({
+    mutationFn: () => queryGraphSourceDependencyNeighborhood({ source_id: source.id, max_depth: 2 }),
+    onSuccess: (result) => {
+      if (result.summary.rootSourceId !== source.id) return;
+      setNeighborhood(result);
+      setMessage("اكتمل حيّز الاعتماد المرئي ضمن الحدود المحددة.");
+    },
+    onError: (error) => {
+      setNeighborhood(null);
+      setMessage(errorMessage(error));
+    },
   });
   const reviewMutation = useMutation({
     mutationFn: ({ dependencyID, decision }: { dependencyID: string; decision: "confirmed" | "rejected" }) => reviewSourceDependency(dependencyID, { decision, note_ar: reviewNotes[dependencyID] || undefined }),
@@ -64,9 +79,14 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
           <h3>هل يعمل هذا المصدر مستقلاً؟</h3>
           <p>العلاقة إشارة تحتاج مراجعة، وليست حكماً على صحة المصدر.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => detectMutation.mutate()} disabled={detectMutation.isPending}>
-          <RefreshCw size={14} /> {detectMutation.isPending ? "جارٍ الفحص…" : "فحص التشابه"}
-        </button>
+        <div className="source-dependency-head-actions">
+          <button className="secondary-button" type="button" onClick={() => neighborhoodMutation.mutate()} disabled={source.visibility !== "public" || neighborhoodMutation.isPending}>
+            {source.visibility !== "public" ? "المصدر غير مرئي" : neighborhoodMutation.isPending ? "جارٍ الاستكشاف…" : "استكشف الحيّز"}
+          </button>
+          <button className="secondary-button" type="button" onClick={() => detectMutation.mutate()} disabled={detectMutation.isPending}>
+            <RefreshCw size={14} /> {detectMutation.isPending ? "جارٍ الفحص…" : "فحص التشابه"}
+          </button>
+        </div>
       </div>
       {message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}
       {graphQuery.error ? <div className="evidence-workspace-error" role="alert">{errorMessage(graphQuery.error)}</div> : null}
@@ -76,6 +96,12 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
         <span><strong>{graph.summary.confirmed}</strong> مؤكدة</span>
         <span><strong>{graph.summary.independentSourceCount}</strong> مصدر غير مرتبط مباشرة</span>
       </div>
+      {neighborhood && neighborhood.summary.rootSourceId === source.id && source.visibility === "public" ? <div className="source-dependency-neighborhood">
+        <div className="source-dependency-neighborhood-summary"><strong>حيّز الاعتماد المرئي</strong><span>{neighborhood.summary.boundedUpstreamSourceCount} مصدر أعلى</span><span>{neighborhood.summary.boundedEdgeCount} علاقة</span><span>عمق {neighborhood.summary.maxDepthReached}</span><span>{neighborhood.summary.status === "structural" ? "بنيوي" : "جزئي"}</span></div>
+        <p>يعرض هذا الحيّز علاقات الاعتماد النشطة فقط؛ لا يثبت استقلال المصدر أو صحته.</p>
+        {neighborhood.summary.truncated || neighborhood.summary.cycleDetected ? <div className="source-dependency-neighborhood-warning" role="status">{neighborhood.summary.truncated ? `تم اقتطاع الحيّز: ${neighborhood.summary.truncationReasons.join("، ")}.` : ""}{neighborhood.summary.truncated && neighborhood.summary.cycleDetected ? " " : ""}{neighborhood.summary.cycleDetected ? "رُصدت دورة داخل النطاق المرئي." : ""}</div> : null}
+        <details><summary>المصادر والحواف</summary><div className="source-dependency-neighborhood-list">{neighborhood.path.nodes.map((node) => <span key={node.id}>{node.id.slice(0, 8)} · عمق {node.depth ?? 0}</span>)}{neighborhood.path.edges.map((edge) => <span key={edge.id}>{edge.fromNodeId.slice(0, 8)} → {edge.toNodeId.slice(0, 8)} · {edge.predicate || "علاقة"} · {edge.status || "غير مصنفة"}</span>)}</div></details>
+      </div> : null}
       <form className="source-dependency-form" onSubmit={submit}>
         <label className="composer-label">المصدر المرتبط<select required value={targetSourceID} onChange={(event) => setTargetSourceID(event.target.value)}><option value="">اختر مصدراً</option>{targets.map((item) => <option value={item.id} key={item.id}>{item.titleAr}</option>)}</select></label>
         <label className="composer-label">نوع العلاقة<select value={dependencyType} onChange={(event) => setDependencyType(event.target.value as SourceDependencyType)}><option value="cites">يستشهد به</option><option value="derived_from">مشتق منه</option><option value="likely_paraphrase"> إعادة صياغة محتملة</option><option value="shared_origin">أصل مشترك</option><option value="unknown">غير محدد</option></select></label>

@@ -455,7 +455,7 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
-export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison" | "ancestor_frontier";
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison" | "ancestor_frontier" | "source_dependency_neighborhood";
 
 export interface GraphTreeScope {
   treeId?: string;
@@ -698,6 +698,54 @@ export interface GraphAncestorFrontierResult {
   structuralOnly: boolean;
   limits: GraphAncestorFrontierLimits;
   summary: GraphAncestorFrontierSummary;
+  path: GraphPath;
+}
+
+export interface GraphSourceDependencyNeighborhoodInput {
+  source_id: string;
+  max_depth?: number;
+}
+
+export interface GraphSourceDependencyNeighborhoodLimits {
+  maxDepth: number;
+  maxNodes: number;
+  maxEdges: number;
+}
+
+export interface GraphSourceDependencyDepthCount {
+  depth: number;
+  count: number;
+}
+
+export interface GraphSourceDependencyStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface GraphSourceDependencyNeighborhoodSummary {
+  rootSourceId: string;
+  pathId: string;
+  inputFingerprint: string;
+  edgeSetFingerprint: string;
+  boundedUpstreamSourceCount: number;
+  boundedEdgeCount: number;
+  maxDepthReached: number;
+  nodesByDepth: GraphSourceDependencyDepthCount[];
+  edgeStatusCounts: GraphSourceDependencyStatusCount[];
+  truncated: boolean;
+  truncationReasons: string[];
+  cycleDetected: boolean;
+  status: string;
+}
+
+export interface GraphSourceDependencyNeighborhoodResult {
+  runId: string;
+  createdAt: string;
+  operation: GraphOperation;
+  algorithmVersion: string;
+  structuralOnly: boolean;
+  limits: GraphSourceDependencyNeighborhoodLimits;
+  summary: GraphSourceDependencyNeighborhoodSummary;
   path: GraphPath;
 }
 
@@ -982,6 +1030,7 @@ export interface ResearchRunDetail extends ResearchRunSummary {
   graphPaths: GraphPath[];
   comparison?: GraphBranchStructureComparisonResult;
   ancestorFrontier?: GraphAncestorFrontierSummary;
+  sourceDependencyNeighborhood?: GraphSourceDependencyNeighborhoodSummary;
 }
 
 export interface ResearchWorkspaceSnapshot {
