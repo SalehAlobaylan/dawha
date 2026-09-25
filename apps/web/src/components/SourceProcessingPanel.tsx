@@ -11,6 +11,22 @@ interface SourceProcessingPanelProps {
   sourceTitle: string;
 }
 
+// The same format matrix the API enforces: text plus JSON and XML. The API
+// refuses anything else with the same list, so this copy is the pre-upload
+// version of the answer the caller would otherwise get after a failed upload.
+const SUPPORTED_UPLOAD_MEDIA_TYPES = ["text/*", "application/json", "application/xml"];
+const SUPPORTED_UPLOAD_ACCEPT = "text/*,.txt,.md,.json,.xml,application/json,application/xml";
+const SUPPORTED_UPLOAD_HINT = "الصيغ المدعومة: نص (text/*) وملفات JSON و XML بترميز UTF-8. صيغ PDF والصور والصيغ الثنائية غير مدعومة في هذه النسخة.";
+const UNDECLARED_UPLOAD_MEDIA_TYPE = "application/octet-stream";
+
+function isSupportedUploadType(value: string): boolean {
+  const normalized = value.split(";")[0].trim().toLowerCase();
+  if (normalized === "" || normalized === UNDECLARED_UPLOAD_MEDIA_TYPE) {
+    return true;
+  }
+  return SUPPORTED_UPLOAD_MEDIA_TYPES.some((entry) => (entry.endsWith("/*") ? normalized.startsWith(entry.slice(0, -1)) : normalized === entry));
+}
+
 export function SourceProcessingPanel({ sourceId, sourceTitle }: SourceProcessingPanelProps) {
   const queryClient = useQueryClient();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -62,7 +78,14 @@ export function SourceProcessingPanel({ sourceId, sourceTitle }: SourceProcessin
   const processing = processingQuery.data;
   const error = processingQuery.error;
   const chooseFile = (event: ChangeEvent<HTMLInputElement>) => {
-    setSelectedFile(event.target.files?.[0] ?? null);
+    const file = event.target.files?.[0] ?? null;
+    if (file && !isSupportedUploadType(file.type)) {
+      setSelectedFile(null);
+      event.target.value = "";
+      setMessage(`صيغة الملف ${file.type} غير مدعومة. ${SUPPORTED_UPLOAD_HINT}`);
+      return;
+    }
+    setSelectedFile(file);
   };
 
   return (
@@ -78,7 +101,8 @@ export function SourceProcessingPanel({ sourceId, sourceTitle }: SourceProcessin
       <div className="source-processing-upload">
         <label className="composer-label source-processing-file">
           ملف المصدر
-          <input type="file" accept=".txt,.md,.json,.xml,text/plain,text/markdown,application/json,application/xml" onChange={chooseFile} />
+          <input type="file" accept={SUPPORTED_UPLOAD_ACCEPT} onChange={chooseFile} />
+          <small>{SUPPORTED_UPLOAD_HINT}</small>
         </label>
         <button className="secondary-button" type="button" disabled={!selectedFile || uploadMutation.isPending} onClick={() => uploadMutation.mutate()}>
           <Upload size={15} /> {uploadMutation.isPending ? "جارٍ الرفع…" : "رفع ومعالجة"}
@@ -102,7 +126,7 @@ function ProcessingSummary({ processing, reviewPending, reviewNote, setReviewNot
         {latestRun?.error ? <p className="source-processing-error">{latestRun.error}</p> : null}
       </div>
       <label className="composer-label source-review-note">ملاحظة القرار<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={2} placeholder="اختياري: سبب القبول أو الرفض" /></label>
-      {processing.files.length > 0 ? <div className="source-processing-files">{processing.files.map((file) => <div className="source-processing-file" key={file.id}><span>{file.originalFilenameAr}</span><StatusBadge tone={file.processingStatus === "failed" ? "disputed" : "source"}>{file.processingStatus === "succeeded" ? "اكتملت" : file.processingStatus === "failed" ? "فشلت" : "قيد المعالجة"}</StatusBadge></div>)}</div> : null}
+      {processing.files.length > 0 ? <div className="source-processing-files">{processing.files.map((file) => <div className="source-processing-file" key={file.id}><div><span>{file.originalFilenameAr}</span>{file.processingError ? <p className="source-processing-error">{file.processingError}</p> : null}</div><StatusBadge tone={file.processingStatus === "failed" ? "disputed" : "source"}>{file.processingStatus === "succeeded" ? "اكتملت" : file.processingStatus === "failed" ? "فشلت" : "قيد المعالجة"}</StatusBadge></div>)}</div> : null}
       {processing.candidates.length > 0 ? <div className="source-candidate-list">{processing.candidates.map((candidate) => <CandidateRow candidate={candidate} key={candidate.id} reviewPending={reviewPending} onReview={onReview} />)}</div> : latestRun?.status === "succeeded" ? <p className="evidence-empty">اكتملت المعالجة دون استخراج مرشحين.</p> : null}
     </div>
   );

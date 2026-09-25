@@ -2,6 +2,7 @@ package sourceprocessing
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -44,8 +45,36 @@ func TestTextExtractorRejectsUnsupportedContent(t *testing.T) {
 		ContentType: "application/pdf",
 		Filename:    "source.pdf",
 	})
-	if err != ErrUnsupportedDocument {
+	if !errors.Is(err, ErrUnsupportedDocument) {
 		t.Fatalf("error = %v, want ErrUnsupportedDocument", err)
+	}
+	if !errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("error = %v, want the shared format contract error", err)
+	}
+	if !strings.Contains(err.Error(), "text/*") {
+		t.Fatalf("error %q does not name the supported formats", err)
+	}
+}
+
+func TestTextExtractorRejectsContentThatIsNotUTF8Text(t *testing.T) {
+	_, err := NewTextExtractor().Extract(context.Background(), ExtractInput{
+		Reader:      strings.NewReader(string([]byte{0xff, 0xfe, 0xfd})),
+		ContentType: "text/plain",
+		Filename:    "source.txt",
+	})
+	if !errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("error = %v, want ErrUnsupportedContent", err)
+	}
+}
+
+func TestTextExtractorReportsAnOversizedDocumentAsValidation(t *testing.T) {
+	_, err := (&TextExtractor{MaxBytes: 4}).Extract(context.Background(), ExtractInput{
+		Reader:      strings.NewReader("12345"),
+		ContentType: "text/plain",
+		Filename:    "source.txt",
+	})
+	if err != ErrValidation {
+		t.Fatalf("error = %v, want ErrValidation", err)
 	}
 }
 
