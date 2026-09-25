@@ -60,9 +60,6 @@ func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
 	if s == nil || s.Pool == nil || s.Store == nil || s.Extractor == nil {
 		return ErrDatabaseUnavailable
 	}
-	if s.AI == nil {
-		return ErrAIUnavailable
-	}
 	payload, err := parseJobPayload(job.Payload)
 	if err != nil {
 		return err
@@ -76,6 +73,15 @@ func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
 	}
 	if file.Status == "succeeded" || file.RunStatus == "succeeded" {
 		return nil
+	}
+	// A file queued before the format contract tightened is refused here, before
+	// it is claimed, read, or sent to the model: the outcome is the same on every
+	// attempt and the run can never reach a succeeded state.
+	if !IsSupportedContentType(file.MimeType) {
+		return s.failProcessing(ctx, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q uses a format that cannot be extracted", normalizeContentType(file.MimeType))))
+	}
+	if s.AI == nil {
+		return ErrAIUnavailable
 	}
 	claimTag, err := s.Pool.Exec(ctx, `
 		UPDATE source_processing_runs
@@ -411,8 +417,10 @@ func (s *Service) failProcessing(ctx context.Context, runID, fileID uuid.UUID, c
 
 func safeProcessingError(cause error) string {
 	switch {
+	case errors.Is(cause, ErrUnsupportedContent):
+		return cause.Error()
 	case errors.Is(cause, ErrUnsupportedDocument):
-		return "unsupported document format"
+		return UnsupportedFormatSummary()
 	case errors.Is(cause, ai.ErrValidation):
 		return "AI response validation failed"
 	default:

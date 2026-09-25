@@ -2,6 +2,7 @@ package sourceprocessing
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -17,8 +18,11 @@ func NewTextExtractor() *TextExtractor {
 }
 
 func (e *TextExtractor) Extract(ctx context.Context, input ExtractInput) ([]Page, error) {
-	if e == nil || input.Reader == nil || !isTextContentType(input.ContentType) {
+	if e == nil || input.Reader == nil {
 		return nil, ErrUnsupportedDocument
+	}
+	if !IsSupportedContentType(input.ContentType) {
+		return nil, unsupportedContent(fmt.Sprintf("the stored content type %q cannot be extracted", normalizeContentType(input.ContentType)))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -31,8 +35,11 @@ func (e *TextExtractor) Extract(ctx context.Context, input ExtractInput) ([]Page
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > maxBytes || !utf8.Valid(data) {
-		return nil, ErrUnsupportedDocument
+	if int64(len(data)) > maxBytes {
+		return nil, ErrValidation
+	}
+	if !utf8.Valid(data) {
+		return nil, unsupportedContent("the stored content is not valid UTF-8 text")
 	}
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
@@ -64,11 +71,6 @@ func (e *TextExtractor) Extract(ctx context.Context, input ExtractInput) ([]Page
 		return nil, ErrValidation
 	}
 	return pages, nil
-}
-
-func isTextContentType(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
-	return strings.HasPrefix(value, "text/") || value == "application/json" || value == "application/xml"
 }
 
 func pageCount(pages []Page) int {

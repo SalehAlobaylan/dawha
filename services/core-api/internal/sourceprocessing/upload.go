@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -134,23 +135,113 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 
 func validateUploadInput(input UploadInput) (UploadInput, error) {
 	input.Filename = strings.TrimSpace(input.Filename)
-	input.ContentType = strings.ToLower(strings.TrimSpace(strings.Split(input.ContentType, ";")[0]))
-	if input.Filename == "" || !utf8.ValidString(input.Filename) || len([]rune(input.Filename)) > 255 || len(input.Content) == 0 || int64(len(input.Content)) > MaxUploadBytes || !allowedContentType(input.ContentType) {
+	if input.Filename == "" || !utf8.ValidString(input.Filename) || len([]rune(input.Filename)) > 255 || len(input.Content) == 0 || int64(len(input.Content)) > MaxUploadBytes {
 		return UploadInput{}, ErrValidation
 	}
+	contentType, err := resolveContentType(input.ContentType, input.Content)
+	if err != nil {
+		return UploadInput{}, err
+	}
+	input.ContentType = contentType
 	return input, nil
 }
 
-func allowedContentType(value string) bool {
-	if strings.HasPrefix(value, "text/") || value == "application/json" || value == "application/xml" {
-		return true
+// V1 source format contract. The extraction worker reads text only, so the
+// accepted matrix is text plus the two structured text formats, and the API,
+// the worker, the error copy, and the UI copy all read it from here. Adding a
+// format means adding an extractor, not a row.
+var supportedContentTypes = []string{"text/*", "application/json", "application/xml"}
+
+// undeclaredContentType is what a multipart part carries when the client does
+// not name a format. It carries no claim to verify, so the bytes decide.
+const undeclaredContentType = "application/octet-stream"
+
+// ErrUnsupportedContent marks an upload that falls outside the format contract.
+// It is never returned for a supported format, whatever the file contains.
+var ErrUnsupportedContent = errors.New("source upload format is not supported")
+
+// UnsupportedContentError explains which format was refused and why, and always
+// names the formats a caller may send instead.
+type UnsupportedContentError struct {
+	Reason string
+}
+
+func (e *UnsupportedContentError) Error() string {
+	reason := e.Reason
+	if strings.TrimSpace(reason) == "" {
+		reason = "the file format is not supported"
 	}
-	switch value {
-	case "application/pdf", "application/octet-stream", "image/jpeg", "image/png", "image/tiff":
-		return true
-	default:
+	return reason + "; supported formats: " + strings.Join(SupportedContentTypes(), ", ")
+}
+
+func (e *UnsupportedContentError) Is(target error) bool {
+	return target == ErrUnsupportedContent || target == ErrUnsupportedDocument
+}
+
+// SupportedContentTypes is the caller-facing matrix, used for the error payload
+// and for the sentence that tells a refused caller what to send instead.
+func SupportedContentTypes() []string {
+	return append([]string(nil), supportedContentTypes...)
+}
+
+// IsSupportedContentType is the single decision on whether a media type is
+// inside the contract, shared by the upload boundary and the extractor.
+func IsSupportedContentType(value string) bool {
+	normalized := normalizeContentType(value)
+	if normalized == "" {
 		return false
 	}
+	for _, supported := range supportedContentTypes {
+		if strings.HasSuffix(supported, "/*") {
+			if strings.HasPrefix(normalized, strings.TrimSuffix(supported, "*")) {
+				return true
+			}
+			continue
+		}
+		if normalized == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func unsupportedContent(reason string) error {
+	return &UnsupportedContentError{Reason: reason}
+}
+
+// UnsupportedFormatSummary is the shared sentence for a refused format that has
+// no more specific reason to give.
+func UnsupportedFormatSummary() string {
+	return (&UnsupportedContentError{}).Error()
+}
+
+// resolveContentType settles the media type of an upload without trusting the
+// caller alone. An undeclared type is read from the content, and a declaration
+// that contradicts the content is refused rather than stored.
+func resolveContentType(declared string, content []byte) (string, error) {
+	normalized := normalizeContentType(declared)
+	detected := normalizeContentType(http.DetectContentType(content))
+	effective := normalized
+	if effective == "" || effective == undeclaredContentType {
+		effective = detected
+	}
+	if !IsSupportedContentType(effective) {
+		if normalized == "" || normalized == undeclaredContentType {
+			return "", unsupportedContent(fmt.Sprintf("the file content is detected as %q", effective))
+		}
+		return "", unsupportedContent(fmt.Sprintf("the declared content type %q is not accepted", effective))
+	}
+	if !IsSupportedContentType(detected) {
+		return "", unsupportedContent(fmt.Sprintf("the declared content type %q contradicts the detected content type %q", effective, detected))
+	}
+	if !utf8.Valid(content) {
+		return "", unsupportedContent(fmt.Sprintf("the content type %q does not carry valid UTF-8 text", effective))
+	}
+	return effective, nil
+}
+
+func normalizeContentType(value string) string {
+	return strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
 }
 
 func safeFilename(value string) string {

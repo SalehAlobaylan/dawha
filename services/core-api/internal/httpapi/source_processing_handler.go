@@ -38,13 +38,9 @@ func (h sourceProcessingHandler) uploadFile(w http.ResponseWriter, r *http.Reque
 		writeSourceProcessingError(w, sourceprocessing.ErrValidation)
 		return
 	}
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = http.DetectContentType(content)
-	}
 	result, err := h.Service.Upload(r.Context(), r.PathValue("sourceID"), user.ID, sourceprocessing.UploadInput{
 		Filename:    header.Filename,
-		ContentType: contentType,
+		ContentType: header.Header.Get("Content-Type"),
 		Content:     content,
 	})
 	if err != nil {
@@ -97,7 +93,24 @@ func (h sourceProcessingHandler) requireUser(w http.ResponseWriter, r *http.Requ
 	return user, true
 }
 
+// unsupportedSourceFormatResponse is the 415 body: a sentence for the person
+// reading it and the accepted matrix for a client that wants to self-correct.
+type unsupportedSourceFormatResponse struct {
+	Error                 string   `json:"error"`
+	Code                  string   `json:"code"`
+	SupportedContentTypes []string `json:"supportedContentTypes"`
+}
+
 func writeSourceProcessingError(w http.ResponseWriter, err error) {
+	var unsupported *sourceprocessing.UnsupportedContentError
+	if errors.As(err, &unsupported) || errors.Is(err, sourceprocessing.ErrUnsupportedDocument) {
+		writeJSON(w, http.StatusUnsupportedMediaType, unsupportedSourceFormatResponse{
+			Error:                 err.Error(),
+			Code:                  "unsupported_source_format",
+			SupportedContentTypes: sourceprocessing.SupportedContentTypes(),
+		})
+		return
+	}
 	status := http.StatusInternalServerError
 	message := "source processing operation failed"
 	switch {
