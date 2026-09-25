@@ -214,6 +214,12 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 		}
 		actorUUID = parsed
 	}
+	// The policy is resolved once and reused for every tree and source in the run so
+	// the all-or-nothing walk costs one role lookup instead of one per resource.
+	policy, err := resolveResearchScope(ctx, executor, actorUUID)
+	if err != nil {
+		return false, err
+	}
 	treeRows, err := executor.Query(ctx, `SELECT DISTINCT tree_id::text FROM research_graph_paths WHERE run_id = $1 AND tree_id IS NOT NULL`, runID)
 	if err != nil {
 		return false, err
@@ -233,7 +239,8 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 	}
 	treeRows.Close()
 	for _, treeID := range treeIDs {
-		allowed, accessErr := s.canViewPersistedTreeWithExecutor(ctx, executor, treeID, actorUUID)
+		access, accessErr := policy.Tree(ctx, executor, treeID)
+		allowed := access.Allowed()
 		if accessErr != nil {
 			return false, accessErr
 		}
@@ -260,7 +267,8 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 	}
 	sourceRows.Close()
 	for _, sourceID := range sourceIDs {
-		allowed, accessErr := canViewPersistedSource(ctx, executor, sourceID, actorUUID)
+		access, accessErr := policy.Source(ctx, executor, sourceID)
+		allowed := access.Allowed()
 		if accessErr != nil {
 			return false, accessErr
 		}
@@ -339,13 +347,19 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 		}
 		actorUUID = parsed
 	}
+	// Resolved once so walking the paths does not repeat the role lookup per edge.
+	policy, err := resolveResearchScope(ctx, s.Pool, actorUUID)
+	if err != nil {
+		return nil, err
+	}
 	filtered := make([]GraphPath, 0, len(paths))
 	for _, path := range paths {
 		if path.TreeScope.TreeID != "" {
-			allowed, err := s.canViewPersistedTree(ctx, optionalUUID(path.TreeScope.TreeID), actorUUID)
+			access, err := policy.Tree(ctx, s.Pool, optionalUUID(path.TreeScope.TreeID))
 			if err != nil {
 				return nil, err
 			}
+			allowed := access.Allowed()
 			if !allowed {
 				continue
 			}
@@ -363,10 +377,11 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 			if path.Edges[index].SourceID == "" {
 				continue
 			}
-			allowed, err := canViewPersistedSource(ctx, s.Pool, optionalUUID(path.Edges[index].SourceID), actorUUID)
+			access, err := policy.Source(ctx, s.Pool, optionalUUID(path.Edges[index].SourceID))
 			if err != nil {
 				return nil, err
 			}
+			allowed := access.Allowed()
 			if !allowed {
 				path.Edges[index].SourceID = ""
 			}
@@ -374,10 +389,11 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 		keptEvidence := make([]GraphEvidenceRef, 0, len(path.EvidenceRefs))
 		for _, evidence := range path.EvidenceRefs {
 			if evidence.SourceID != "" {
-				allowed, err := canViewPersistedSource(ctx, s.Pool, optionalUUID(evidence.SourceID), actorUUID)
+				access, err := policy.Source(ctx, s.Pool, optionalUUID(evidence.SourceID))
 				if err != nil {
 					return nil, err
 				}
+				allowed := access.Allowed()
 				if !allowed {
 					if graphEvidenceIsDirect(evidence) {
 						continue
@@ -437,18 +453,6 @@ func graphSourceDependencyPathVisible(ctx context.Context, executor historyExecu
 	return true, nil
 }
 
-// canViewPersistedSource and canViewPersistedTree delegate to the central visibility
-// policy so research history, dictionary, search and claims agree on who may read a
-// source or a tree.
-func canViewPersistedSource(ctx context.Context, executor historyExecutor, sourceID, actorID uuid.UUID) (bool, error) {
-	policy, err := resolveResearchScope(ctx, executor, actorID)
-	if err != nil {
-		return false, err
-	}
-	access, err := policy.Source(ctx, executor, sourceID)
-	return access.Allowed(), err
-}
-
 // canViewPersistedPublicSource keeps the deliberately public source dependency graph
 // contract: a public source is readable by everyone and nothing else is.
 func canViewPersistedPublicSource(ctx context.Context, executor historyExecutor, sourceID uuid.UUID) (bool, error) {
@@ -458,19 +462,6 @@ func canViewPersistedPublicSource(ctx context.Context, executor historyExecutor,
 	var allowed bool
 	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND s.visibility = 'public')`, sourceID).Scan(&allowed)
 	return allowed, err
-}
-
-func (s *Service) canViewPersistedTree(ctx context.Context, treeID, actorID uuid.UUID) (bool, error) {
-	return s.canViewPersistedTreeWithExecutor(ctx, s.Pool, treeID, actorID)
-}
-
-func (s *Service) canViewPersistedTreeWithExecutor(ctx context.Context, executor historyExecutor, treeID, actorID uuid.UUID) (bool, error) {
-	policy, err := resolveResearchScope(ctx, executor, actorID)
-	if err != nil {
-		return false, err
-	}
-	access, err := policy.Tree(ctx, executor, treeID)
-	return access.Allowed(), err
 }
 
 // loadHistoryPolicy resolves the central policy for a history caller and maps a
