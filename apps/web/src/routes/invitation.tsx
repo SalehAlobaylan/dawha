@@ -1,13 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { ArrowLeft, Check, Link2, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import { acceptInvitation, ApiError } from "../lib/api";
 import { BrandMark } from "../components/BrandMark";
-
-type InvitationPageProps = {
-  token?: string;
-};
 
 type AcceptedInvitation = {
   invitationId: string;
@@ -16,7 +12,12 @@ type AcceptedInvitation = {
   permissionLevel: "view" | "edit" | "review";
 };
 
-export function InvitationPage({ token = "" }: InvitationPageProps) {
+export function InvitationPage() {
+  // The router renders a route component with no props, so the token is read
+  // from the route params the way routes/tree-route.tsx reads $treeId. Taking
+  // it from a prop left the button posting /api/v1/invitations//accept.
+  const { token: routeToken } = useParams({ from: "/invitation/$token" });
+  const token = routeToken.trim();
   const [accepted, setAccepted] = useState<AcceptedInvitation | null>(null);
   const acceptMutation = useMutation({
     mutationFn: () => acceptInvitation(token),
@@ -24,13 +25,17 @@ export function InvitationPage({ token = "" }: InvitationPageProps) {
   });
   const loginPath = `/login?returnTo=${encodeURIComponent(`/invitation/${token}`)}`;
   const error = acceptMutation.error;
+  // A link with no token cannot be accepted, so the page says that instead of
+  // posting an empty one and reporting the 404 that follows. The login link is
+  // the way back to the invitation, so it needs the real token to be useful.
+  const missingToken = token.length === 0;
 
   return (
     <div className="auth-page">
       <div className="auth-topline"><Link to="/" className="auth-brand"><BrandMark /><strong>دَوْحة</strong></Link><Link to="/" className="auth-back">العودة إلى المساحة</Link></div>
       <main className="auth-card invitation-card">
         <div className="auth-card-intro"><div className="eyebrow">دعوة تعاون</div><h1>مشاركة تفسير، لا حقيقة نهائية</h1><p>ستُضاف صلاحية محدودة إلى هذه الشجرة فقط، وتظل الصلاحيات القابلة للتعديل من صاحبها.</p></div>
-        {accepted ? <div className="invitation-success"><Check size={22} /><strong>قبلت الدعوة</strong><p>أصبحت «{accepted.treeName}» ضمن مساحة تعاونك بصلاحية {permissionLabel(accepted.permissionLevel)}.</p><Link className="primary-button" to="/tree/$treeId" params={{ treeId: accepted.treeId }}>فتح الشجرة <ArrowLeft size={16} /></Link></div> : <div className="invitation-action"><div className="invitation-icon"><Link2 size={22} /></div><p>تحقق من أن الرابط يخص مساحة دَوْحة، ثم اقبل الدعوة.</p>{error ? <div className="auth-message" role="alert">{error instanceof ApiError && error.status === 401 ? <>{error.message} <Link to={loginPath}>سجّل الدخول</Link></> : error.message}</div> : null}<button className="primary-button auth-submit" type="button" onClick={() => acceptMutation.mutate()} disabled={acceptMutation.isPending}>{acceptMutation.isPending ? <LoaderCircle className="spin" size={16} /> : <Link2 size={16} />} {acceptMutation.isPending ? "جارٍ التحقق…" : "قبول الدعوة"}</button></div>}
+        {accepted ? <div className="invitation-success"><Check size={22} /><strong>قبلت الدعوة</strong><p>أصبحت «{accepted.treeName}» ضمن مساحة تعاونك بصلاحية {permissionLabel(accepted.permissionLevel)}.</p><Link className="primary-button" to="/tree/$treeId" params={{ treeId: accepted.treeId }}>فتح الشجرة <ArrowLeft size={16} /></Link></div> : <div className="invitation-action"><div className="invitation-icon"><Link2 size={22} /></div><p>تحقق من أن الرابط يخص مساحة دَوْحة، ثم اقبل الدعوة.</p>{missingToken ? <div className="auth-message" role="alert">هذا الرابط لا يحمل رمز دعوة. اطلب من صاحب الشجرة دعوة جديدة.</div> : <>{error ? <div className="auth-message" role="alert">{error instanceof ApiError && error.status === 401 ? <>{error.message} <Link to={loginPath}>سجّل الدخول</Link></> : error.message}</div> : null}<button className="primary-button auth-submit" type="button" onClick={() => acceptMutation.mutate()} disabled={acceptMutation.isPending}>{acceptMutation.isPending ? <LoaderCircle className="spin" size={16} /> : <Link2 size={16} />} {acceptMutation.isPending ? "جارٍ التحقق…" : "قبول الدعوة"}</button></>}</div>}
       </main>
       <div className="auth-bottom"><span>الصلاحية محصورة بالشجرة</span><span>الدعوة قابلة للإلغاء</span></div>
     </div>

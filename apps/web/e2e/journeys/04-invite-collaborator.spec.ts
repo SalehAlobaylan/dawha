@@ -1,16 +1,16 @@
 import { expect, test } from "@playwright/test";
 
-import { newAccount, registerThroughApi, registerThroughUi, waitForApi } from "../fixtures";
+import { loginThroughUi, newAccount, registerThroughApi, registerThroughUi, waitForApi, WEB_ORIGIN } from "../fixtures";
 import { publishedTree } from "../tree-journey";
 
 /**
  * Journey 4 of the declared V1 list: invite a collaborator.
  *
- * The acceptance half of the journey - following the one-time link as the
- * invited researcher - is currently a fixme, and the reason is in the test
- * below. It is not skipped to keep a suite green: the product cannot accept an
- * invitation through the browser at all, and the failure is recorded where the
- * next person will look for it.
+ * The acceptance half is asserted, not skipped: the guest follows the one-time
+ * link in their own browser session and accepts it there. That journey used to
+ * be a `test.fixme` because the page read its token from a prop the router never
+ * passes, so the accept button posted an empty token; the page now reads the
+ * param from the route the way routes/tree-route.tsx does.
  */
 test.describe("invite a collaborator", () => {
   test("the owner sends an addressed invitation and sees it waiting", async ({ page, request }) => {
@@ -85,29 +85,7 @@ test.describe("invite a collaborator", () => {
     expect(collaborators.collaborators).toHaveLength(0);
   });
 
-  /**
-   * The acceptance half of journey 4, blocked by a product defect rather than
-   * by the harness.
-   *
-   * Observed: opening /invitation/<token> renders the acceptance card, but
-   * clicking "قبول الدعوة" issues POST /api/v1/invitations//accept - the token
-   * is empty. The API answers 404, and the page shows the generic
-   * "تعذر إكمال العملية." The API itself is fine: the Go integration test
-   * TestInvitedCollaboratorCanEditTheDraft accepts the same token.
-   *
-   * Cause: apps/web/src/route-tree.tsx registers /invitation/$token with
-   * `component: InvitationPage`, and @tanstack/react-router renders a route
-   * component with no props (node_modules/@tanstack/react-router/dist/esm/
-   * Match.js renders `jsx(Comp, {}, key)`). InvitationPage therefore never
-   * receives its `token` prop.
-   *
-   * Smallest seam: read the param the way the rest of this codebase already
-   * does - a thin wrapper using `useParams({ from: "/invitation/$token" })`, as
-   * apps/web/src/routes/tree-route.tsx does for $treeId. That is a change to
-   * production behaviour, which plan 004 is not allowed to make, so the journey
-   * stays recorded here instead of being asserted against a workaround.
-   */
-  test.fixme("the invitation page never receives the $token param, so accepting through the UI posts an empty token", async ({ page, browser, request }) => {
+  test("the invited researcher accepts through the browser and gets the invited permission", async ({ page, browser, request }) => {
       await waitForApi(request);
       const owner = newAccount("accept-owner");
       await registerThroughUi(page, owner);
@@ -118,27 +96,49 @@ test.describe("invite a collaborator", () => {
       await page.goto(`/tree/${tree.treeId}/versions/${tree.draftVersionId}`);
       await page.getByRole("button", { name: /مشاركة/ }).click();
       await page.getByLabel("البريد الإلكتروني").fill(guest.email);
+      await page.getByLabel("الصلاحية").selectOption("edit");
       await page.getByRole("button", { name: "أنشئ الدعوة" }).click();
       const acceptLink = page.locator(".collaboration-accept-link code");
       await expect(acceptLink).toBeVisible();
       const acceptPath = (await acceptLink.innerText()).replace(/^https?:\/\/[^/]+/, "");
 
-      const guestContext = await browser.newContext();
+      // A second browser context, because the link is followed by the invitee and
+      // not by the owner: accepting under the owner's session would prove nothing
+      // about the invitation.
+      const guestContext = await browser.newContext({ baseURL: WEB_ORIGIN });
       const guestPage = await guestContext.newPage();
       try {
-        await guestPage.goto("/login");
-        await guestPage.getByLabel("البريد الإلكتروني").fill(guest.email);
-        await guestPage.getByLabel("كلمة المرور", { exact: true }).fill(guest.password);
-        await guestPage.getByRole("button", { name: /دخول إلى دَوْحة/ }).click();
-        await guestPage.waitForURL((url) => !url.pathname.startsWith("/login"));
+        await loginThroughUi(guestPage, guest);
         await guestPage.goto(acceptPath);
         await guestPage.getByRole("button", { name: /قبول الدعوة/ }).click();
+
+        // The accepted state names the tree and the permission that was granted,
+        // so "accepted" is not just a green tick.
         await expect(guestPage.getByText("قبلت الدعوة")).toBeVisible();
+        await expect(guestPage.locator(".invitation-success")).toContainText(tree.treeName);
+        await expect(guestPage.locator(".invitation-success")).toContainText("تحرير");
+
+        // And the permission is real: the guest may edit the new draft, and still
+        // may not publish it.
         await guestPage.getByRole("link", { name: /فتح الشجرة/ }).click();
         await expect(guestPage.getByRole("button", { name: /تحرير المسودة/ })).toBeEnabled();
         await expect(guestPage.getByRole("button", { name: /نشر المسودة/ })).toBeDisabled();
     } finally {
       await guestContext.close();
     }
+  });
+
+  test("an invitation link with no token is refused instead of posting an empty one", async ({ page }) => {
+    const posted: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/accept")) posted.push(request.url());
+    });
+
+    // A link that carries no token cannot be accepted, and the page says so
+    // rather than posting /api/v1/invitations//accept and reporting the 404.
+    await page.goto("/invitation/%20");
+    await expect(page.getByRole("alert")).toContainText("لا يحمل رمز دعوة");
+    await expect(page.getByRole("button", { name: /قبول الدعوة/ })).toHaveCount(0);
+    expect(posted, "the page posted an accept for a link with no token").toEqual([]);
   });
 });
