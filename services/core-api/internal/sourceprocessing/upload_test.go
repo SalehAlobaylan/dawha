@@ -2,6 +2,11 @@ package sourceprocessing
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -170,5 +175,110 @@ func TestSafeFilenameKeepsStorageKeysInsideTheSource(t *testing.T) {
 		if got := safeFilename(input); got != expected {
 			t.Fatalf("safeFilename(%q) = %q, want %q", input, got, expected)
 		}
+	}
+}
+
+// TestSourceFormatPanelMatchesTheSharedMatrix is the tie between the Go matrix
+// and the copy a user reads before choosing a file. The panel is TypeScript and
+// cannot import the Go list, so this test is what keeps the two from drifting:
+// every media type the panel advertises has to be inside the matrix, every
+// media type in the matrix has to reach the panel, and the file picker may not
+// offer an extension the extractor cannot read.
+func TestSourceFormatPanelMatchesTheSharedMatrix(t *testing.T) {
+	panel := readSourceFormatPanel(t)
+	for _, supported := range SupportedContentTypes() {
+		if !strings.Contains(panel, supported) {
+			t.Fatalf("the source processing panel never names the supported format %q", supported)
+		}
+	}
+
+	advertised := panelMediaTypes(t, panel)
+	if len(advertised) == 0 {
+		t.Fatal("the source processing panel has no media type list to check")
+	}
+	for _, mediaType := range advertised {
+		if !IsSupportedContentType(mediaType) {
+			t.Fatalf("the source processing panel advertises %q, which the format contract refuses", mediaType)
+		}
+	}
+	for _, supported := range SupportedContentTypes() {
+		if !slices.Contains(advertised, supported) {
+			t.Fatalf("the source processing panel is missing the supported format %q", supported)
+		}
+	}
+
+	accept := panelAcceptAttribute(t, panel)
+	// The rendered picker has to read the checked list, otherwise a hand-typed
+	// accept attribute is a second copy the matrix never sees.
+	if !regexp.MustCompile(`accept=\{SUPPORTED_UPLOAD_ACCEPT\}`).MatchString(panel) {
+		t.Fatal("the source file input must take its accept list from SUPPORTED_UPLOAD_ACCEPT")
+	}
+	refusedExtensions := []string{".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".gz", ".bin", ".exe", ".mp3", ".mp4"}
+	for _, entry := range strings.Split(accept, ",") {
+		entry = strings.TrimSpace(entry)
+		if !strings.HasPrefix(entry, ".") {
+			if !IsSupportedContentType(entry) {
+				t.Fatalf("the accept attribute advertises the media type %q, which the format contract refuses", entry)
+			}
+			continue
+		}
+		for _, refused := range refusedExtensions {
+			if strings.EqualFold(entry, refused) {
+				t.Fatalf("the accept attribute offers %q, a format the extractor cannot read", entry)
+			}
+		}
+	}
+}
+
+// panelMediaTypes reads the media type list the panel mirrors, so a row added to
+// the panel without a row in the Go matrix is a test failure rather than a
+// promise the API does not keep.
+func panelMediaTypes(t *testing.T, panel string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`SUPPORTED_UPLOAD_MEDIA_TYPES\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(panel)
+	if len(block) != 2 {
+		t.Fatal("the source processing panel no longer declares SUPPORTED_UPLOAD_MEDIA_TYPES")
+	}
+	quoted := regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(block[1], -1)
+	mediaTypes := make([]string, 0, len(quoted))
+	for _, entry := range quoted {
+		mediaTypes = append(mediaTypes, entry[1])
+	}
+	return mediaTypes
+}
+
+func panelAcceptAttribute(t *testing.T, panel string) string {
+	t.Helper()
+	accept := regexp.MustCompile(`SUPPORTED_UPLOAD_ACCEPT\s*=\s*"([^"]*)"`).FindStringSubmatch(panel)
+	if len(accept) != 2 {
+		t.Fatal("the source processing panel no longer declares SUPPORTED_UPLOAD_ACCEPT")
+	}
+	return accept[1]
+}
+
+// readSourceFormatPanel walks up from this file to the module root, then two
+// levels up to the repository root. It needs neither the database nor the
+// network, so the contract stays checked on a bare checkout.
+func readSourceFormatPanel(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test file")
+	}
+	directory := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			path := filepath.Join(directory, "..", "..", "apps", "web", "src", "components", "SourceProcessingPanel.tsx")
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("the source processing panel is not readable at %s: %v", path, err)
+			}
+			return string(content)
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatal("cannot locate the module root")
+		}
+		directory = parent
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/google/uuid"
@@ -141,6 +143,54 @@ func TestSourceUploadAcceptsEverySupportedFormat(t *testing.T) {
 				t.Fatalf("processingStatus = %q, want queued", view.ProcessingStatus)
 			}
 			fixture.assertAccepted(t, view.ID)
+		})
+	}
+}
+
+// TestSourceProcessingErrorMapping pins which failures are the caller's fault
+// and which are ours. A worker mistake reaches the API as an unmapped error, so
+// it has to answer 500: reported as 415 it would tell a caller their file is the
+// problem when the worker was.
+func TestSourceProcessingErrorMapping(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "format refusal", err: sourceprocessing.ErrUnsupportedContent, status: http.StatusUnsupportedMediaType, code: "unsupported_source_format"},
+		{name: "declared refusal", err: sourceprocessing.ErrUnsupportedDocument, status: http.StatusUnsupportedMediaType, code: "unsupported_source_format"},
+		{name: "invalid input", err: sourceprocessing.ErrValidation, status: http.StatusBadRequest},
+		{name: "worker mistake", err: errors.New("extractor is unavailable"), status: http.StatusInternalServerError},
+		{name: "database down", err: sourceprocessing.ErrDatabaseUnavailable, status: http.StatusServiceUnavailable},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeSourceProcessingError(recorder, testCase.err)
+			if recorder.Code != testCase.status {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, testCase.status, recorder.Body.String())
+			}
+			var body struct {
+				Error                 string   `json:"error"`
+				Code                  string   `json:"code"`
+				SupportedContentTypes []string `json:"supportedContentTypes"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error == "" {
+				t.Fatal("the body carries no reason")
+			}
+			if testCase.code == "" {
+				if body.Code != "" || body.SupportedContentTypes != nil {
+					t.Fatalf("body = %s, want a plain error", recorder.Body.String())
+				}
+				return
+			}
+			if body.Code != testCase.code || len(body.SupportedContentTypes) != 3 {
+				t.Fatalf("body = %s, want the format payload", recorder.Body.String())
+			}
 		})
 	}
 }

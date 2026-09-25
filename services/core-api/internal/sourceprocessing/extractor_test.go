@@ -78,6 +78,35 @@ func TestTextExtractorReportsAnOversizedDocumentAsValidation(t *testing.T) {
 	}
 }
 
+func TestTextExtractorReportsAWorkerMistakeAsAnInternalError(t *testing.T) {
+	var nilExtractor *TextExtractor
+	_, err := nilExtractor.Extract(context.Background(), ExtractInput{Reader: strings.NewReader("نص"), ContentType: "text/plain", Filename: "source.txt"})
+	if err != errExtractorUnavailable {
+		t.Fatalf("nil extractor = %v, want errExtractorUnavailable", err)
+	}
+	_, err = NewTextExtractor().Extract(context.Background(), ExtractInput{ContentType: "text/plain", Filename: "source.txt"})
+	if err != errExtractorUnavailable {
+		t.Fatalf("nil reader = %v, want errExtractorUnavailable", err)
+	}
+	// A programming mistake must never reach a caller as a format refusal: the
+	// API maps ErrUnsupportedDocument and ErrUnsupportedContent to 415.
+	for _, refusal := range []error{ErrUnsupportedDocument, ErrUnsupportedContent} {
+		if errors.Is(errExtractorUnavailable, refusal) {
+			t.Fatalf("errExtractorUnavailable matches %v, so it would be reported as a client format problem", refusal)
+		}
+	}
+	var unsupported *UnsupportedContentError
+	if errors.As(errExtractorUnavailable, &unsupported) {
+		t.Fatal("errExtractorUnavailable reads as a format refusal")
+	}
+	// A real format refusal keeps both marks, so the worker still records the
+	// reason in the run.
+	_, refused := NewTextExtractor().Extract(context.Background(), ExtractInput{Reader: strings.NewReader("binary"), ContentType: "application/pdf", Filename: "source.pdf"})
+	if !errors.Is(refused, ErrUnsupportedContent) || errors.Is(refused, errExtractorUnavailable) {
+		t.Fatalf("pdf = %v, want the unsupported-content refusal alone", refused)
+	}
+}
+
 func TestValidateUploadInput(t *testing.T) {
 	input, err := validateUploadInput(UploadInput{Filename: "  مصدر.txt ", ContentType: "text/plain; charset=utf-8", Content: []byte("نص")})
 	if err != nil {

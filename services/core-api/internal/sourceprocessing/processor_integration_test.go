@@ -16,6 +16,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -68,7 +69,7 @@ func TestResolveEntityUsesSeededAlias(t *testing.T) {
 // nothing is extracted, and neither the run, the file, nor the job can be read as
 // a success.
 func TestLegacyQueuedBinaryFileFailsDeterministically(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	job := jobs.JobView{ID: fixture.jobID.String(), Type: SourceProcessJobType, Payload: fixture.payload, Status: "running", MaxAttempts: 1}
 
@@ -100,7 +101,7 @@ func TestLegacyQueuedBinaryFileFailsDeterministically(t *testing.T) {
 // TestPersistProcessedPagesKeepsPageAndLocatorProvenance is the other half of
 // the worker path: an accepted text file still produces traceable passages.
 func TestPersistProcessedPagesKeepsPageAndLocatorProvenance(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "text/plain", []byte("نص عربي\fصفحة ثانية"))
+	fixture := newLegacyFileFixture(t, "text/plain", "legacy-source", []byte("نص عربي\fصفحة ثانية"))
 	pages, err := NewTextExtractor().Extract(context.Background(), ExtractInput{
 		Reader:      strings.NewReader(string(fixture.content)),
 		ContentType: "text/plain",
@@ -180,11 +181,12 @@ type legacyFileFixture struct {
 	workerID string
 	fileKey  string
 	mimeType string
+	filename string
 	content  []byte
 	payload  json.RawMessage
 }
 
-func newLegacyFileFixture(t *testing.T, mimeType string, content []byte) *legacyFileFixture {
+func newLegacyFileFixture(t *testing.T, mimeType, filename string, content []byte) *legacyFileFixture {
 	t.Helper()
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -210,6 +212,7 @@ func newLegacyFileFixture(t *testing.T, mimeType string, content []byte) *legacy
 		jobID:    uuid.New(),
 		workerID: "legacy-format-worker",
 		mimeType: mimeType,
+		filename: filename,
 		content:  content,
 	}
 	fixture.fileKey = "sources/" + fixture.sourceID.String() + "/" + fixture.fileID.String() + "-source"
@@ -246,8 +249,8 @@ func newLegacyFileFixture(t *testing.T, mimeType string, content []byte) *legacy
 	digest := sha256.Sum256(content)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO source_files (id, source_id, storage_key, original_filename_ar, mime_type, byte_size, checksum_sha256, processing_status)
-		VALUES ($1, $2, $3, 'legacy-source', $4, $5, $6, 'queued')
-	`, fixture.fileID, fixture.sourceID, fixture.fileKey, mimeType, len(content), hex.EncodeToString(digest[:])); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued')
+	`, fixture.fileID, fixture.sourceID, fixture.fileKey, filename, mimeType, len(content), hex.EncodeToString(digest[:])); err != nil {
 		t.Fatal(err)
 	}
 	fixture.payload, err = json.Marshal(JobPayload{SourceID: fixture.sourceID.String(), SourceFileID: fixture.fileID.String()})
@@ -277,7 +280,7 @@ func (f *legacyFileFixture) record() sourceFileRecord {
 		FileID:     f.fileID,
 		StorageKey: f.fileKey,
 		MimeType:   f.mimeType,
-		Filename:   "legacy-source",
+		Filename:   f.filename,
 		Status:     "queued",
 		RunStatus:  "queued",
 		ByteSize:   int64(len(f.content)),
@@ -335,4 +338,147 @@ func testEmbedding() []float32 {
 		values[index] = float32(index+1) / float32(EmbeddingDimensions)
 	}
 	return values
+}
+
+// TestProcessReportsAnUnrecordedFormatRefusal is the stuck-state guard: when the
+// database refuses to record the failure, the run and the file would otherwise
+// keep looking unfinished while their job dies. The returned error has to say so
+// rather than pass as a clean refusal, which the caller would record as handled.
+func TestProcessReportsAnUnrecordedFormatRefusal(t *testing.T) {
+	fixture := newLegacyFileFixture(t, "application/pdf", "unrecorded-marking.pdf", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	refuseFailureMarking(t, fixture.pool, fixture.filename)
+	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
+	job := jobs.JobView{ID: fixture.jobID.String(), Type: SourceProcessJobType, Payload: fixture.payload, Status: "running", MaxAttempts: 1}
+
+	err := service.Process(context.Background(), job)
+	if err == nil {
+		t.Fatal("Process succeeded, want an error the caller cannot read as a clean refusal")
+	}
+	if errors.Is(err, ErrUnsupportedContent) || errors.Is(err, ErrUnsupportedDocument) {
+		t.Fatalf("error = %v, want it kept apart from a clean format refusal", err)
+	}
+	var unsupported *UnsupportedContentError
+	if errors.As(err, &unsupported) {
+		t.Fatalf("error = %v, want it kept apart from a clean format refusal", err)
+	}
+	var unrecorded *unrecordedFailureError
+	if !errors.As(err, &unrecorded) {
+		t.Fatalf("error = %v, want an *unrecordedFailureError", err)
+	}
+	var database *pgconn.PgError
+	if !errors.As(err, &database) {
+		t.Fatalf("error = %v, want the database failure on the error chain", err)
+	}
+	if !errors.Is(unrecorded.Refusal(), ErrUnsupportedContent) {
+		t.Fatalf("refusal = %v, want the original cause kept for the reader", unrecorded.Refusal())
+	}
+	for _, fragment := range []string{fixture.filename, "text/*", fixture.mimeType, "refused by test"} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Fatalf("error %q does not mention %q", err.Error(), fragment)
+		}
+	}
+	// The run is left untouched, which is exactly why the caller has to learn that
+	// nothing was recorded: its job dies while it still reads as unfinished.
+	var runStatus string
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT status FROM source_processing_runs WHERE id = $1`, fixture.runID).Scan(&runStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus == "failed" {
+		t.Fatalf("run status = %s, want the refused marking left unrecorded", runStatus)
+	}
+}
+
+// TestFailProcessingReturnsTheCauseWhenTheMarkingWorks keeps the normal path
+// identical: a refusal that was recorded is returned unchanged.
+func TestFailProcessingReturnsTheCauseWhenTheMarkingWorks(t *testing.T) {
+	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
+	cause := unsupportedContent("a recorded refusal")
+	if err := service.failProcessing(context.Background(), fixture.runID, fixture.fileID, cause); err != cause {
+		t.Fatalf("failProcessing = %v, want the cause unchanged", err)
+	}
+	var runStatus, runError, fileStatus, fileError string
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT r.status, r.error, f.processing_status, f.processing_error FROM source_processing_runs r JOIN source_files f ON f.id = r.source_file_id WHERE r.id = $1`, fixture.runID).Scan(&runStatus, &runError, &fileStatus, &fileError); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != "failed" || fileStatus != "failed" || runError != cause.Error() || fileError != cause.Error() {
+		t.Fatalf("recorded = %s/%s %q %q, want failed/failed with the reason on both", runStatus, fileStatus, runError, fileError)
+	}
+}
+
+// TestFailProcessingReportsAFailedMarkingWithoutADatabase covers the same guard
+// without the trigger: a cancelled context fails both statements, and the caller
+// gets the database error rather than a refusal nobody wrote down.
+func TestFailProcessingReportsAFailedMarkingWithoutADatabase(t *testing.T) {
+	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cause := unsupportedContent("a refusal that cannot be recorded")
+
+	err := service.failProcessing(ctx, fixture.runID, fixture.fileID, cause)
+	if err == nil {
+		t.Fatal("failProcessing returned nil, want the failure to be visible")
+	}
+	if errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("error = %v, want it kept apart from a clean format refusal", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want the database failure on the error chain", err)
+	}
+	var unrecorded *unrecordedFailureError
+	if !errors.As(err, &unrecorded) {
+		t.Fatalf("error = %v, want an *unrecordedFailureError", err)
+	}
+	if !errors.Is(unrecorded.Refusal(), ErrUnsupportedContent) {
+		t.Fatalf("refusal = %v, want the original cause kept for the reader", unrecorded.Refusal())
+	}
+	var runStatus string
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT status FROM source_processing_runs WHERE id = $1`, fixture.runID).Scan(&runStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus == "failed" {
+		t.Fatalf("run status = %s, want it left untouched by a cancelled marking", runStatus)
+	}
+}
+
+// refuseFailureMarking makes the database reject exactly one run update: the
+// failure record of a run whose file name carries the marker. Every other run
+// keeps updating normally, and the trigger is dropped when the test ends.
+func refuseFailureMarking(t *testing.T, pool *pgxpool.Pool, marker string) {
+	t.Helper()
+	ctx := context.Background()
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS plan003_refuse_failure_marking ON source_processing_runs`); err != nil {
+			t.Errorf("drop trigger: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS plan003_refuse_failure_marking()`); err != nil {
+			t.Errorf("drop function: %v", err)
+		}
+	})
+	if _, err := pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION plan003_refuse_failure_marking() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.error LIKE '%' || TG_ARGV[0] || '%' THEN
+				RAISE EXCEPTION 'source processing failure marking refused by test';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TRIGGER plan003_refuse_failure_marking
+		BEFORE UPDATE ON source_processing_runs
+		FOR EACH ROW EXECUTE FUNCTION plan003_refuse_failure_marking(%s);
+	`, pgxQuoteLiteral(marker))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pgxQuoteLiteral keeps the trigger marker a SQL literal rather than a
+// parameter, which a trigger function cannot take.
+func pgxQuoteLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
