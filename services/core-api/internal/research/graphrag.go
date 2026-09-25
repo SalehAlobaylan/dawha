@@ -23,9 +23,11 @@ const (
 	GraphOperationGeographic         = "geographic_path"
 	GraphOperationShortestPath       = "shortest_relationship_path"
 	GraphOperationConnectedComponent = "connected_component"
+	GraphOperationRelationshipImpact = "relationship_impact"
 	GraphAlgorithmVersion            = "graphrag-v1"
 	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
 	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
+	GraphRelationshipImpactAlgorithm = "graphrag-impact-tree-v1"
 	GraphDefaultDepth                = 2
 	GraphMaxDepth                    = 3
 	GraphMaxPaths                    = 5
@@ -41,6 +43,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationGeographic:         {},
 	GraphOperationShortestPath:       {},
 	GraphOperationConnectedComponent: {},
+	GraphOperationRelationshipImpact: {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -170,6 +173,8 @@ func validateGraphEndpointCombination(input QueryInput) error {
 		if input.GraphStartType != "person" || input.GraphEndID != "" || input.TreeID == "" || input.TreeVersionID == "" {
 			return ErrValidation
 		}
+	case GraphOperationRelationshipImpact:
+		return ErrValidation
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
 			return ErrValidation
@@ -328,6 +333,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationConnectedComponent {
 		return GraphComponentAlgorithm
 	}
+	if operation == GraphOperationRelationshipImpact {
+		return GraphRelationshipImpactAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -342,6 +350,9 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 	}
 	if operation == GraphOperationConnectedComponent {
 		return "مكوّن متصل داخل تفسير شجرة منشورة؛ يصف بنية الاتصال ولا يثبت صلة أو قرابة تاريخية نهائية."
+	}
+	if operation == GraphOperationRelationshipImpact {
+		return "أثر downstream محدد داخل تفسير شجرة منشورة؛ يصف النطاق المتأثر ولا يثبت نسباً تاريخياً نهائياً."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."
@@ -477,6 +488,21 @@ func graphTruncatedValue(stats GraphStats, hasPaths bool) any {
 	return stats.Truncated
 }
 
+type graphNodeProvenance struct {
+	ID         string `json:"id"`
+	PersonID   string `json:"personId,omitempty"`
+	TreeNodeID string `json:"treeNodeId,omitempty"`
+	Position   int    `json:"position"`
+}
+
+func graphNodeProvenanceValues(nodes []GraphNode) []graphNodeProvenance {
+	values := make([]graphNodeProvenance, 0, len(nodes))
+	for _, node := range nodes {
+		values = append(values, graphNodeProvenance{ID: node.ID, PersonID: node.PersonID, TreeNodeID: node.TreeNodeID, Position: node.Position})
+	}
+	return values
+}
+
 func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryResult) error {
 	maxDepth := result.GraphStats.MaxDepth
 	if maxDepth == 0 {
@@ -494,16 +520,12 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 	}
 	for pathIndex := range result.GraphPaths {
 		path := &result.GraphPaths[pathIndex]
-		pathID := optionalUUID(path.ID)
-		if pathID == uuid.Nil {
-			pathID = uuid.New()
-			path.ID = pathID.String()
-		}
 		pathKey := strings.TrimSpace(path.ID)
 		if pathKey == "" {
 			pathKey = uuid.NewString()
 			path.ID = pathKey
 		}
+		pathID := uuid.New()
 		if path.AlgorithmVersion == "" {
 			path.AlgorithmVersion = graphAlgorithmVersion(path.Operation)
 		}
@@ -521,7 +543,7 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO research_graph_paths (id, run_id, path_key, operation, status, explanation, depth, truncated, evidence_backed, structural_only, tree_id, tree_version_id, tree_version_number, tree_version_state, algorithm_version, nodes, node_provenance, metadata)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, ''), $15, $16, $17, $18)
-		`, pathID, runID, pathKey, path.Operation, path.Status, boundedText(path.Explanation, 2000), path.Depth, path.Truncated, path.EvidenceBacked, path.StructuralOnly, nullableUUID(treeID), nullableUUID(treeVersionID), nullableInt(path.TreeScope.VersionNumber), nullableString(path.TreeScope.VersionState), path.AlgorithmVersion, mustJSON(path.Nodes), mustJSON(path.Nodes), pathMetadata); err != nil {
+		`, pathID, runID, pathKey, path.Operation, path.Status, boundedText(path.Explanation, 2000), path.Depth, path.Truncated, path.EvidenceBacked, path.StructuralOnly, nullableUUID(treeID), nullableUUID(treeVersionID), nullableInt(path.TreeScope.VersionNumber), nullableString(path.TreeScope.VersionState), path.AlgorithmVersion, mustJSON(path.Nodes), mustJSON(graphNodeProvenanceValues(path.Nodes)), pathMetadata); err != nil {
 			return err
 		}
 		for edgeIndex, edge := range path.Edges {

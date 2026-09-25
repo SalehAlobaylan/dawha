@@ -2,8 +2,8 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Link2, Plus, Search, Send, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
-import { queryResearch } from "../lib/api";
-import type { EpistemicTone, GraphOperation, GraphPath, GraphStats, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
+import { queryGraphRelationshipImpact, queryResearch } from "../lib/api";
+import type { EpistemicTone, GraphOperation, GraphPath, GraphRelationshipImpactResult, GraphStats, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
 import { EvidenceComparison, SourceCard } from "../components/EvidencePanels";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -18,18 +18,20 @@ export function ResearchPage() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [researchQuestion, setResearchQuestion] = useState("");
   const [researchResult, setResearchResult] = useState<ResearchQueryResult | null>(null);
+  const [relationshipImpactResult, setRelationshipImpactResult] = useState<GraphRelationshipImpactResult | null>(null);
   const [researchError, setResearchError] = useState("");
   const [researchLoading, setResearchLoading] = useState(false);
   const [graphOperation, setGraphOperation] = useState<GraphOperation | "">("");
   const [graphStartID, setGraphStartID] = useState("");
   const [graphEndID, setGraphEndID] = useState("");
-  const [graphTreeID, setGraphTreeID] = useState(() => isUuid(contextSearch.treeId) ? contextSearch.treeId : "");
-  const [graphTreeVersionID, setGraphTreeVersionID] = useState(() => isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : "");
+  const [graphRelationshipID, setGraphRelationshipID] = useState("");
+  const [graphTreeID, setGraphTreeID] = useState(() => isUuid(contextSearch.treeId) ? contextSearch.treeId || "" : "");
+  const [graphTreeVersionID, setGraphTreeVersionID] = useState(() => isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId || "" : "");
   const [graphMaxDepth, setGraphMaxDepth] = useState(2);
   const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
   const contextualEntityID = isUuid(contextSearch.entityId) ? contextSearch.entityId : "";
   const graphStartIDValue = graphOperation === "source_entities" ? graphStartID : graphStartID || contextualEntityID;
-  const graphTreeScoped = graphOperation === "shortest_relationship_path" || graphOperation === "connected_component";
+  const graphTreeScoped = graphOperation === "shortest_relationship_path" || graphOperation === "connected_component" || graphOperation === "relationship_impact";
   const graphEndRequired = graphOperation === "common_ancestor_path" || graphOperation === "evidence_connection" || graphOperation === "geographic_path" || graphOperation === "shortest_relationship_path";
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
@@ -39,24 +41,32 @@ export function ResearchPage() {
 
   const runResearch = async () => {
     const question = researchQuestion.trim();
-    if (!question || researchLoading) return;
+    const relationshipImpactMode = graphOperation === "relationship_impact";
+    if ((!question && !relationshipImpactMode) || researchLoading) return;
     setResearchLoading(true);
     setResearchError("");
     try {
-      const graphStartType = graphStartTypeFor(graphOperation, contextualEntityType);
-      const graphInput = graphOperation ? {
-        graph_operation: graphOperation,
-        graph_start_type: graphStartType,
-        graph_start_id: graphStartIDValue,
-        graph_end_type: graphOperation === "geographic_path" ? "place" as const : graphOperation === "source_entities" ? undefined : graphStartType,
-        graph_end_id: graphEndRequired ? graphEndID || undefined : undefined,
-        graph_max_depth: graphMaxDepth,
-        tree_id: graphTreeScoped ? graphTreeID || undefined : undefined,
-        tree_version_id: graphTreeScoped ? graphTreeVersionID || undefined : undefined,
-      } : {};
-      setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: contextualEntityID || undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined, ...graphInput }));
+      if (relationshipImpactMode) {
+        setResearchResult(null);
+        setRelationshipImpactResult(await queryGraphRelationshipImpact({ tree_id: graphTreeID, tree_version_id: graphTreeVersionID, relationship_id: graphRelationshipID, max_depth: graphMaxDepth }));
+      } else {
+        setRelationshipImpactResult(null);
+        const graphStartType = graphStartTypeFor(graphOperation, contextualEntityType);
+        const graphInput = graphOperation ? {
+          graph_operation: graphOperation,
+          graph_start_type: graphStartType,
+          graph_start_id: graphStartIDValue,
+          graph_end_type: graphOperation === "geographic_path" ? "place" as const : graphOperation === "source_entities" ? undefined : graphStartType,
+          graph_end_id: graphEndRequired ? graphEndID || undefined : undefined,
+          graph_max_depth: graphMaxDepth,
+          tree_id: graphTreeScoped ? graphTreeID || undefined : undefined,
+          tree_version_id: graphTreeScoped ? graphTreeVersionID || undefined : undefined,
+        } : {};
+        setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: contextualEntityID || undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined, ...graphInput }));
+      }
     } catch (error) {
       setResearchResult(null);
+      setRelationshipImpactResult(null);
       setResearchError(error instanceof Error ? error.message : "تعذر تشغيل البحث.");
     } finally {
       setResearchLoading(false);
@@ -97,17 +107,17 @@ export function ResearchPage() {
           <section className="research-focus-card">
             <div className="research-focus-head"><div><div className="eyebrow">السؤال النشط</div><h2>من كان والد عبدالله في هذه الروايات؟</h2></div><StatusBadge tone="question">قيد التحقيق</StatusBadge></div>
             <form className="research-query-form" onSubmit={(event) => { event.preventDefault(); void runResearch(); }}>
-              <label htmlFor="research-question">اسأل عن أدلة مصدرة</label>
+              <label htmlFor="research-question">{graphOperation === "relationship_impact" ? "حلّل أثر علاقة في تفسير منشور" : "اسأل عن أدلة مصدرة"}</label>
               <div className="research-query-input-row">
-                <input id="research-question" value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} placeholder="مثال: من كان والد عبدالله في هذه الروايات؟" />
-                <button className="primary-button" type="submit" disabled={researchLoading || !researchQuestion.trim()}>{researchLoading ? "جارٍ البحث…" : "ابحث في الأدلة"}<Search size={15} /></button>
+                <input id="research-question" value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} placeholder={graphOperation === "relationship_impact" ? "اختياري: أضف سياقاً للسجل" : "مثال: من كان والد عبدالله في هذه الروايات؟"} />
+                <button className="primary-button" type="submit" disabled={researchLoading || (!researchQuestion.trim() && graphOperation !== "relationship_impact")}>{researchLoading ? "جارٍ البحث…" : "ابحث في الأدلة"}<Search size={15} /></button>
               </div>
             </form>
             <div className="research-graph-mode">
               <div className="research-graph-mode-copy"><GitBranch size={15} /><div><strong>مسار 관계</strong><small>اجعل الاستعلام يستخدم بنية relationships محدودة، مع إبقاء الأدلة قابلة للتتبع.</small></div></div>
               <div className="research-graph-fields">
-                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="connected_component">مكوّن متصل داخل تفسير منشور</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
-                {graphOperation ? <><label>{graphOperation === "connected_component" ? "الشخص الجذر" : "نقطة البداية"}<input required value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" && graphOperation !== "connected_component" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphTreeScoped ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
+                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="connected_component">مكوّن متصل داخل تفسير منشور</option><option value="relationship_impact">أثر علاقة على الأبناء</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
+                {graphOperation ? <><label>{graphOperation === "relationship_impact" ? "معرف العلاقة" : graphOperation === "connected_component" ? "الشخص الجذر" : "نقطة البداية"}<input required value={graphOperation === "relationship_impact" ? graphRelationshipID : graphStartIDValue} onChange={(event) => graphOperation === "relationship_impact" ? setGraphRelationshipID(event.target.value) : setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" && graphOperation !== "connected_component" && graphOperation !== "relationship_impact" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphTreeScoped ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
               </div>
             </div>
             {researchError ? <p className="research-query-error">{researchError}</p> : null}
@@ -120,6 +130,7 @@ export function ResearchPage() {
           </section>
 
           {researchResult ? <ResearchResultPanel result={researchResult} /> : null}
+          {relationshipImpactResult ? <GraphRelationshipImpactPanel result={relationshipImpactResult} /> : null}
 
           <EvidenceComparison />
 
@@ -177,6 +188,48 @@ function routeLabel(route: ResearchRoute): string {
   if (route === "ignore") return "تم تجاهل الطلب";
   if (route === "cheap") return "مسار سريع";
   return "مسار عميق";
+}
+
+function GraphRelationshipImpactPanel({ result }: { result: GraphRelationshipImpactResult }) {
+  const path: GraphPath = {
+    id: result.pathId,
+    operation: "relationship_impact",
+    nodes: result.nodes,
+    edges: result.edges,
+    evidenceRefs: [],
+    status: result.status,
+    explanation: result.explanation,
+    depth: result.depth,
+    truncated: result.truncated,
+    evidenceBacked: false,
+    structuralOnly: result.structuralOnly,
+    treeScope: result.treeScope,
+    algorithmVersion: result.algorithmVersion,
+  };
+  const stats: GraphStats = {
+    operation: "relationship_impact",
+    pathCount: 1,
+    nodeCount: result.nodes.length,
+    edgeCount: result.edges.length,
+    evidenceCount: 0,
+    truncated: result.truncated,
+    pathsTruncated: result.truncated,
+    edgesTruncated: result.truncationReasons.includes("edge_limit"),
+    maxDepth: result.limits.maxDepth,
+    algorithmVersion: result.algorithmVersion,
+  };
+  const reasonLabels: Record<string, string> = { depth_limit: "حد العمق", node_limit: "حد العقد", edge_limit: "حد العلاقات" };
+  return (
+    <section className="research-result-card" aria-live="polite">
+      <div className="research-result-head">
+        <div><div className="eyebrow">أثر العلاقة downstream</div><h2>النطاق البنيوي المتأثر</h2></div>
+        <StatusBadge tone="interpretation">بنيوي فقط</StatusBadge>
+      </div>
+      <p className="research-result-answer">{result.explanation}</p>
+      <div className="research-result-stats"><span><strong>{result.boundedDownstreamNodeCount}</strong> فرد ضمن النطاق</span><span><strong>{result.edges.length}</strong> علاقة</span><span>عمق {result.limits.maxDepth}</span>{result.truncationReasons.length ? <span>{result.truncationReasons.map((reason) => reasonLabels[reason] || reason).join(" · ")}</span> : null}</div>
+      <GraphPathsPanel paths={[path]} stats={stats} />
+    </section>
+  );
 }
 
 export function ResearchResultPanel({ result }: { result: ResearchQueryResult }) {
@@ -254,7 +307,7 @@ function graphNodeLabel(path: GraphPath, nodeId: string): string {
 }
 
 function graphOperationLabel(operation: GraphOperation): string {
-  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", relationship_impact: "أثر العلاقة على الأبناء", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
   return labels[operation];
 }
 

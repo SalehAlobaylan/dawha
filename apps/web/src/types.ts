@@ -455,7 +455,7 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
-export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component";
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact";
 
 export interface GraphTreeScope {
   treeId?: string;
@@ -539,6 +539,39 @@ export interface GraphStats {
   edgesTruncated: boolean;
   maxDepth: number;
   algorithmVersion?: string;
+}
+
+export interface GraphRelationshipImpactInput {
+  tree_id: string;
+  tree_version_id: string;
+  relationship_id: string;
+  max_depth?: number;
+}
+
+export interface GraphRelationshipImpactLimits {
+  maxDepth: number;
+  maxNodes: number;
+  maxEdges: number;
+}
+
+export interface GraphRelationshipImpactResult {
+  runId: string;
+  createdAt: string;
+  operation: GraphOperation;
+  rootRelationshipId: string;
+  pathId: string;
+  treeScope: GraphTreeScope;
+  boundedDownstreamNodeCount: number;
+  truncated: boolean;
+  truncationReasons: string[];
+  limits: GraphRelationshipImpactLimits;
+  structuralOnly: boolean;
+  algorithmVersion: string;
+  status: string;
+  explanation: string;
+  depth: number;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 }
 
 export interface ResearchRetrievalStats {

@@ -43,6 +43,8 @@ import type {
   QuestionNoteInput,
   QuestionSourceInput,
   ResearchClaim,
+  GraphRelationshipImpactInput,
+  GraphRelationshipImpactResult,
   ResearchQueryInput,
   ResearchQueryResult,
   ResearchRunDetail,
@@ -201,6 +203,23 @@ export async function queryResearch(input: ResearchQueryInput): Promise<Research
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as ResearchQueryResult;
+}
+
+export async function queryGraphRelationshipImpact(input: GraphRelationshipImpactInput): Promise<GraphRelationshipImpactResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لتفعيل تحليل أثر العلاقة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/relationship-impact`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as GraphRelationshipImpactResult;
 }
 
 export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {

@@ -184,6 +184,10 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	if len(result.Paths) != 0 {
 		t.Fatalf("unrelated researcher saw private tree paths: %+v", result.Paths)
 	}
+	impactInput := GraphRelationshipImpactInput{TreeID: treeID.String(), TreeVersionID: versionID.String(), RelationshipID: "b3000000-0000-0000-0000-000000009001", MaxDepth: GraphDefaultDepth}
+	if _, err := service.GraphRelationshipImpact(context.Background(), impactInput, viewerID.String()); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unrelated researcher accessed private relationship impact: %v", err)
+	}
 	ownerResult, err := service.retrieveGraph(context.Background(), input, ownerID.String())
 	if err != nil || len(ownerResult.Paths) == 0 || ownerResult.Paths[0].TreeScope.TreeID != treeID.String() {
 		t.Fatalf("owner path scope was not persisted in retrieval: %+v", ownerResult.Paths)
@@ -216,6 +220,11 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	if len(result.Paths) == 0 {
 		t.Fatal("resource collaborator did not see private tree path")
 	}
+	impactResult, err := service.GraphRelationshipImpact(context.Background(), impactInput, viewerID.String())
+	if err != nil || len(impactResult.Nodes) == 0 {
+		t.Fatalf("resource collaborator could not read private relationship impact: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM research_runs WHERE id = $1`, impactResult.RunID)
 	detail, err := service.GetRun(context.Background(), viewerID.String(), runIDText)
 	if err != nil || len(detail.GraphPaths) == 0 {
 		t.Fatalf("resource collaborator could not read private graph history: %v", err)

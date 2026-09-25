@@ -19,6 +19,16 @@ func TestResearchQueryRouteIsUnavailableWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestResearchRelationshipImpactRouteIsUnavailableWithoutDatabase(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/research/graph/relationship-impact", strings.NewReader(`{"tree_id":"b0000000-0000-0000-0000-000000000001","tree_version_id":"b1000000-0000-0000-0000-000000000003","relationship_id":"b3000000-0000-0000-0000-000000000001"}`))
+	request.Header.Set("Content-Type", "application/json")
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, recorder.Code)
+	}
+}
+
 func TestResearchWorkspaceRoutesAreUnavailableWithoutDatabase(t *testing.T) {
 	cases := []struct {
 		method string
