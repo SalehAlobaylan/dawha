@@ -55,7 +55,7 @@ somebody else's process.
 | `journeys/01-register.spec.ts` | register, and keep a live session |
 | `journeys/02-create-publish-tree.spec.ts` | create a tree, publish version 1 |
 | `journeys/03-fork-tree.spec.ts` | fork a published version |
-| `journeys/04-invite-collaborator.spec.ts` | invite a collaborator, revoke one; accepting is a recorded fixme, see the test |
+| `journeys/04-invite-collaborator.spec.ts` | invite a collaborator, revoke one, accept one as the invited researcher |
 | `journeys/05-attach-source.spec.ts` | attach a `.txt` source and watch it reach a terminal processing run; refuse an unsupported format |
 | `journeys/06-suggestion.spec.ts` | submit a public suggestion, review it |
 | `journeys/07-question-dispute.spec.ts` | open a question, record a dispute |
@@ -68,5 +68,45 @@ Every test registers its own account with a unique address, so no journey can
 read another's tree, source or suggestion even though they share one database.
 The suite runs one worker for the same reason: the journeys deliberately create
 public trees and public suggestions that a second worker would see as its own.
-Nothing is deleted at the end of a run; a synthetic row left by a failed run
-cannot collide with the next one, and it is the only record that the journey ran.
+
+A run also cleans up after itself. Those accounts own real rows - trees, versions,
+nodes, sources, uploaded files, questions, invitations, an audit trail - and
+before this existed they stayed in the database the run was pointed at, so every
+`make e2e` grew the development database by ~1,500 rows. Now:
+
+- `e2e/cleanup.sql` is the only place the deletes live. It removes exactly the
+  rows reachable from the synthetic `e2e-*@example.invalid` accounts and nothing
+  else, in dependency order, inside one transaction. The order is not decoration:
+  about fifty tables reference `users(id)` without `ON DELETE CASCADE`, so
+  `DELETE FROM users` on its own would abort. Tables that do cascade are left to
+  cascade, and the transaction ends by asserting that no row was left without its
+  parent and that no foreign key is deferrable or `NOT VALID` (which is what
+  would make an ordered delete insufficient). A failure rolls the whole thing
+  back, so a cleanup that cannot finish leaves the database exactly as it found
+  it.
+- `e2e/global-teardown.ts` runs that file after every run, through `pg`, and
+  prints what it removed plus the count of users it did not touch. Audit rows
+  are matched on the entity as well as the actor, because the processing worker
+  and a signed-out visitor both write audit rows with no actor. Uploaded files
+  under `SOURCE_STORAGE_DIR/sources/<source id>` go with their source.
+- `make e2e-clean` runs the same file through `psql`, for the runs a teardown
+  cannot follow: a run killed mid-flight, a stopped container, or the rows older
+  versions of this suite left behind. A teardown failure prints this command.
+
+```sh
+COMPOSE_PROJECT_NAME=dawha make e2e-clean
+```
+
+One row class is deliberately left behind, and the teardown says so at the end
+of every run: a research run started by a signed-out visitor has no `actor_id`
+and no `question_id`, so nothing links it to an `e2e-*` account. The only way to
+find it is a time window, and a time window is how a cleanup ends up deleting
+somebody's own work - one such row, from a developer's own session, is in the
+development database right now. It is counted and reported instead:
+
+```sql
+DELETE FROM research_runs WHERE actor_id IS NULL AND question_id IS NULL;
+```
+
+Point `POSTGRES_DB` at a scratch database, as above, and even that residue lands
+somewhere disposable.

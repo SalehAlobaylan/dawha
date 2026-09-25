@@ -53,8 +53,16 @@ if (!process.env.DATABASE_URL) {
 
 export default defineConfig({
   testDir: "./e2e",
-  // One worker: every journey shares one PostgreSQL database and one API, and
-  // the journeys deliberately create public trees and public suggestions that a
+  // Every journey writes real rows: an account, a tree, a source, a question, an
+  // audit trail. The teardown removes exactly those, scoped to the synthetic
+  // e2e-*@example.invalid actors, so a run leaves the database it was pointed at
+  // as it found it - the development database included, which is where
+  // `make e2e` runs by default. It is one file (e2e/cleanup.sql) shared with
+  // `make e2e-clean`, and it is a single transaction, so a failure rolls back
+  // instead of leaving a half-cleaned database behind.
+  globalTeardown: "./e2e/global-teardown.ts",
+  // One worker: every journey shares one PostgreSQL database and one API, and the
+  // journeys deliberately create public trees and public suggestions that a
   // second worker would read as its own. Serial execution is what makes the
   // suite deterministic; the tests themselves still use unique accounts.
   workers: 1,

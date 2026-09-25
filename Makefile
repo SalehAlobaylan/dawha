@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify ai-eval e2e
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify ai-eval e2e e2e-clean
 
 install:
 	npm install
@@ -109,6 +109,11 @@ ai-eval:
 # apps/web/playwright.config.ts for the ports and the environment each service
 # needs. Nothing here is required by `verify`.
 #
+# A run removes its own rows on the way out: the Playwright global teardown
+# executes apps/web/e2e/cleanup.sql, which deletes exactly what the journeys
+# created and nothing else. `make e2e` therefore leaves the database as it found
+# it, including the development database this target points at by default.
+#
 #   COMPOSE_PROJECT_NAME=dawha make db-migrate db-seed
 #   COMPOSE_PROJECT_NAME=dawha make e2e
 #
@@ -130,3 +135,23 @@ e2e:
 		WEB_E2E_PORT="$(E2E_PORT)" \
 		WEB_ORIGIN="http://localhost:$(E2E_PORT)" \
 		npx playwright test
+
+# e2e-clean removes the synthetic rows a browser run created, through the same
+# apps/web/e2e/cleanup.sql the Playwright teardown runs, and nothing else: only
+# the e2e-*@example.invalid accounts and the rows reachable from them. It is here
+# for the runs the teardown cannot clean up after - a run killed mid-flight, a
+# container stopped, or the rows earlier versions of the suite left behind.
+#
+# The deletes are in dependency order inside one transaction, because about fifty
+# tables reference users(id) without ON DELETE CASCADE, and the transaction ends
+# with a proof that no row was left without its parent. A failure rolls the whole
+# thing back, so the database is never left half-cleaned.
+#
+#   COMPOSE_PROJECT_NAME=dawha make e2e-clean
+#
+# It runs through the same container `make db-seed` uses, so COMPOSE_PROJECT_NAME
+# matters here for the same reason it does there: without it docker compose starts
+# a second PostgreSQL instead of reusing the running one.
+e2e-clean:
+	@$(MAKE) db-up
+	@docker compose exec -T db psql -U $${POSTGRES_USER:-dawha} -d $${POSTGRES_DB:-dawha} -v ON_ERROR_STOP=1 < apps/web/e2e/cleanup.sql
