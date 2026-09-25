@@ -92,9 +92,15 @@ jobs:
       - run: make db-seed
       - name: The required extensions are installed
         run: docker compose exec -T db psql -U dawha -d dawha -c "SELECT extname FROM pg_extension WHERE extname IN ('postgis', 'vector') ORDER BY extname;"
-      - name: Install the AI research service
-        working-directory: services/ai-research
-        run: pip install -e '.[dev]'
+      # The venv is created and installed into explicitly, because that is the
+      # interpreter the next step runs. Installing into the setup-python
+      # environment and then calling .venv/bin/python would be two different
+      # pythons, and only one of them would exist.
+      - name: Install the AI research service into its own venv
+        run: |
+          python3 -m venv services/ai-research/.venv
+          services/ai-research/.venv/bin/pip install --upgrade pip
+          services/ai-research/.venv/bin/pip install -e 'services/ai-research[dev]'
       - name: Start the deterministic AI service
         working-directory: services/ai-research
         run: |
@@ -169,9 +175,14 @@ jobs:
       - run: docker compose build db
       - run: make db-migrate
       - run: make db-seed
-      - name: Install the AI research service
-        working-directory: services/ai-research
-        run: pip install -e '.[dev]'
+      # apps/web/e2e/stack.mjs starts the AI service from
+      # services/ai-research/.venv and refuses to run without it, so the venv is
+      # the interpreter this job uses end to end.
+      - name: Install the AI research service into its own venv
+        run: |
+          python3 -m venv services/ai-research/.venv
+          services/ai-research/.venv/bin/pip install --upgrade pip
+          services/ai-research/.venv/bin/pip install -e 'services/ai-research[dev]'
       - run: npm ci
       - name: Install the browser build Playwright pins
         working-directory: apps/web

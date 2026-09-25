@@ -16,6 +16,15 @@ dev = [
   "ruff>=0.8.0,<1.0.0"
 ]
 
+# `app` and `evaluation` are both real top-level packages, and setuptools
+# refuses to guess between them in a flat layout. Naming them keeps
+# `pip install -e '.[dev]'` - which `make install` and every CI job run -
+# working, instead of failing with "Multiple top-level packages discovered".
+# `tests` is deliberately not packaged: it is a test suite for this service, not
+# something a consumer imports.
+[tool.setuptools]
+packages = ["app", "evaluation"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
