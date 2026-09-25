@@ -52,6 +52,39 @@ test.describe("browse the map", () => {
     await expect(pill).not.toHaveClass(/map-layer-pill-active/);
   });
 
+  test("the place search narrows the index, and the period control filters it too", async ({ page }) => {
+    await page.goto("/places");
+    const cards = page.locator(".place-index-card");
+    const everyPlace = await cards.count();
+    expect(everyPlace).toBeGreaterThan(1);
+    const search = page.getByLabel("ابحث عن موضع");
+
+    // Typing a place name narrows the index to the places that carry it, rather
+    // than leaving the list untouched.
+    await search.fill("الأحساء");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("الأحساء");
+
+    // Clearing it gives the whole index back, so the filter is not a one-way door.
+    await search.fill("");
+    await expect(cards).toHaveCount(everyPlace);
+
+    // The period control filters the same index: every option it offers has to
+    // leave the places of that period behind.
+    const period = page.getByLabel("تصفية بالفترة");
+    await period.selectOption("القرن الثاني عشر");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("الأحساء");
+    await period.selectOption("كل الفترات");
+    await expect(cards).toHaveCount(everyPlace);
+
+    // A search that matches nothing says so, rather than showing an empty grid
+    // that reads like a page that failed to load.
+    await search.fill("مدينة لا وجود لها");
+    await expect(cards).toHaveCount(0);
+    await expect(page.getByText("لا توجد نتائج مطابقة")).toBeVisible();
+  });
+
   test("a marker on the canvas selects the same place as the list", async ({ page }) => {
     await page.goto("/places");
     const card = page.locator(".place-index-card").nth(1);
