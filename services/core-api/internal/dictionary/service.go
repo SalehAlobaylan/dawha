@@ -389,11 +389,14 @@ func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
 		return `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE ` + sourcePredicate + ` AND (` + term + ` = '' OR s.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY s.title_ar LIMIT 100`, params.Args()
 	case "people":
 		personPredicate := policy.PersonPredicate(params, "p.id")
-		// The secondary name is an alias value, so it follows the alias rule: only
-		// aliases whose source is visible to the actor may be counted or shown.
+		// Every alias reference in this statement follows one rule: an alias whose
+		// source is not visible to the actor may not be shown, counted, or used as a
+		// search term. Without the third gate an alias taken from a private source
+		// still worked as a probe: a hit proved the alias exists and belongs to that
+		// person.
 		aliasSource := policy.SourcePredicate(params, "pa.source_id")
 		visibleAlias := `(pa.source_id IS NULL OR ` + aliasSource + `)`
-		return `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + ` ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + `) FROM people p WHERE ` + personPredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+		return `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + ` ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + `) FROM people p WHERE ` + personPredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + ` AND pa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
 	case "questions":
 		questionPredicate := policy.QuestionPredicate(params, "q.id")
 		return `SELECT q.id, 'question', q.title_ar, COALESCE(q.description_ar, ''), q.status, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q WHERE ` + questionPredicate + ` AND (` + term + ` = '' OR q.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(q.description_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY q.updated_at DESC LIMIT 100`, params.Args()

@@ -143,6 +143,65 @@ func TestPersonPlacesAndAliasesSkipResearchOnlyRows(t *testing.T) {
 	}
 }
 
+// TestPeopleIndexAliasSearchCannotProbeAPrivateAlias covers the alias search match
+// itself. The secondary name and the alias count were already scoped, so an alias
+// taken from a private source could still be used as a search term: a hit proved the
+// alias exists and belongs to that person. An alias the actor cannot read must not
+// match for that actor, and must still match for the actor who owns its source.
+func TestPeopleIndexAliasSearchCannotProbeAPrivateAlias(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	t.Cleanup(pool.Close)
+	fixture := seedLeakedFixture(t, ctx, pool)
+	service := NewService(pool)
+
+	privateAliasSearch, err := service.ListIndex(ctx, "people", "لقب من مصدر خاص", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(privateAliasSearch.Items) != 0 {
+		t.Fatalf("a private-source alias matched an anonymous people search: %+v", privateAliasSearch.Items)
+	}
+
+	// The two readable aliases are the positive control: if they did not match, the
+	// empty result above would prove nothing.
+	for _, term := range []string{"لقب بلا مصدر", "لقب عام"} {
+		readable, err := service.ListIndex(ctx, "people", term, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !indexIDs(readable)[fixture.publicPersonID] {
+			t.Fatalf("the readable alias %q no longer finds the person: %+v", term, readable.Items)
+		}
+	}
+
+	// The owner of the private source still finds the person by that alias.
+	owner, err := service.ListIndex(ctx, "people", "لقب من مصدر خاص", fixture.ownerID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !indexIDs(owner)[fixture.publicPersonID] {
+		t.Fatalf("the owner lost the private-source alias search: %+v", owner.Items)
+	}
+
+	// An unrelated registered actor gets the same refusal as an anonymous caller, so
+	// the probe needs no session.
+	stranger, err := service.ListIndex(ctx, "people", "لقب من مصدر خاص", fixture.strangerID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stranger.Items) != 0 {
+		t.Fatalf("a private-source alias matched an unrelated actor search: %+v", stranger.Items)
+	}
+}
+
 func TestDisputedClaimIndexHidesPrivatePersonNames(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
