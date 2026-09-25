@@ -5,16 +5,32 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
 )
 
 type searchHandler struct {
 	Service *search.Service
+	Auth    *auth.Service
+}
+
+// actorID resolves the optional session. Search stays reachable without a session;
+// the visibility policy then answers as the anonymous actor.
+func (h searchHandler) actorID(r *http.Request) string {
+	if h.Auth == nil {
+		return ""
+	}
+	user, err := h.Auth.UserFromRequest(r.Context(), r)
+	if err != nil {
+		return ""
+	}
+	return user.ID
 }
 
 func (h searchHandler) search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	input := search.Input{
+		ActorID:   h.actorID(r),
 		Query:     query.Get("q"),
 		Kind:      query.Get("kind"),
 		Status:    query.Get("status"),

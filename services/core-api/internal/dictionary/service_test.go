@@ -1,6 +1,11 @@
 package dictionary
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
+	"github.com/google/uuid"
+)
 
 func TestValidIndexKind(t *testing.T) {
 	for _, kind := range []string{"families", "tribes", "branches", "people", "places", "sources", "questions", "disputed-claims"} {
@@ -14,12 +19,44 @@ func TestValidIndexKind(t *testing.T) {
 }
 
 func TestIndexQueryIncludesAliasSearch(t *testing.T) {
-	query, args := indexQuery("people", "عبد")
-	if len(args) != 1 || args[0] != "عبد" {
+	query, args := indexQuery("people", "عبد", visibility.Anonymous())
+	if len(args) != 2 || args[0] != "عبد" {
 		t.Fatalf("unexpected query args: %#v", args)
 	}
 	if !containsText(query, "person_aliases") || !containsText(query, "normalized_value_ar") {
 		t.Fatalf("expected alias search in query: %s", query)
+	}
+}
+
+func TestAnonymousIndexQueryDeclaresPublicMembership(t *testing.T) {
+	policy := visibility.Anonymous()
+	cases := map[string][]string{
+		"people":          {"person_aliases", "vis_version.state = 'published'", "vis_tree.visibility = 'public'"},
+		"disputed-claims": {"claim_evidence", "vis_source.visibility = 'public'", "vis_source.visibility = 'private'"},
+		"questions":       {"question_sources", "vis_source.visibility = 'public'"},
+		"sources":         {"vis_source.visibility = 'public'"},
+	}
+	for kind, fragments := range cases {
+		query, _ := indexQuery(kind, "", policy)
+		for _, fragment := range fragments {
+			if !containsText(query, fragment) {
+				t.Fatalf("kind %s: expected %q in query: %s", kind, fragment, query)
+			}
+		}
+	}
+}
+
+func TestOwnerIndexQueryIncludesOwnerGrant(t *testing.T) {
+	policy, err := visibility.WithResearch("10000000-0000-0000-0000-000000000001", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, args := indexQuery("people", "", policy)
+	if !containsText(query, "vis_person.created_by = $2::uuid") {
+		t.Fatalf("expected owner grant in query: %s", query)
+	}
+	if len(args) != 2 || args[1] == uuid.Nil {
+		t.Fatalf("expected the actor parameter to be bound: %#v", args)
 	}
 }
 

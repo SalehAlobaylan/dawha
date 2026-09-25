@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -17,6 +18,7 @@ var (
 	ErrDatabaseUnavailable = errors.New("dictionary database is unavailable")
 	ErrNotFound            = errors.New("dictionary resource not found")
 	ErrValidation          = errors.New("dictionary input is invalid")
+	ErrForbidden           = errors.New("dictionary actor is not permitted")
 )
 
 type IndexItem struct {
@@ -106,8 +108,12 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{Pool: pool}
 }
 
-func (s *Service) ListIndex(ctx context.Context, kind, search string) (IndexResponse, error) {
+func (s *Service) ListIndex(ctx context.Context, kind, search, actorID string) (IndexResponse, error) {
 	if err := s.ready(); err != nil {
+		return IndexResponse{}, err
+	}
+	policy, err := visibility.Load(ctx, s.Pool, actorID)
+	if err != nil {
 		return IndexResponse{}, err
 	}
 	kind = strings.ToLower(strings.TrimSpace(kind))
@@ -115,7 +121,7 @@ func (s *Service) ListIndex(ctx context.Context, kind, search string) (IndexResp
 		return IndexResponse{}, ErrValidation
 	}
 	search = identity.NormalizeArabicName(strings.TrimSpace(search))
-	query, args := indexQuery(kind, search)
+	query, args := indexQuery(kind, search, policy)
 	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return IndexResponse{}, err
@@ -135,8 +141,12 @@ func (s *Service) ListIndex(ctx context.Context, kind, search string) (IndexResp
 	return IndexResponse{Kind: kind, Query: search, Items: items}, nil
 }
 
-func (s *Service) Get(ctx context.Context, kind, id string) (Detail, error) {
+func (s *Service) Get(ctx context.Context, kind, id, actorID string) (Detail, error) {
 	if err := s.ready(); err != nil {
+		return Detail{}, err
+	}
+	policy, err := visibility.Load(ctx, s.Pool, actorID)
+	if err != nil {
 		return Detail{}, err
 	}
 	kind = strings.ToLower(strings.TrimSpace(kind))
@@ -147,6 +157,18 @@ func (s *Service) Get(ctx context.Context, kind, id string) (Detail, error) {
 	if err != nil {
 		return Detail{}, ErrNotFound
 	}
+	// A person with no published public tree, and no actor scope, must not be
+	// readable by direct id either. A denied person answers exactly like a missing
+	// one so the endpoint cannot be used as an existence oracle.
+	if kind == "people" {
+		access, accessErr := policy.Person(ctx, s.Pool, resourceID)
+		if accessErr != nil {
+			return Detail{}, accessErr
+		}
+		if !access.Allowed() {
+			return Detail{}, ErrNotFound
+		}
+	}
 	var result Detail
 	switch kind {
 	case "families":
@@ -154,9 +176,9 @@ func (s *Service) Get(ctx context.Context, kind, id string) (Detail, error) {
 	case "tribes":
 		result, err = s.tribeDetail(ctx, resourceID)
 	case "people":
-		result, err = s.personDetail(ctx, resourceID)
+		result, err = s.personDetail(ctx, policy, resourceID)
 	case "places":
-		result, err = s.placeDetail(ctx, resourceID)
+		result, err = s.placeDetail(ctx, policy, resourceID)
 	}
 	if err != nil {
 		return Detail{}, err
@@ -236,7 +258,7 @@ func (s *Service) tribeDetail(ctx context.Context, id uuid.UUID) (Detail, error)
 	return item, nil
 }
 
-func (s *Service) personDetail(ctx context.Context, id uuid.UUID) (Detail, error) {
+func (s *Service) personDetail(ctx context.Context, policy visibility.Policy, id uuid.UUID) (Detail, error) {
 	var item Detail
 	var status string
 	var notes pgtype.Text
@@ -264,19 +286,19 @@ func (s *Service) personDetail(ctx context.Context, id uuid.UUID) (Detail, error
 	if item.PublishedTrees, err = s.publishedTrees(ctx, s.Pool, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Claims, err = s.claims(ctx, s.Pool, id); err != nil {
+	if item.Claims, err = s.claims(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Sources, err = s.personSources(ctx, s.Pool, id); err != nil {
+	if item.Sources, err = s.personSources(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Questions, err = s.personQuestions(ctx, s.Pool, id); err != nil {
+	if item.Questions, err = s.personQuestions(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
 	return item, nil
 }
 
-func (s *Service) placeDetail(ctx context.Context, id uuid.UUID) (Detail, error) {
+func (s *Service) placeDetail(ctx context.Context, policy visibility.Policy, id uuid.UUID) (Detail, error) {
 	var item Detail
 	var description pgtype.Text
 	var placeType string
@@ -289,12 +311,15 @@ func (s *Service) placeDetail(ctx context.Context, id uuid.UUID) (Detail, error)
 	if item.HistoricalNames, err = s.references(ctx, s.Pool, `SELECT h.id, h.name_ar, h.name_type, NULL::text FROM historical_place_names h WHERE h.place_id = $1 ORDER BY h.name_ar`, id); err != nil {
 		return Detail{}, err
 	}
+	peopleParams := visibility.NewParams()
+	placeIDRef := peopleParams.Add(id)
+	peoplePredicate := policy.PersonPredicate(peopleParams, "p.id")
 	if item.People, err = s.references(ctx, s.Pool, `
 		SELECT DISTINCT p.id, p.canonical_name_ar, p.identity_status, ga.status
 		FROM people p JOIN geographic_associations ga ON ga.entity_id = p.id
-		WHERE ga.place_id = $1 AND ga.entity_type = 'person'
+		WHERE ga.place_id = `+placeIDRef+` AND ga.entity_type = 'person' AND `+peoplePredicate+`
 		ORDER BY 2
-	`, id); err != nil {
+	`, peopleParams.Args()...); err != nil {
 		return Detail{}, err
 	}
 	if item.Families, err = s.references(ctx, s.Pool, `SELECT f.id, f.canonical_name_ar, f.description_ar, NULL::text FROM families f WHERE f.origin_place_id = $1 ORDER BY f.canonical_name_ar`, id); err != nil {
@@ -303,16 +328,19 @@ func (s *Service) placeDetail(ctx context.Context, id uuid.UUID) (Detail, error)
 	if item.Tribes, err = s.references(ctx, s.Pool, `SELECT DISTINCT t.id, t.canonical_name_ar, t.description_ar, ga.status FROM tribes t JOIN geographic_associations ga ON ga.entity_id = t.id WHERE ga.place_id = $1 AND ga.entity_type = 'tribe' ORDER BY 2`, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Claims, err = s.placeClaims(ctx, s.Pool, id); err != nil {
+	if item.Claims, err = s.placeClaims(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Sources, err = s.placeSources(ctx, s.Pool, id); err != nil {
+	if item.Sources, err = s.placeSources(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Questions, err = s.placeQuestions(ctx, s.Pool, id); err != nil {
+	if item.Questions, err = s.placeQuestions(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Migrations, err = s.references(ctx, s.Pool, `SELECT m.id, COALESCE(pf.canonical_name_ar, pt.canonical_name_ar, 'هجرة'), m.status, m.certainty FROM migration_events m LEFT JOIN places pf ON pf.id = m.from_place_id LEFT JOIN places pt ON pt.id = m.to_place_id WHERE m.from_place_id = $1 OR m.to_place_id = $1 ORDER BY m.time_from NULLS LAST`, id); err != nil {
+	migrationParams := visibility.NewParams()
+	placeIDRef = migrationParams.Add(id)
+	sourcePredicate := policy.SourcePredicate(migrationParams, "m.source_id")
+	if item.Migrations, err = s.references(ctx, s.Pool, `SELECT m.id, COALESCE(pf.canonical_name_ar, pt.canonical_name_ar, 'هجرة'), m.status, m.certainty FROM migration_events m LEFT JOIN places pf ON pf.id = m.from_place_id LEFT JOIN places pt ON pt.id = m.to_place_id WHERE (m.from_place_id = `+placeIDRef+` OR m.to_place_id = `+placeIDRef+`) AND (m.source_id IS NULL OR `+sourcePredicate+`) ORDER BY m.time_from NULLS LAST`, migrationParams.Args()...); err != nil {
 		return Detail{}, err
 	}
 	_ = placeType
@@ -330,18 +358,37 @@ func validIndexKind(kind string) bool {
 	return kind == "families" || kind == "tribes" || kind == "branches" || kind == "people" || kind == "places" || kind == "sources" || kind == "questions" || kind == "disputed-claims"
 }
 
-func indexQuery(kind, search string) (string, []any) {
-	queries := map[string]string{
-		"families":        `SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM branches b WHERE b.family_id = f.id) FROM families f WHERE (` + fmtCondition("f.normalized_name_ar", "$1") + ` OR EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar ILIKE '%' || $1 || '%')) ORDER BY f.canonical_name_ar LIMIT 100`,
-		"tribes":          `SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM geographic_associations ga WHERE ga.entity_type = 'tribe' AND ga.entity_id = t.id) FROM tribes t WHERE (` + fmtCondition("t.normalized_name_ar", "$1") + ` OR EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar ILIKE '%' || $1 || '%')) ORDER BY t.canonical_name_ar LIMIT 100`,
-		"branches":        `SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text, (SELECT count(*) FROM branches child WHERE child.parent_branch_id = b.id) FROM branches b JOIN families f ON f.id = b.family_id WHERE (` + fmtCondition("b.normalized_name_ar", "$1") + ` OR f.normalized_name_ar ILIKE '%' || $1 || '%') ORDER BY b.canonical_name_ar LIMIT 100`,
-		"people":          `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id) FROM people p WHERE ` + fmtCondition("p.normalized_name_ar", "$1") + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar ILIKE '%%' || $1 || '%%') ORDER BY p.canonical_name_ar LIMIT 100`,
-		"places":          `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE ` + fmtCondition("p.normalized_name_ar", "$1") + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%%' || $1 || '%%') ORDER BY p.canonical_name_ar LIMIT 100`,
-		"sources":         `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE s.visibility = 'public' AND ($1 = '' OR s.title_ar ILIKE '%%' || $1 || '%%' OR COALESCE(s.author_ar, '') ILIKE '%%' || $1 || '%%') ORDER BY s.title_ar LIMIT 100`,
-		"questions":       `SELECT q.id, 'question', q.title_ar, COALESCE(q.description_ar, ''), q.status, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q WHERE $1 = '' OR q.title_ar ILIKE '%%' || $1 || '%%' OR COALESCE(q.description_ar, '') ILIKE '%%' || $1 || '%%' ORDER BY q.updated_at DESC LIMIT 100`,
-		"disputed-claims": `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id WHERE c.status IN ('disputed', 'contested') AND ($1 = '' OR COALESCE(ps.canonical_name_ar, c.subject_id::text) ILIKE '%%' || $1 || '%%' OR COALESCE(po.canonical_name_ar, c.object_id::text) ILIKE '%%' || $1 || '%%') ORDER BY c.updated_at DESC LIMIT 100`,
+// indexQuery builds the public index list. Every kind declares its public
+// membership rule here: people, claims, questions and sources join through the
+// central visibility policy, while families, tribes, branches and places have no
+// visibility column and stay public. Each case builds its own query so a predicate
+// never allocates a placeholder that the executed statement does not use.
+func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
+	params := visibility.NewParams()
+	term := params.Add(search)
+	switch kind {
+	case "families":
+		return `SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM branches b WHERE b.family_id = f.id) FROM families f WHERE (` + fmtCondition("f.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY f.canonical_name_ar LIMIT 100`, params.Args()
+	case "tribes":
+		return `SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM geographic_associations ga WHERE ga.entity_type = 'tribe' AND ga.entity_id = t.id) FROM tribes t WHERE (` + fmtCondition("t.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY t.canonical_name_ar LIMIT 100`, params.Args()
+	case "branches":
+		return `SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text, (SELECT count(*) FROM branches child WHERE child.parent_branch_id = b.id) FROM branches b JOIN families f ON f.id = b.family_id WHERE (` + fmtCondition("b.normalized_name_ar", term) + ` OR f.normalized_name_ar ILIKE '%' || ` + term + ` || '%') ORDER BY b.canonical_name_ar LIMIT 100`, params.Args()
+	case "places":
+		return `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+	case "sources":
+		sourcePredicate := policy.SourcePredicate(params, "s.id")
+		return `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE ` + sourcePredicate + ` AND (` + term + ` = '' OR s.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY s.title_ar LIMIT 100`, params.Args()
+	case "people":
+		personPredicate := policy.PersonPredicate(params, "p.id")
+		return `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id) FROM people p WHERE ` + personPredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+	case "questions":
+		questionPredicate := policy.QuestionPredicate(params, "q.id")
+		return `SELECT q.id, 'question', q.title_ar, COALESCE(q.description_ar, ''), q.status, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q WHERE ` + questionPredicate + ` AND (` + term + ` = '' OR q.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(q.description_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY q.updated_at DESC LIMIT 100`, params.Args()
+	case "disputed-claims":
+		claimPredicate := policy.ClaimPredicate(params, "c.id")
+		return `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id WHERE ` + claimPredicate + ` AND c.status IN ('disputed', 'contested') AND (` + term + ` = '' OR COALESCE(ps.canonical_name_ar, c.subject_id::text) ILIKE '%' || ` + term + ` || '%' OR COALESCE(po.canonical_name_ar, c.object_id::text) ILIKE '%' || ` + term + ` || '%') ORDER BY c.updated_at DESC LIMIT 100`, params.Args()
 	}
-	return queries[kind], []any{search}
+	return "", nil
 }
 
 func fmtCondition(column, parameter string) string {
@@ -420,12 +467,18 @@ func (s *Service) publishedTrees(ctx context.Context, q dbExecutor, personID uui
 	return items, rows.Err()
 }
 
-func (s *Service) claims(ctx context.Context, q dbExecutor, personID uuid.UUID) ([]ClaimReference, error) {
-	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE (c.subject_type = 'person' AND c.subject_id = $1) OR (c.object_type = 'person' AND c.object_id = $1) ORDER BY c.updated_at DESC`, personID)
+func (s *Service) claims(ctx context.Context, q dbExecutor, policy visibility.Policy, personID uuid.UUID) ([]ClaimReference, error) {
+	params := visibility.NewParams()
+	personRef := params.Add(personID)
+	predicate := policy.ClaimPredicate(params, "c.id")
+	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE `+predicate+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`)) ORDER BY c.updated_at DESC`, params.Args()...)
 }
 
-func (s *Service) placeClaims(ctx context.Context, q dbExecutor, placeID uuid.UUID) ([]ClaimReference, error) {
-	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE c.place_id = $1 ORDER BY c.updated_at DESC`, placeID)
+func (s *Service) placeClaims(ctx context.Context, q dbExecutor, policy visibility.Policy, placeID uuid.UUID) ([]ClaimReference, error) {
+	params := visibility.NewParams()
+	placeRef := params.Add(placeID)
+	predicate := policy.ClaimPredicate(params, "c.id")
+	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE `+predicate+` AND c.place_id = `+placeRef+` ORDER BY c.updated_at DESC`, params.Args()...)
 }
 
 func (s *Service) claimRefs(ctx context.Context, q dbExecutor, query string, args ...any) ([]ClaimReference, error) {
@@ -448,20 +501,32 @@ func (s *Service) claimRefs(ctx context.Context, q dbExecutor, query string, arg
 	return items, rows.Err()
 }
 
-func (s *Service) personSources(ctx context.Context, q dbExecutor, personID uuid.UUID) ([]ReferenceView, error) {
-	return s.references(ctx, q, `SELECT DISTINCT s.id, s.title_ar, s.source_type, ce.relation FROM sources s JOIN source_statements ss ON ss.source_id = s.id JOIN claim_evidence ce ON ce.source_statement_id = ss.id JOIN claims c ON c.id = ce.claim_id WHERE s.visibility = 'public' AND ((c.subject_type = 'person' AND c.subject_id = $1) OR (c.object_type = 'person' AND c.object_id = $1)) ORDER BY s.title_ar`, personID)
+func (s *Service) personSources(ctx context.Context, q dbExecutor, policy visibility.Policy, personID uuid.UUID) ([]ReferenceView, error) {
+	params := visibility.NewParams()
+	personRef := params.Add(personID)
+	predicate := policy.SourcePredicate(params, "s.id")
+	return s.references(ctx, q, `SELECT DISTINCT s.id, s.title_ar, s.source_type, ce.relation FROM sources s JOIN source_statements ss ON ss.source_id = s.id JOIN claim_evidence ce ON ce.source_statement_id = ss.id JOIN claims c ON c.id = ce.claim_id WHERE `+predicate+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`)) ORDER BY s.title_ar`, params.Args()...)
 }
 
-func (s *Service) placeSources(ctx context.Context, q dbExecutor, placeID uuid.UUID) ([]ReferenceView, error) {
-	return s.references(ctx, q, `SELECT DISTINCT s.id, s.title_ar, s.source_type, ga.status FROM sources s JOIN geographic_associations ga ON ga.source_id = s.id WHERE s.visibility = 'public' AND ga.place_id = $1 UNION SELECT DISTINCT s.id, s.title_ar, s.source_type, m.status FROM sources s JOIN migration_events m ON m.source_id = s.id WHERE s.visibility = 'public' AND (m.from_place_id = $1 OR m.to_place_id = $1) ORDER BY 2`, placeID)
+func (s *Service) placeSources(ctx context.Context, q dbExecutor, policy visibility.Policy, placeID uuid.UUID) ([]ReferenceView, error) {
+	params := visibility.NewParams()
+	placeRef := params.Add(placeID)
+	predicate := policy.SourcePredicate(params, "s.id")
+	return s.references(ctx, q, `SELECT DISTINCT s.id, s.title_ar, s.source_type, ga.status FROM sources s JOIN geographic_associations ga ON ga.source_id = s.id WHERE `+predicate+` AND ga.place_id = `+placeRef+` UNION SELECT DISTINCT s.id, s.title_ar, s.source_type, m.status FROM sources s JOIN migration_events m ON m.source_id = s.id WHERE `+predicate+` AND (m.from_place_id = `+placeRef+` OR m.to_place_id = `+placeRef+`) ORDER BY 2`, params.Args()...)
 }
 
-func (s *Service) personQuestions(ctx context.Context, q dbExecutor, personID uuid.UUID) ([]QuestionReference, error) {
-	return s.questionRefs(ctx, q, `SELECT DISTINCT q.id, q.title_ar, q.status, q.priority, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q JOIN question_claims qc ON qc.question_id = q.id JOIN claims c ON c.id = qc.claim_id WHERE (c.subject_type = 'person' AND c.subject_id = $1) OR (c.object_type = 'person' AND c.object_id = $1) ORDER BY q.title_ar`, personID)
+func (s *Service) personQuestions(ctx context.Context, q dbExecutor, policy visibility.Policy, personID uuid.UUID) ([]QuestionReference, error) {
+	params := visibility.NewParams()
+	personRef := params.Add(personID)
+	predicate := policy.QuestionPredicate(params, "q.id")
+	return s.questionRefs(ctx, q, `SELECT DISTINCT q.id, q.title_ar, q.status, q.priority, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q JOIN question_claims qc ON qc.question_id = q.id JOIN claims c ON c.id = qc.claim_id WHERE `+predicate+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`)) ORDER BY q.title_ar`, params.Args()...)
 }
 
-func (s *Service) placeQuestions(ctx context.Context, q dbExecutor, placeID uuid.UUID) ([]QuestionReference, error) {
-	return s.questionRefs(ctx, q, `SELECT DISTINCT q.id, q.title_ar, q.status, q.priority, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q JOIN question_claims qc ON qc.question_id = q.id JOIN claims c ON c.id = qc.claim_id WHERE c.place_id = $1 ORDER BY q.title_ar`, placeID)
+func (s *Service) placeQuestions(ctx context.Context, q dbExecutor, policy visibility.Policy, placeID uuid.UUID) ([]QuestionReference, error) {
+	params := visibility.NewParams()
+	placeRef := params.Add(placeID)
+	predicate := policy.QuestionPredicate(params, "q.id")
+	return s.questionRefs(ctx, q, `SELECT DISTINCT q.id, q.title_ar, q.status, q.priority, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q JOIN question_claims qc ON qc.question_id = q.id JOIN claims c ON c.id = qc.claim_id WHERE `+predicate+` AND c.place_id = `+placeRef+` ORDER BY q.title_ar`, params.Args()...)
 }
 
 func (s *Service) questionRefs(ctx context.Context, q dbExecutor, query string, args ...any) ([]QuestionReference, error) {

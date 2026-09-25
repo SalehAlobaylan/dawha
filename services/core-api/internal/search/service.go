@@ -10,6 +10,7 @@ import (
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,6 +28,7 @@ var (
 const semanticEmbeddingTimeout = 10 * time.Second
 
 type Input struct {
+	ActorID   string
 	Query     string
 	Kind      string
 	Status    string
@@ -101,6 +103,10 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	if err := s.ready(); err != nil {
 		return Response{}, err
 	}
+	policy, err := visibility.Load(ctx, s.Pool, input.ActorID)
+	if err != nil {
+		return Response{}, err
+	}
 	input, normalized, vector, err := validateInput(input)
 	if err != nil {
 		return Response{}, err
@@ -119,7 +125,7 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	}
 	groups := make([]Group, 0, 6)
 	if input.Kind == "" || input.Kind == "all" || input.Kind == "names" {
-		items, err := s.searchNames(ctx, normalized, input)
+		items, err := s.searchNames(ctx, policy, normalized, input)
 		if err != nil {
 			return Response{}, err
 		}
@@ -133,7 +139,7 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 		groups = appendGroup(groups, "sources", "المصادر", items)
 	}
 	if input.Kind == "" || input.Kind == "all" || input.Kind == "claims" {
-		items, err := s.searchClaims(ctx, normalized, input)
+		items, err := s.searchClaims(ctx, policy, normalized, input)
 		if err != nil {
 			return Response{}, err
 		}
@@ -147,7 +153,7 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 		groups = appendGroup(groups, "passages", "المقاطع", items)
 	}
 	if input.Kind == "" || input.Kind == "all" || input.Kind == "questions" {
-		items, err := s.searchQuestions(ctx, normalized, input)
+		items, err := s.searchQuestions(ctx, policy, normalized, input)
 		if err != nil {
 			return Response{}, err
 		}
@@ -167,36 +173,48 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	return Response{Query: strings.TrimSpace(input.Query), NormalizedQuery: normalized, Groups: groups, Total: total, EmbeddingModel: embeddingModel}, nil
 }
 
-func (s *Service) searchNames(ctx context.Context, query string, input Input) ([]Result, error) {
+// searchNames ranks people, families, tribes, branches and places. Families,
+// tribes, branches and places have no visibility column and stay public; people
+// join through the central person policy so a private-draft person cannot surface
+// in an anonymous query.
+func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
+	params := visibility.NewParams()
+	personPredicate := policy.PersonPredicate(params, "p.id")
+	personRef := params.Add(input.EntityID)
+	placeRef := params.Add(input.PlaceID)
+	termRef := params.Add(query)
+	limitRef := params.Add(input.Limit)
 	rows, err := s.Pool.Query(ctx, `
 		WITH results AS (
 			SELECT p.id, 'person'::text AS kind, p.canonical_name_ar AS name,
 			       COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id ORDER BY pa.created_at LIMIT 1), '') AS secondary,
 			       p.identity_status AS status,
-			       GREATEST(CASE WHEN p.normalized_name_ar = $1 THEN 100 ELSE 0 END,
-			                CASE WHEN EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar = $1) THEN 90 ELSE 0 END,
-			                similarity(p.normalized_name_ar, $1) * 70) AS score
+			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END,
+			                CASE WHEN EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END,
+			                similarity(p.normalized_name_ar, `+termRef+`) * 70) AS score
 			FROM people p
-			WHERE ($2 = '' OR p.id = $2::uuid) AND ($3 = '' OR EXISTS (SELECT 1 FROM geographic_associations ga WHERE ga.entity_type = 'person' AND ga.entity_id = p.id AND ga.place_id = $3::uuid))
+			WHERE `+personPredicate+`
+			  AND (`+personRef+` = '' OR p.id = `+personRef+`::uuid)
+			  AND (`+placeRef+` = '' OR EXISTS (SELECT 1 FROM geographic_associations ga WHERE ga.entity_type = 'person' AND ga.entity_id = p.id AND ga.place_id = `+placeRef+`::uuid))
 			UNION ALL
 			SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text,
-			       GREATEST(CASE WHEN f.normalized_name_ar = $1 THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar = $1) THEN 90 ELSE 0 END, similarity(f.normalized_name_ar, $1) * 70)
-			FROM families f WHERE ($2 = '' OR f.id = $2::uuid)
+			       GREATEST(CASE WHEN f.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END, similarity(f.normalized_name_ar, `+termRef+`) * 70)
+			FROM families f WHERE (`+personRef+` = '' OR f.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text,
-			       GREATEST(CASE WHEN t.normalized_name_ar = $1 THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar = $1) THEN 90 ELSE 0 END, similarity(t.normalized_name_ar, $1) * 70)
-			FROM tribes t WHERE ($2 = '' OR t.id = $2::uuid)
+			       GREATEST(CASE WHEN t.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END, similarity(t.normalized_name_ar, `+termRef+`) * 70)
+			FROM tribes t WHERE (`+personRef+` = '' OR t.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text,
-			       GREATEST(CASE WHEN b.normalized_name_ar = $1 THEN 100 ELSE 0 END, similarity(b.normalized_name_ar, $1) * 70)
-			FROM branches b JOIN families f ON f.id = b.family_id WHERE ($2 = '' OR b.id = $2::uuid)
+			       GREATEST(CASE WHEN b.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, similarity(b.normalized_name_ar, `+termRef+`) * 70)
+			FROM branches b JOIN families f ON f.id = b.family_id WHERE (`+personRef+` = '' OR b.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type,
-			       GREATEST(CASE WHEN p.normalized_name_ar = $1 THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || $1 || '%') THEN 85 ELSE 0 END, similarity(p.normalized_name_ar, $1) * 70)
-			FROM places p WHERE ($2 = '' OR p.id = $2::uuid) AND ($3 = '' OR p.id = $3::uuid)
+			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || `+termRef+` || '%') THEN 85 ELSE 0 END, similarity(p.normalized_name_ar, `+termRef+`) * 70)
+			FROM places p WHERE (`+personRef+` = '' OR p.id = `+personRef+`::uuid) AND (`+placeRef+` = '' OR p.id = `+placeRef+`::uuid)
 		)
-		SELECT id, kind, name, secondary, status, score FROM results WHERE score > 0 ORDER BY score DESC, name LIMIT $4
-	`, query, input.EntityID, input.PlaceID, input.Limit)
+		SELECT id, kind, name, secondary, status, score FROM results WHERE score > 0 ORDER BY score DESC, name LIMIT `+limitRef+`
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,32 +264,34 @@ func (s *Service) searchSources(ctx context.Context, query string, input Input) 
 	return items, rows.Err()
 }
 
-func (s *Service) searchClaims(ctx context.Context, query string, input Input) ([]Result, error) {
+// searchClaims ranks claims under the central claim policy. The all-or-nothing
+// source rule that used to be spelled out inline now lives in one place, so a claim
+// resting on a private source cannot reach an anonymous caller.
+func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
+	params := visibility.NewParams()
+	claimPredicate := policy.ClaimPredicate(params, "c.id")
+	termRef := params.Add(query)
+	statusRef := params.Add(input.Status)
+	personRef := params.Add(input.PersonID)
+	placeRef := params.Add(input.PlaceID)
+	sourceRef := params.Add(input.SourceID)
+	fromYear := params.Add(input.FromYear)
+	toYear := params.Add(input.ToYear)
+	limitRef := params.Add(input.Limit)
 	rows, err := s.Pool.Query(ctx, `
 		SELECT c.id, c.predicate, COALESCE(c.notes_ar, ''), c.status,
-		       GREATEST(CASE WHEN c.predicate = $1 THEN 100 ELSE 0 END, similarity(c.predicate, $1) * 70, CASE WHEN COALESCE(c.notes_ar, '') ILIKE '%' || $1 || '%' THEN 60 ELSE 0 END) AS score
+		       GREATEST(CASE WHEN c.predicate = `+termRef+` THEN 100 ELSE 0 END, similarity(c.predicate, `+termRef+`) * 70, CASE WHEN COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' THEN 60 ELSE 0 END) AS score
 		FROM claims c
-		WHERE ($1 = '' OR c.predicate ILIKE '%' || $1 || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || $1 || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND p.canonical_name_ar ILIKE '%' || $1 || '%'))
-		  AND ($2 = '' OR c.status = $2)
-		  AND ($3 = '' OR c.subject_id = $3::uuid OR c.object_id = $3::uuid)
-		  AND ($4 = '' OR c.place_id = $4::uuid)
-		  AND ($5 = '' OR EXISTS (SELECT 1 FROM claim_evidence ce WHERE ce.claim_id = c.id AND ce.source_statement_id IN (SELECT ss.id FROM source_statements ss WHERE ss.source_id = $5::uuid)))
-		  AND ($7 = 0 OR c.time_from IS NULL OR EXTRACT(YEAR FROM c.time_from) <= $7)
-		  AND ($6 = 0 OR c.time_to IS NULL OR EXTRACT(YEAR FROM c.time_to) >= $6)
-		  AND NOT EXISTS (
-			SELECT 1 FROM claim_evidence ce
-			JOIN source_statements ss ON ss.id = ce.source_statement_id
-			JOIN sources sx ON sx.id = ss.source_id
-			WHERE ce.claim_id = c.id AND sx.visibility = 'private'
-		  )
-		  AND NOT EXISTS (
-			SELECT 1 FROM claim_counter_evidence cce
-			JOIN source_statements ss ON ss.id = cce.source_statement_id
-			JOIN sources sx ON sx.id = ss.source_id
-			WHERE cce.claim_id = c.id AND sx.visibility = 'private'
-		  )
-		ORDER BY score DESC, c.updated_at DESC LIMIT $8
-	`, query, input.Status, input.PersonID, input.PlaceID, input.SourceID, input.FromYear, input.ToYear, input.Limit)
+		WHERE (`+termRef+` = '' OR c.predicate ILIKE '%' || `+termRef+` || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND p.canonical_name_ar ILIKE '%' || `+termRef+` || '%'))
+		  AND `+claimPredicate+`
+		  AND (`+statusRef+` = '' OR c.status = `+statusRef+`)
+		  AND (`+personRef+` = '' OR c.subject_id = `+personRef+`::uuid OR c.object_id = `+personRef+`::uuid)
+		  AND (`+placeRef+` = '' OR c.place_id = `+placeRef+`::uuid)
+		  AND (`+sourceRef+` = '' OR EXISTS (SELECT 1 FROM claim_evidence ce WHERE ce.claim_id = c.id AND ce.source_statement_id IN (SELECT ss.id FROM source_statements ss WHERE ss.source_id = `+sourceRef+`::uuid)))
+		  AND (`+fromYear+` = 0 OR c.time_from IS NULL OR EXTRACT(YEAR FROM c.time_from) <= `+fromYear+`)
+		  AND (`+toYear+` = 0 OR c.time_to IS NULL OR EXTRACT(YEAR FROM c.time_to) >= `+toYear+`)
+		ORDER BY score DESC, c.updated_at DESC LIMIT `+limitRef+`
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -320,15 +340,23 @@ func (s *Service) searchPassages(ctx context.Context, query string, input Input)
 	return items, rows.Err()
 }
 
-func (s *Service) searchQuestions(ctx context.Context, query string, input Input) ([]Result, error) {
+// searchQuestions ranks open questions under the central question policy, so a
+// research-only question stays out of anonymous results.
+func (s *Service) searchQuestions(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
+	params := visibility.NewParams()
+	questionPredicate := policy.QuestionPredicate(params, "q.id")
+	termRef := params.Add(query)
+	statusRef := params.Add(input.Status)
+	limitRef := params.Add(input.Limit)
 	rows, err := s.Pool.Query(ctx, `
 		SELECT q.id, q.title_ar, COALESCE(q.description_ar, ''), q.status,
-		       GREATEST(CASE WHEN q.title_ar = $1 THEN 100 ELSE 0 END, similarity(q.title_ar, $1) * 70, CASE WHEN COALESCE(q.description_ar, '') ILIKE '%' || $1 || '%' THEN 55 ELSE 0 END) AS score
+		       GREATEST(CASE WHEN q.title_ar = `+termRef+` THEN 100 ELSE 0 END, similarity(q.title_ar, `+termRef+`) * 70, CASE WHEN COALESCE(q.description_ar, '') ILIKE '%' || `+termRef+` || '%' THEN 55 ELSE 0 END) AS score
 		FROM open_questions q
-		WHERE ($1 = '' OR q.title_ar ILIKE '%' || $1 || '%' OR COALESCE(q.description_ar, '') ILIKE '%' || $1 || '%')
-		  AND ($2 = '' OR q.status = $2)
-		ORDER BY score DESC, q.updated_at DESC LIMIT $3
-	`, query, input.Status, input.Limit)
+		WHERE (`+termRef+` = '' OR q.title_ar ILIKE '%' || `+termRef+` || '%' OR COALESCE(q.description_ar, '') ILIKE '%' || `+termRef+` || '%')
+		  AND `+questionPredicate+`
+		  AND (`+statusRef+` = '' OR q.status = `+statusRef+`)
+		ORDER BY score DESC, q.updated_at DESC LIMIT `+limitRef+`
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}

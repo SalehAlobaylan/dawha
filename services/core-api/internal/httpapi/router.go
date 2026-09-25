@@ -68,13 +68,13 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	questionService := questions.NewService(dependencies.DB)
 	questionHandler := questionHandler{Service: questionService, Auth: authService}
 	dictionaryService := dictionary.NewService(dependencies.DB)
-	dictionaryHandler := dictionaryHandler{Service: dictionaryService}
+	dictionaryHandler := dictionaryHandler{Service: dictionaryService, Auth: authService}
 	entityResolutionService := entityresolution.NewService(dependencies.DB, dependencies.AI)
 	entityResolutionHandler := entityResolutionHandler{Service: entityResolutionService, Auth: authService}
 	geographyService := geography.NewService(dependencies.DB)
 	geographyHandler := geographyHandler{Service: geographyService}
 	searchService := search.NewService(dependencies.DB, dependencies.AI)
-	searchHandler := searchHandler{Service: searchService}
+	searchHandler := searchHandler{Service: searchService, Auth: authService}
 	researchService := research.NewService(dependencies.DB, dependencies.AI)
 	researchHandler := researchHandler{Service: researchService, Auth: authService, Logger: dependencies.Logger}
 	researchAgentService := researchagent.NewService(dependencies.DB)
