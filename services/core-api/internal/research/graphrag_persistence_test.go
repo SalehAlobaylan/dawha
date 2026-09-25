@@ -74,6 +74,45 @@ func TestGraphPersistenceAgainstDatabase(t *testing.T) {
 	}
 }
 
+func TestGraphConnectedComponentPersistenceAgainstDatabase(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	pool, err := db.NewPool(context.Background(), db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	defer pool.Close()
+	input, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphStartType: "person", TreeID: "b0000000-0000-0000-0000-000000000001", TreeVersionID: "b1000000-0000-0000-0000-000000000003", GraphMaxDepth: GraphMaxDepth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Pool: pool}
+	result, err := service.retrieveGraph(context.Background(), input, "")
+	if err != nil || len(result.Paths) == 0 {
+		t.Fatalf("component retrieval failed: %v", err)
+	}
+	runIDText, _, err := service.startRun(context.Background(), input, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM research_runs WHERE id = $1`, runIDText)
+	if err := service.persistRun(context.Background(), runIDText, QueryResult{Answer: "إجابة", GraphPaths: result.Paths, GraphStats: result.Stats}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := runGraphPaths(context.Background(), pool, uuid.MustParse(runIDText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].Operation != GraphOperationConnectedComponent || loaded[0].AlgorithmVersion != GraphComponentAlgorithm || loaded[0].TreeScope.TreeVersionID != input.TreeVersionID || len(loaded[0].Nodes) != len(result.Paths[0].Nodes) || len(loaded[0].Edges) != len(result.Paths[0].Edges) {
+		t.Fatalf("connected component did not round-trip: %+v", loaded)
+	}
+	if err := validateGraphPaths(loaded, input.GraphMaxDepth); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGraphPersistenceAllowsSharedEvidenceAcrossClaims(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {

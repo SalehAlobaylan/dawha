@@ -16,27 +16,31 @@ import (
 )
 
 const (
-	GraphOperationCommonAncestor = "common_ancestor_path"
-	GraphOperationEvidence       = "evidence_connection"
-	GraphOperationBranchClaims   = "branch_claims"
-	GraphOperationSourceEntities = "source_entities"
-	GraphOperationGeographic     = "geographic_path"
-	GraphOperationShortestPath   = "shortest_relationship_path"
-	GraphAlgorithmVersion        = "graphrag-v1"
-	GraphShortestPathAlgorithm   = "graphrag-shortest-tree-v1"
-	GraphDefaultDepth            = 2
-	GraphMaxDepth                = 3
-	GraphMaxPaths                = 5
-	GraphMaxEdges                = 200
+	GraphOperationCommonAncestor     = "common_ancestor_path"
+	GraphOperationEvidence           = "evidence_connection"
+	GraphOperationBranchClaims       = "branch_claims"
+	GraphOperationSourceEntities     = "source_entities"
+	GraphOperationGeographic         = "geographic_path"
+	GraphOperationShortestPath       = "shortest_relationship_path"
+	GraphOperationConnectedComponent = "connected_component"
+	GraphAlgorithmVersion            = "graphrag-v1"
+	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
+	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
+	GraphDefaultDepth                = 2
+	GraphMaxDepth                    = 3
+	GraphMaxPaths                    = 5
+	GraphMaxNodes                    = 200
+	GraphMaxEdges                    = 200
 )
 
 var graphOperations = map[string]struct{}{
-	GraphOperationCommonAncestor: {},
-	GraphOperationEvidence:       {},
-	GraphOperationBranchClaims:   {},
-	GraphOperationSourceEntities: {},
-	GraphOperationGeographic:     {},
-	GraphOperationShortestPath:   {},
+	GraphOperationCommonAncestor:     {},
+	GraphOperationEvidence:           {},
+	GraphOperationBranchClaims:       {},
+	GraphOperationSourceEntities:     {},
+	GraphOperationGeographic:         {},
+	GraphOperationShortestPath:       {},
+	GraphOperationConnectedComponent: {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -84,7 +88,7 @@ func normalizeGraphInput(input QueryInput) (QueryInput, error) {
 		switch input.GraphOperation {
 		case GraphOperationSourceEntities:
 			input.GraphStartID = input.SourceID
-		case GraphOperationBranchClaims, GraphOperationCommonAncestor, GraphOperationEvidence, GraphOperationGeographic, GraphOperationShortestPath:
+		case GraphOperationBranchClaims, GraphOperationCommonAncestor, GraphOperationEvidence, GraphOperationGeographic, GraphOperationShortestPath, GraphOperationConnectedComponent:
 			if input.EntityID != "" {
 				input.GraphStartID = input.EntityID
 			} else {
@@ -162,6 +166,10 @@ func validateGraphEndpointCombination(input QueryInput) error {
 		if input.GraphStartType != "person" || input.GraphEndType != "person" || input.GraphStartID == "" || input.GraphEndID == "" || input.GraphStartID == input.GraphEndID || input.TreeID == "" || input.TreeVersionID == "" {
 			return ErrValidation
 		}
+	case GraphOperationConnectedComponent:
+		if input.GraphStartType != "person" || input.GraphEndID != "" || input.TreeID == "" || input.TreeVersionID == "" {
+			return ErrValidation
+		}
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
 			return ErrValidation
@@ -232,6 +240,8 @@ func (s *Service) retrieveGraph(ctx context.Context, input QueryInput, actorID s
 		rows, err = tx.Query(queryCtx, sourceEntitiesGraphQuery, input.GraphStartID, nullableUUID(actorUUID), GraphMaxPaths, GraphMaxEdges, input.GraphMaxDepth)
 	case GraphOperationShortestPath:
 		rows, err = tx.Query(queryCtx, shortestRelationshipGraphQuery, input.GraphStartID, input.GraphEndID, nullableUUID(actorUUID), nullableUUID(optionalUUID(input.TreeID)), nullableUUID(optionalUUID(input.TreeVersionID)), input.GraphMaxDepth, GraphMaxPaths, GraphMaxEdges)
+	case GraphOperationConnectedComponent:
+		rows, err = tx.Query(queryCtx, connectedComponentGraphQuery, input.GraphStartID, nullableUUID(actorUUID), nullableUUID(optionalUUID(input.TreeID)), nullableUUID(optionalUUID(input.TreeVersionID)), input.GraphMaxDepth, GraphMaxNodes, GraphMaxEdges)
 	case GraphOperationGeographic:
 		geographicQuery := geographicGraphQuery
 		if input.GraphStartType == "place" {
@@ -315,6 +325,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationShortestPath {
 		return GraphShortestPathAlgorithm
 	}
+	if operation == GraphOperationConnectedComponent {
+		return GraphComponentAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -326,6 +339,9 @@ func graphPathID(path GraphPath, nodes, edges, evidence []byte) string {
 func graphExplanation(operation, status string, structuralOnly bool) string {
 	if operation == GraphOperationShortestPath {
 		return "أقصر مسار علائقي داخل تفسير شجرة منشورة؛ يصف بنية التفسير ولا يثبت علاقة تاريخية نهائية."
+	}
+	if operation == GraphOperationConnectedComponent {
+		return "مكوّن متصل داخل تفسير شجرة منشورة؛ يصف بنية الاتصال ولا يثبت صلة أو قرابة تاريخية نهائية."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."
@@ -363,6 +379,10 @@ func normalizeGraphPaths(paths []GraphPath) []GraphPath {
 		}
 		if paths[index].EvidenceRefs == nil {
 			paths[index].EvidenceRefs = []GraphEvidenceRef{}
+		}
+		if len(paths[index].Nodes) > GraphMaxNodes {
+			paths[index].Nodes = paths[index].Nodes[:GraphMaxNodes]
+			paths[index].Truncated = true
 		}
 		for nodeIndex := range paths[index].Nodes {
 			paths[index].Nodes[nodeIndex].Label = boundedText(paths[index].Nodes[nodeIndex].Label, 4000)
@@ -634,6 +654,11 @@ func graphStatsForPaths(operation string, maxDepth int, paths []GraphPath) Graph
 		stats.EdgesTruncated = true
 		stats.Truncated = true
 	}
+	if stats.NodeCount > GraphMaxNodes {
+		stats.NodeCount = GraphMaxNodes
+		stats.Truncated = true
+		stats.PathsTruncated = true
+	}
 	return stats
 }
 
@@ -651,7 +676,7 @@ func validateGraphPaths(paths []GraphPath, maxDepth int) error {
 		if path.Depth < 0 || path.Depth > GraphMaxDepth || path.Depth > maxDepth {
 			return ErrValidation
 		}
-		if len(path.Nodes) == 0 || len(path.Edges) > GraphMaxEdges || len(path.EvidenceRefs) > GraphMaxEdges {
+		if len(path.Nodes) == 0 || len(path.Nodes) > GraphMaxNodes || len(path.Edges) > GraphMaxEdges || len(path.EvidenceRefs) > GraphMaxEdges {
 			return ErrValidation
 		}
 		nodeIDs := make(map[string]struct{}, len(path.Nodes))
@@ -678,6 +703,183 @@ func validateGraphPaths(paths []GraphPath, maxDepth int) error {
 	}
 	return nil
 }
+
+const connectedComponentGraphQuery = `
+WITH RECURSIVE
+parameters AS (
+  SELECT $1::uuid AS start_person_id, $2::uuid AS actor_id,
+         $3::uuid AS tree_id, $4::uuid AS tree_version_id,
+         $5::integer AS max_depth, $6::integer AS max_nodes, $7::integer AS max_edges
+),
+visible_versions AS (
+  SELECT tv.id AS tree_version_id, tv.tree_id, tv.version_number, tv.state AS version_state, t.name_ar, t.owner_id
+  FROM tree_versions tv
+  JOIN trees t ON t.id = tv.tree_id
+  CROSS JOIN parameters p
+  WHERE tv.state = 'published'
+    AND (p.tree_id IS NULL OR t.id = p.tree_id)
+    AND (p.tree_version_id IS NULL OR tv.id = p.tree_version_id)
+    AND (t.visibility = 'public' OR (p.actor_id IS NOT NULL AND (t.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = p.actor_id))))
+),
+start_node AS (
+  SELECT v.tree_version_id, v.tree_id, v.version_number, v.version_state, v.name_ar, tn.id AS node_id, tn.person_id, tn.display_name_ar
+  FROM visible_versions v
+  JOIN tree_nodes tn ON tn.tree_version_id = v.tree_version_id
+  CROSS JOIN parameters p
+  WHERE tn.person_id = p.start_person_id
+),
+relationship_edges AS (
+  SELECT tr.id AS edge_id, tr.tree_version_id,
+         tr.subject_node_id AS semantic_from_node_id, tr.object_node_id AS semantic_to_node_id,
+         tr.predicate, tr.status, tr.source_id,
+         CASE WHEN tr.source_id IS NULL OR s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR v.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = v.tree_id AND tc.user_id = p.actor_id))) THEN tr.source_id ELSE NULL END AS visible_source_id,
+         CASE WHEN tr.source_id IS NULL OR s.visibility = 'public' OR (p.actor_id IS NOT NULL AND (s.created_by = p.actor_id OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = p.actor_id AND ur.role IN ('researcher', 'moderator', 'admin')) OR v.owner_id = p.actor_id OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = v.tree_id AND tc.user_id = p.actor_id))) THEN s.title_ar ELSE NULL END AS visible_source_title
+  FROM tree_relationships tr
+  JOIN visible_versions v ON v.tree_version_id = tr.tree_version_id
+  LEFT JOIN sources s ON s.id = tr.source_id
+  CROSS JOIN parameters p
+  WHERE tr.predicate IN ('parent_of', 'spouse_of', 'sibling_of')
+),
+undirected_edges AS (
+  SELECT edge_id, tree_version_id, semantic_from_node_id, semantic_to_node_id, predicate, status, visible_source_id, visible_source_title, semantic_from_node_id AS from_node_id, semantic_to_node_id AS to_node_id
+  FROM relationship_edges
+  UNION ALL
+  SELECT edge_id, tree_version_id, semantic_from_node_id, semantic_to_node_id, predicate, status, visible_source_id, visible_source_title, semantic_to_node_id AS from_node_id, semantic_from_node_id AS to_node_id
+  FROM relationship_edges
+),
+bfs (depth, frontier, visited, saturated) AS (
+  SELECT 0, ARRAY[node_id]::uuid[], ARRAY[node_id]::uuid[], false
+  FROM start_node
+  UNION ALL
+  SELECT next_bfs.depth, next_bfs.frontier, next_bfs.visited, next_bfs.saturated
+  FROM (
+    SELECT b.depth + 1 AS depth,
+           next_nodes.frontier,
+           b.visited || next_nodes.frontier AS visited,
+           b.saturated OR next_nodes.candidate_count > $6 AS saturated
+    FROM bfs b
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(array_agg(candidate.node_id ORDER BY candidate.node_id), ARRAY[]::uuid[]) AS frontier,
+             count(*)::integer AS candidate_count
+      FROM (
+        SELECT DISTINCT e.to_node_id AS node_id
+        FROM undirected_edges e
+        WHERE e.from_node_id = ANY(b.frontier)
+          AND NOT e.to_node_id = ANY(b.visited)
+        ORDER BY e.to_node_id
+        LIMIT ($6 + 1)
+      ) candidate
+    ) next_nodes
+    WHERE b.depth < $5 AND next_nodes.candidate_count > 0
+  ) next_bfs
+),
+level_nodes AS (
+  SELECT unnest(b.frontier) AS node_id, b.depth
+  FROM bfs b
+),
+reachable_nodes AS (
+  SELECT node_id, min(depth)::integer AS depth
+  FROM level_nodes
+  GROUP BY node_id
+),
+ranked_nodes AS (
+  SELECT node_id, depth, row_number() OVER (ORDER BY depth, node_id) AS node_order,
+         count(*) OVER () AS node_count
+  FROM reachable_nodes
+),
+bounded_nodes AS (
+  SELECT node_id, depth, node_order, node_count
+  FROM ranked_nodes
+  WHERE node_order <= $6
+),
+component_edges AS (
+  SELECT e.edge_id, e.semantic_from_node_id, e.semantic_to_node_id, e.predicate, e.status,
+         e.visible_source_id, e.visible_source_title,
+         row_number() OVER (ORDER BY e.edge_id) AS edge_order,
+         count(*) OVER () AS edge_count
+  FROM relationship_edges e
+  JOIN bounded_nodes from_node ON from_node.node_id = e.semantic_from_node_id
+  JOIN bounded_nodes to_node ON to_node.node_id = e.semantic_to_node_id
+),
+bounded_edges AS (
+  SELECT edge_id, semantic_from_node_id, semantic_to_node_id, predicate, status,
+         visible_source_id, visible_source_title, edge_order, edge_count
+  FROM component_edges
+  WHERE edge_order <= $7
+),
+component_state AS (
+  SELECT
+    (SELECT COALESCE(max(depth), 0)::integer FROM bounded_nodes) AS component_depth,
+    (SELECT count(*) > $6 FROM ranked_nodes) AS nodes_truncated,
+    (SELECT count(*) > $7 FROM component_edges) AS edges_truncated,
+    COALESCE((SELECT bool_or(saturated) FROM bfs), false) AS traversal_saturated,
+    EXISTS (
+      SELECT 1
+      FROM bfs b
+      WHERE b.depth = $5
+        AND EXISTS (
+          SELECT 1
+          FROM undirected_edges e
+          WHERE e.from_node_id = ANY(b.frontier)
+            AND NOT e.to_node_id = ANY(b.visited)
+        )
+    ) AS depth_truncated
+),
+component_nodes AS (
+  SELECT jsonb_agg(jsonb_build_object(
+           'id', tn.id::text,
+           'type', 'person',
+           'label', left(tn.display_name_ar, 400),
+           'personId', tn.person_id::text,
+           'treeNodeId', tn.id::text,
+           'position', bn.node_order - 1
+         ) ORDER BY bn.node_order) AS nodes
+  FROM bounded_nodes bn
+  JOIN tree_nodes tn ON tn.id = bn.node_id
+),
+component_edges_json AS (
+  SELECT jsonb_agg(jsonb_build_object(
+           'id', edge_id::text,
+           'type', 'tree_relationship',
+           'fromNodeId', semantic_from_node_id::text,
+           'toNodeId', semantic_to_node_id::text,
+           'pathFromNodeId', semantic_from_node_id::text,
+           'pathToNodeId', semantic_to_node_id::text,
+           'predicate', predicate,
+           'status', status,
+           'sourceId', visible_source_id,
+           'treeRelationshipId', edge_id::text,
+           'position', edge_order - 1
+         ) ORDER BY edge_order) AS edges,
+         bool_or(status IN ('disputed', 'contested', 'contradicted')) AS contested,
+         bool_or(status = 'unresolved') AS partial
+  FROM bounded_edges
+),
+component_refs AS (
+  SELECT jsonb_agg(jsonb_build_object(
+           'id', edge_id::text,
+           'type', 'tree_relationship',
+           'layer', 'tree_interpretation',
+           'relation', 'supports',
+           'sourceId', visible_source_id,
+           'title', visible_source_title,
+           'status', status
+         ) ORDER BY edge_order) AS refs
+  FROM bounded_edges
+  WHERE visible_source_id IS NOT NULL
+)
+SELECT 'connected_component',
+       CASE WHEN COALESCE(ce.contested, false) THEN 'contested' WHEN COALESCE(ce.partial, false) THEN 'partial' ELSE 'structural' END,
+       sn.version_number::integer, sn.tree_id::text, sn.tree_version_id::text, sn.version_state,
+       cs.component_depth,
+       (cs.nodes_truncated OR cs.edges_truncated OR cs.traversal_saturated OR cs.depth_truncated),
+       false, true, cn.nodes, COALESCE(ce.edges, '[]'::jsonb), COALESCE(cr.refs, '[]'::jsonb)
+FROM start_node sn
+CROSS JOIN component_state cs
+LEFT JOIN component_nodes cn ON TRUE
+LEFT JOIN component_edges_json ce ON TRUE
+LEFT JOIN component_refs cr ON TRUE
+`
 
 const shortestRelationshipGraphQuery = `
 WITH RECURSIVE

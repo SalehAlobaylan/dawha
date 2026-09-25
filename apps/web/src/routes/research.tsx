@@ -29,6 +29,7 @@ export function ResearchPage() {
   const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
   const contextualEntityID = isUuid(contextSearch.entityId) ? contextSearch.entityId : "";
   const graphStartIDValue = graphOperation === "source_entities" ? graphStartID : graphStartID || contextualEntityID;
+  const graphTreeScoped = graphOperation === "shortest_relationship_path" || graphOperation === "connected_component";
   const graphEndRequired = graphOperation === "common_ancestor_path" || graphOperation === "evidence_connection" || graphOperation === "geographic_path" || graphOperation === "shortest_relationship_path";
   const visibleSources = useMemo(() => {
     const normalized = search.trim();
@@ -50,8 +51,8 @@ export function ResearchPage() {
         graph_end_type: graphOperation === "geographic_path" ? "place" as const : graphOperation === "source_entities" ? undefined : graphStartType,
         graph_end_id: graphEndRequired ? graphEndID || undefined : undefined,
         graph_max_depth: graphMaxDepth,
-        tree_id: graphOperation === "shortest_relationship_path" ? graphTreeID || undefined : undefined,
-        tree_version_id: graphOperation === "shortest_relationship_path" ? graphTreeVersionID || undefined : undefined,
+        tree_id: graphTreeScoped ? graphTreeID || undefined : undefined,
+        tree_version_id: graphTreeScoped ? graphTreeVersionID || undefined : undefined,
       } : {};
       setResearchResult(await queryResearch({ question, entity_type: contextualEntityType, entity_id: contextualEntityID || undefined, tree_id: isUuid(contextSearch.treeId) ? contextSearch.treeId : undefined, tree_version_id: isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId : undefined, ...graphInput }));
     } catch (error) {
@@ -105,8 +106,8 @@ export function ResearchPage() {
             <div className="research-graph-mode">
               <div className="research-graph-mode-copy"><GitBranch size={15} /><div><strong>مسار 관계</strong><small>اجعل الاستعلام يستخدم بنية relationships محدودة، مع إبقاء الأدلة قابلة للتتبع.</small></div></div>
               <div className="research-graph-fields">
-                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
-                {graphOperation ? <><label>نقطة البداية<input required value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphOperation === "shortest_relationship_path" ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
+                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="connected_component">مكوّن متصل داخل تفسير منشور</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
+                {graphOperation ? <><label>{graphOperation === "connected_component" ? "الشخص الجذر" : "نقطة البداية"}<input required value={graphStartIDValue} onChange={(event) => setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" && graphOperation !== "connected_component" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphTreeScoped ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
               </div>
             </div>
             {researchError ? <p className="research-query-error">{researchError}</p> : null}
@@ -147,7 +148,7 @@ export function ResearchPage() {
 
 function graphStartTypeFor(operation: GraphOperation | "", entityType: "person" | "family" | "branch" | undefined): "person" | "family" | "branch" | "source" {
   if (operation === "source_entities") return "source";
-  if (operation === "common_ancestor_path" || operation === "shortest_relationship_path") return "person";
+  if (operation === "common_ancestor_path" || operation === "shortest_relationship_path" || operation === "connected_component") return "person";
   return entityType ?? "person";
 }
 
@@ -253,7 +254,7 @@ function graphNodeLabel(path: GraphPath, nodeId: string): string {
 }
 
 function graphOperationLabel(operation: GraphOperation): string {
-  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
   return labels[operation];
 }
 

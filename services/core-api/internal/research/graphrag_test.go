@@ -52,6 +52,32 @@ func TestNormalizeShortestRelationshipInput(t *testing.T) {
 	}
 }
 
+func TestNormalizeConnectedComponentInput(t *testing.T) {
+	valid, err := validateQueryInput(QueryInput{
+		Question:       "سؤال",
+		GraphOperation: GraphOperationConnectedComponent,
+		GraphStartType: "person",
+		GraphStartID:   "10000000-0000-0000-0000-000000000001",
+		TreeID:         "b0000000-0000-0000-0000-000000000001",
+		TreeVersionID:  "b1000000-0000-0000-0000-000000000001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid.GraphMaxDepth != GraphDefaultDepth || valid.GraphEndID != "" {
+		t.Fatalf("unexpected connected component input: %+v", valid)
+	}
+	for _, input := range []QueryInput{
+		{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001"},
+		{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "family", GraphStartID: "10000000-0000-0000-0000-000000000001", TreeID: "b0000000-0000-0000-0000-000000000001", TreeVersionID: "b1000000-0000-0000-0000-000000000001"},
+		{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndID: "10000000-0000-0000-0000-000000000002", TreeID: "b0000000-0000-0000-0000-000000000001", TreeVersionID: "b1000000-0000-0000-0000-000000000001"},
+	} {
+		if _, err := validateQueryInput(input); !errors.Is(err, ErrValidation) {
+			t.Fatalf("expected connected component validation error for %+v, got %v", input, err)
+		}
+	}
+}
+
 func TestNormalizeGraphInputRejectsInvalidCombinations(t *testing.T) {
 	cases := []QueryInput{
 		{Question: "سؤال", GraphOperation: "unknown"},
@@ -282,6 +308,89 @@ func TestGraphShortestRelationshipPathIsBoundedAndDirectional(t *testing.T) {
 	}
 }
 
+func TestGraphConnectedComponentIsVersionScopedAndBounded(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	defer pool.Close()
+
+	ownerID := uuid.New()
+	treeID := uuid.New()
+	versionID := uuid.New()
+	emptyVersionID := uuid.New()
+	personIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	nodeIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	edgeIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مالك المكوّن')`, ownerID, "component-"+ownerID.String()+"@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ownerID)
+	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) SELECT p.id, p.name, p.name, $1 FROM (VALUES ($2::uuid, 'جذر المكوّن'), ($3::uuid, 'الفرد الثاني'), ($4::uuid, 'الفرد الثالث'), ($5::uuid, 'الفرد الرابع'), ($6::uuid, 'فرد منفصل'), ($7::uuid, 'فرد منفصل آخر')) AS p(id, name)`, ownerID, personIDs[0], personIDs[1], personIDs[2], personIDs[3], personIDs[4], personIDs[5]); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, personIDs)
+	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة المكوّن', 'public', $2)`, treeID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state) VALUES ($1, $2, 1, 'published'), ($3, $2, 2, 'published')`, versionID, treeID, emptyVersionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar) VALUES ($1, $3, $4, 'جذر المكوّن'), ($2, $3, $5, 'الفرد الثاني'), ($6, $3, $7, 'الفرد الثالث'), ($8, $3, $9, 'الفرد الرابع'), ($10, $3, $11, 'فرد منفصل'), ($12, $3, $13, 'فرد منفصل آخر')`, nodeIDs[0], nodeIDs[1], versionID, personIDs[0], personIDs[1], nodeIDs[2], personIDs[2], nodeIDs[3], personIDs[3], nodeIDs[4], personIDs[4], nodeIDs[5], personIDs[5]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, created_by) VALUES ($1, $2, $3, $4, 'parent_of', 'interpreted', $5), ($6, $2, $4, $7, 'sibling_of', 'unresolved', $5), ($8, $2, $7, $9, 'spouse_of', 'disputed', $5), ($10, $2, $9, $3, 'parent_of', 'interpreted', $5), ($11, $2, $12, $13, 'parent_of', 'interpreted', $5)`, edgeIDs[0], versionID, nodeIDs[0], nodeIDs[1], ownerID, edgeIDs[1], nodeIDs[2], edgeIDs[2], nodeIDs[3], edgeIDs[3], edgeIDs[4], nodeIDs[4], nodeIDs[5]); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "person", GraphStartID: personIDs[0].String(), TreeID: treeID.String(), TreeVersionID: versionID.String(), GraphMaxDepth: GraphMaxDepth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Pool: pool}
+	result, err := service.retrieveGraph(ctx, input, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Paths) != 1 || len(result.Paths[0].Nodes) != 4 || len(result.Paths[0].Edges) != 4 || result.Paths[0].Status != "contested" || !result.Paths[0].StructuralOnly || result.Paths[0].Truncated {
+		t.Fatalf("unexpected connected component: %+v", result.Paths)
+	}
+	if result.Paths[0].TreeScope.TreeVersionID != versionID.String() || result.Paths[0].AlgorithmVersion != GraphComponentAlgorithm {
+		t.Fatalf("component scope or algorithm mismatch: %+v", result.Paths[0])
+	}
+	for _, node := range result.Paths[0].Nodes {
+		if node.ID == nodeIDs[4].String() || node.ID == nodeIDs[5].String() {
+			t.Fatalf("disconnected node leaked into component: %+v", result.Paths[0].Nodes)
+		}
+	}
+	repeat, err := service.retrieveGraph(ctx, input, "")
+	if err != nil || len(repeat.Paths) != 1 || repeat.Paths[0].ID != result.Paths[0].ID {
+		t.Fatalf("component result was not deterministic: %+v", repeat.Paths)
+	}
+	shallowInput, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "person", GraphStartID: personIDs[0].String(), TreeID: treeID.String(), TreeVersionID: versionID.String(), GraphMaxDepth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shallow, err := service.retrieveGraph(ctx, shallowInput, "")
+	if err != nil || len(shallow.Paths) != 1 || len(shallow.Paths[0].Nodes) != 3 || !shallow.Paths[0].Truncated {
+		t.Fatalf("depth cap was not reported: %+v", shallow.Paths)
+	}
+	emptyInput, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartType: "person", GraphStartID: personIDs[0].String(), TreeID: treeID.String(), TreeVersionID: emptyVersionID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := service.retrieveGraph(ctx, emptyInput, "")
+	if err != nil || len(empty.Paths) != 0 {
+		t.Fatalf("component crossed the selected version: %+v", empty.Paths)
+	}
+}
+
 func TestGraphRetrievalSkipsOrdinaryQueries(t *testing.T) {
 	result, err := (&Service{}).retrieveGraph(context.Background(), QueryInput{Question: "سؤال"}, "")
 	if err != nil {
@@ -419,6 +528,7 @@ func TestGraphQueriesAgainstDatabase(t *testing.T) {
 	}{
 		{name: "common", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationCommonAncestor, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndID: "10000000-0000-0000-0000-000000000002", GraphStartType: "person", GraphEndType: "person", GraphMaxDepth: GraphDefaultDepth}},
 		{name: "common_scoped", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationCommonAncestor, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndID: "10000000-0000-0000-0000-000000000002", GraphStartType: "person", GraphEndType: "person", TreeID: "b0000000-0000-0000-0000-000000000001", TreeVersionID: "b1000000-0000-0000-0000-000000000003", GraphMaxDepth: GraphDefaultDepth}},
+		{name: "connected_component_scoped", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationConnectedComponent, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphStartType: "person", TreeID: "b0000000-0000-0000-0000-000000000001", TreeVersionID: "b1000000-0000-0000-0000-000000000003", GraphMaxDepth: GraphMaxDepth}},
 		{name: "evidence", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationEvidence, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndID: "10000000-0000-0000-0000-000000000002", GraphStartType: "person", GraphEndType: "person", GraphMaxDepth: GraphDefaultDepth}},
 		{name: "branch", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationBranchClaims, GraphStartID: "10000000-0000-0000-0000-000000000001", GraphStartType: "person", GraphMaxDepth: GraphDefaultDepth}},
 		{name: "source", input: QueryInput{Question: "سؤال", GraphOperation: GraphOperationSourceEntities, GraphStartID: "30000000-0000-0000-0000-000000000001", GraphStartType: "source", GraphMaxDepth: GraphDefaultDepth}},
