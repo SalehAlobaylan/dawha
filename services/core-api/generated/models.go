@@ -264,6 +264,29 @@ type GeographicAssociation struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type GeospatialIntelligenceRun struct {
+	ID                         pgtype.UUID
+	RequestedBy                pgtype.UUID
+	QuestionID                 pgtype.UUID
+	EntityType                 string
+	EntityID                   pgtype.UUID
+	TreeID                     pgtype.UUID
+	TreeVersionID              pgtype.UUID
+	Status                     string
+	ReportStatus               pgtype.Text
+	ExecutionMode              string
+	AlgorithmVersion           string
+	QualificationPolicyVersion string
+	Scope                      []byte
+	Report                     []byte
+	FindingCount               int32
+	Error                      pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	StartedAt                  pgtype.Timestamptz
+	CompletedAt                pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+}
+
 type HistoricalPlaceName struct {
 	ID               pgtype.UUID
 	PlaceID          pgtype.UUID
@@ -418,6 +441,7 @@ type PlatformFinding struct {
 	ReviewNoteAr     pgtype.Text
 	Severity         string
 	TemporalRunID    pgtype.UUID
+	GeospatialRunID  pgtype.UUID
 }
 
 type PlatformFindingReview struct {
@@ -464,6 +488,87 @@ type QuestionSource struct {
 	QuestionID pgtype.UUID
 	SourceID   pgtype.UUID
 	Role       string
+}
+
+type ResearchAgentEvidence struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	StepID        pgtype.UUID
+	Layer         string
+	Stance        string
+	ReferenceType string
+	ReferenceID   pgtype.UUID
+	SourceID      pgtype.UUID
+	StatementID   pgtype.UUID
+	ClaimID       pgtype.UUID
+	Excerpt       string
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ResearchAgentGap struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	Kind          string
+	DescriptionAr string
+	Severity      string
+	Status        string
+	Metadata      []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ResearchAgentRecommendation struct {
+	ID          pgtype.UUID
+	RunID       pgtype.UUID
+	Action      string
+	RationaleAr string
+	Priority    string
+	Status      string
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ResearchAgentRun struct {
+	ID                         pgtype.UUID
+	RequestedBy                pgtype.UUID
+	QuestionID                 pgtype.UUID
+	Query                      string
+	NormalizedQuery            string
+	EntityType                 string
+	EntityID                   pgtype.UUID
+	TreeID                     pgtype.UUID
+	TreeVersionID              pgtype.UUID
+	Status                     string
+	Resolution                 string
+	ExecutionMode              string
+	PlannerVersion             string
+	AlgorithmVersion           string
+	QualificationPolicyVersion string
+	Report                     []byte
+	StepCount                  int32
+	EvidenceCount              int32
+	GapCount                   int32
+	RecommendationCount        int32
+	Error                      pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	StartedAt                  pgtype.Timestamptz
+	CompletedAt                pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+}
+
+type ResearchAgentStep struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	StepOrder     int32
+	Stage         string
+	ToolName      string
+	Status        string
+	Input         []byte
+	Output        []byte
+	EvidenceCount int32
+	Error         pgtype.Text
+	StartedAt     pgtype.Timestamptz
+	CompletedAt   pgtype.Timestamptz
 }
 
 type ResearchAnswer struct {

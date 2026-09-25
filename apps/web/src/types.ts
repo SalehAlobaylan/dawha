@@ -509,6 +509,8 @@ export interface ResearchWorkspaceContext {
 export interface ResearchWorkspacePermissions {
   canRunResearch: boolean;
   canRunTemporalAnalysis: boolean;
+  canRunGeospatialAnalysis: boolean;
+  canRunResearchAgent: boolean;
   canCreateClaim: boolean;
   canDisputeClaim: boolean;
   canLinkEvidence: boolean;
@@ -517,6 +519,7 @@ export interface ResearchWorkspacePermissions {
   canAttachFinding: boolean;
   canReviewFinding: boolean;
   canReviewTemporalFinding: boolean;
+  canReviewGeospatialFinding: boolean;
   canAddNote: boolean;
   canReviewIdentityCandidate: boolean;
   canMergeIdentity: boolean;
@@ -1354,6 +1357,355 @@ export interface MapResponse {
   toYear?: number;
   status?: string;
   features: MapFeature[];
+}
+
+export interface GeospatialScope {
+  entityType: "person" | "source" | "place";
+  entityId: string;
+  entityName: string;
+  treeId?: string;
+  treeVersionId?: string;
+  versionNumber?: number;
+  versionState?: string;
+  treeVisibility?: string;
+  radiusKm: number;
+  maximumRecords: number;
+  sourceIds: string[];
+  qualificationNotes: string[];
+}
+
+export interface GeospatialPlaceMention {
+  id: string;
+  mention: string;
+  normalizedName: string;
+  sourceId: string;
+  sourceTitle?: string;
+  statementId?: string;
+  passageId?: string;
+  placeId?: string;
+  placeName?: string;
+  resolution: "resolved" | "unresolved";
+  reason: string;
+  candidateIds?: string[];
+  sourceLayer: string;
+  historicalName: boolean;
+  validFrom?: string;
+  validTo?: string;
+}
+
+export interface GeospatialPlaceCandidate {
+  placeId: string;
+  placeName: string;
+  placeType: string;
+  validFrom?: string;
+  validTo?: string;
+}
+
+export interface GeospatialDisambiguation {
+  id: string;
+  mention: string;
+  sourceId: string;
+  statementId?: string;
+  status: "unresolved";
+  reason: string;
+  candidates: GeospatialPlaceCandidate[];
+}
+
+export interface GeospatialCluster {
+  id: string;
+  layer: "platform_inferred";
+  status: "platform_hypothesis";
+  placeIds: string[];
+  placeNames: string[];
+  associationIds: string[];
+  entityIds: string[];
+  sourceIds: string[];
+  evidenceIds: string[];
+  centerLatitude: number;
+  centerLongitude: number;
+  radiusKm: number;
+  sourceBackedCount: number;
+  inferredCount: number;
+  explanationAr: string;
+}
+
+export interface GeospatialMigrationHypothesis {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  subjectName: string;
+  sequence: Array<{ placeId: string; placeName: string; layer: string }>;
+  sourceIds: string[];
+  evidenceIds: string[];
+  claimIds: string[];
+  associationIds: string[];
+  treeVersionId?: string;
+  layer: "source_backed" | "platform_inferred";
+  status: "platform_hypothesis";
+  explanationAr: string;
+}
+
+export interface GeospatialContradiction {
+  id: string;
+  findingId?: string;
+  type: string;
+  layer: "platform_inferred";
+  status: string;
+  severity: "low" | "medium" | "high";
+  titleAr: string;
+  explanationAr: string;
+  entityIds: string[];
+  placeIds: string[];
+  sourceIds: string[];
+  claimIds: string[];
+  reviewNoteAr?: string;
+}
+
+export interface GeospatialSourceGeography {
+  sourceId: string;
+  sourceTitle: string;
+  statementCount: number;
+  matchedPlaceIds: string[];
+  placeNames: string[];
+  resolvedMentions: number;
+  unresolvedCount: number;
+  dependencyStatus: string;
+  sourceLayer: string;
+  qualificationNote: string;
+}
+
+export interface GeospatialReport {
+  placeResolution: { resolvedCount: number; unresolvedCount: number; mentionCount: number; mentions: GeospatialPlaceMention[] };
+  disambiguation: GeospatialDisambiguation[];
+  clusters: GeospatialCluster[];
+  migrationHypotheses: GeospatialMigrationHypothesis[];
+  geographicContradictions: GeospatialContradiction[];
+  sourceGeography: GeospatialSourceGeography[];
+  limitations: string[];
+}
+
+export interface GeospatialIntelligenceRun {
+  id: string;
+  requestedBy: string;
+  questionId?: string;
+  entityType: "person" | "source" | "place";
+  entityId: string;
+  entityName: string;
+  treeId?: string;
+  treeVersionId?: string;
+  versionNumber?: number;
+  versionState?: string;
+  treeVisibility?: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  reportStatus: "succeeded" | "insufficient_evidence" | "failed";
+  executionMode: "synchronous";
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  scope: GeospatialScope;
+  report: GeospatialReport;
+  findingCount: number;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
+export interface GeospatialFindingReview {
+  id: string;
+  reviewerId: string;
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  noteAr?: string;
+  questionId?: string;
+  createdAt: string;
+}
+
+export interface GeospatialFinding {
+  id: string;
+  runId: string;
+  geospatialRunId: string;
+  findingType: string;
+  titleAr: string;
+  explanationAr: string;
+  status: "needs_review" | "confirmed" | "dismissed" | "investigating";
+  severity: "low" | "medium" | "high";
+  layer: "platform_inferred" | "source_backed";
+  signals: Record<string, unknown>;
+  entityIds: string[];
+  placeIds: string[];
+  sourceIds: string[];
+  claimIds: string[];
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  questionId?: string;
+  createdBy?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews: GeospatialFindingReview[];
+}
+
+export interface StartGeospatialIntelligenceInput {
+  entity_type: "person" | "source" | "place";
+  entity_id: string;
+  question_id?: string;
+  tree_id?: string;
+  tree_version_id?: string;
+  radius_km?: number;
+  maximum_records?: number;
+}
+
+export interface ReviewGeospatialFindingInput {
+  decision: "dismiss" | "confirm" | "investigate" | "reopen";
+  note_ar?: string;
+  create_question?: boolean;
+  question_title_ar?: string;
+}
+
+export type ResearchAgentEntityType = "person" | "family" | "branch" | "place" | "source";
+export type ResearchAgentStance = "supports" | "counter_evidence" | "context" | "hypothesis";
+export type ResearchAgentStepStatus = "succeeded" | "unresolved" | "failed" | "skipped";
+
+export interface ResearchAgentScope {
+  entityType: ResearchAgentEntityType;
+  entityId: string;
+  treeId?: string;
+  treeVersionId?: string;
+  sourceId?: string;
+  personId?: string;
+  placeId?: string;
+  fromYear?: number;
+  toYear?: number;
+}
+
+export interface ResearchAgentPlanStep {
+  order: number;
+  stage: string;
+  tool: string;
+  readOnly: boolean;
+  descriptionAr: string;
+}
+
+export interface ResearchAgentStep {
+  id: string;
+  order: number;
+  stage: string;
+  tool: string;
+  status: ResearchAgentStepStatus;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  evidenceCount: number;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface ResearchAgentEvidenceRef {
+  id: string;
+  stepId?: string;
+  layer: string;
+  stance: ResearchAgentStance;
+  referenceType: string;
+  referenceId: string;
+  sourceId?: string;
+  statementId?: string;
+  claimId?: string;
+  excerpt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ResearchAgentEvidencePackage {
+  total: number;
+  supportCount: number;
+  counterCount: number;
+  contextCount: number;
+  hypothesisCount: number;
+  sourceCount: number;
+  evidence: ResearchAgentEvidenceRef[];
+}
+
+export interface ResearchAgentGap {
+  id: string;
+  kind: string;
+  descriptionAr: string;
+  severity: "low" | "medium" | "high";
+  status: "open" | "reviewed" | "dismissed";
+  metadata: Record<string, unknown>;
+}
+
+export interface ResearchAgentRecommendation {
+  id: string;
+  action: string;
+  rationaleAr: string;
+  priority: "low" | "normal" | "high";
+  status: "suggested" | "accepted" | "dismissed";
+  metadata: Record<string, unknown>;
+}
+
+export interface ResearchAgentReport {
+  answerAr: string;
+  plan: ResearchAgentPlanStep[];
+  terms: string[];
+  scope: ResearchAgentScope;
+  evidencePackage: ResearchAgentEvidencePackage;
+  allowedActions: string[];
+  restrictedActions: string[];
+  unresolvedReasons: string[];
+  generatedAt: string;
+}
+
+export interface ResearchAgentRun {
+  id: string;
+  requestedBy: string;
+  questionId?: string;
+  query: string;
+  normalizedQuery: string;
+  entityType: ResearchAgentEntityType;
+  entityId: string;
+  treeId?: string;
+  treeVersionId?: string;
+  status: "running" | "succeeded" | "failed";
+  resolution: "succeeded" | "unresolved";
+  executionMode: "synchronous";
+  plannerVersion: string;
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  report: ResearchAgentReport;
+  stepCount: number;
+  evidenceCount: number;
+  gapCount: number;
+  recommendationCount: number;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+  steps: ResearchAgentStep[];
+  evidence: ResearchAgentEvidenceRef[];
+  gaps: ResearchAgentGap[];
+  recommendations: ResearchAgentRecommendation[];
+}
+
+export interface StartResearchAgentInput {
+  question: string;
+  question_id?: string;
+  entity_type: ResearchAgentEntityType;
+  entity_id: string;
+  tree_id?: string;
+  tree_version_id?: string;
+  source_id?: string;
+  person_id?: string;
+  place_id?: string;
+  from_year?: number;
+  to_year?: number;
+}
+
+export interface ResearchAgentRunQuery {
+  question_id?: string;
+  entity_type?: ResearchAgentEntityType;
+  entity_id?: string;
 }
 
 export interface JobView {

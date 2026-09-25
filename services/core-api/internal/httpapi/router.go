@@ -17,11 +17,13 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geography"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geospatialintelligence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/researchagent"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
@@ -75,6 +77,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	searchHandler := searchHandler{Service: searchService}
 	researchService := research.NewService(dependencies.DB, dependencies.AI)
 	researchHandler := researchHandler{Service: researchService, Auth: authService, Logger: dependencies.Logger}
+	researchAgentService := researchagent.NewService(dependencies.DB)
+	researchAgentHandler := researchAgentHandler{Service: researchAgentService, Auth: authService}
 	jobsService := dependencies.Jobs
 	if jobsService == nil {
 		jobsService = jobs.NewService(dependencies.DB)
@@ -83,6 +87,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	contradictionHandler := contradictionHandler{Service: contradictionService, Auth: authService}
 	temporalAnalysisService := temporalanalysis.NewService(dependencies.DB)
 	temporalAnalysisHandler := temporalAnalysisHandler{Service: temporalAnalysisService, Auth: authService}
+	geospatialIntelligenceService := geospatialintelligence.NewService(dependencies.DB)
+	geospatialIntelligenceHandler := geospatialIntelligenceHandler{Service: geospatialIntelligenceService, Auth: authService}
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewTextExtractor())
 	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
@@ -128,6 +134,12 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/temporal-analysis/runs", temporalAnalysisHandler.start)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/runs/latest", temporalAnalysisHandler.getLatestRun)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/runs/{runID}", temporalAnalysisHandler.getRun)
+	mux.HandleFunc("POST /api/v1/geospatial-intelligence/runs", geospatialIntelligenceHandler.start)
+	mux.HandleFunc("GET /api/v1/geospatial-intelligence/runs/latest", geospatialIntelligenceHandler.getLatestRun)
+	mux.HandleFunc("GET /api/v1/geospatial-intelligence/runs/{runID}", geospatialIntelligenceHandler.getRun)
+	mux.HandleFunc("GET /api/v1/geospatial-intelligence/findings", geospatialIntelligenceHandler.listFindings)
+	mux.HandleFunc("GET /api/v1/geospatial-intelligence/findings/{findingID}", geospatialIntelligenceHandler.getFinding)
+	mux.HandleFunc("POST /api/v1/geospatial-intelligence/findings/{findingID}/review", geospatialIntelligenceHandler.review)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings", temporalAnalysisHandler.listFindings)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings/{findingID}", temporalAnalysisHandler.getFinding)
 	mux.HandleFunc("POST /api/v1/temporal-analysis/findings/{findingID}/review", temporalAnalysisHandler.review)
@@ -183,6 +195,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/research/questions/{questionID}/runs", researchHandler.listRuns)
 	mux.HandleFunc("GET /api/v1/research/runs/{runID}", researchHandler.getRun)
 	mux.HandleFunc("POST /api/v1/research/query", researchHandler.query)
+	mux.HandleFunc("POST /api/v1/research-agent/runs", researchAgentHandler.start)
+	mux.HandleFunc("GET /api/v1/research-agent/runs/latest", researchAgentHandler.getLatestRun)
+	mux.HandleFunc("GET /api/v1/research-agent/runs/{runID}", researchAgentHandler.getRun)
 	mux.HandleFunc("GET /api/v1/jobs", jobsHandler.list)
 	mux.HandleFunc("POST /api/v1/jobs", jobsHandler.enqueue)
 	mux.HandleFunc("POST /api/v1/jobs/claim", jobsHandler.claim)

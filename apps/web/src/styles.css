@@ -10150,6 +10150,674 @@ a {
   }
 }
 
+.geospatial-intelligence-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--rule);
+  background: rgba(235, 239, 225, 0.72);
+}
+
+.geospatial-intelligence-head,
+.geospatial-report-summary,
+.geospatial-intelligence-actions,
+.geospatial-finding > div,
+.geospatial-cluster-row,
+.geospatial-source-row,
+.geospatial-sequence > div {
+  display: flex;
+  align-items: center;
+}
+
+.geospatial-intelligence-head,
+.geospatial-report-summary {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.geospatial-intelligence-head {
+  align-items: flex-start;
+}
+
+.geospatial-intelligence-head h3 {
+  margin: 3px 0 5px;
+  font-size: 17px;
+}
+
+.geospatial-intelligence-head p,
+.geospatial-intelligence-hint,
+.geospatial-report-scope,
+.geospatial-report-limitations,
+.geospatial-finding p,
+.geospatial-finding small,
+.geospatial-sequence p,
+.geospatial-sequence small,
+.geospatial-cluster-row small,
+.geospatial-source-row small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.geospatial-intelligence-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.geospatial-intelligence-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.geospatial-intelligence-actions select,
+.geospatial-intelligence-actions input {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.geospatial-intelligence-actions input {
+  width: 58px;
+}
+
+.geospatial-intelligence-actions button:disabled,
+.geospatial-finding-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.geospatial-intelligence-hint,
+.geospatial-intelligence-error,
+.geospatial-report-limitations {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--red);
+}
+
+.geospatial-report {
+  display: grid;
+  gap: 12px;
+}
+
+.geospatial-report-summary {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--olive);
+  background: var(--white-warm);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.geospatial-report-summary strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.geospatial-report-scope,
+.geospatial-report-limitations {
+  padding-inline-start: 4px;
+}
+
+.geospatial-report-limitations {
+  flex-direction: column;
+  color: var(--muted);
+}
+
+.geospatial-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.geospatial-report-grid > section,
+.geospatial-cluster-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.geospatial-report-grid h4,
+.geospatial-cluster-section h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.geospatial-mention-list,
+.geospatial-source-row,
+.geospatial-cluster-row,
+.geospatial-sequence,
+.geospatial-finding {
+  display: grid;
+  gap: 6px;
+}
+
+.geospatial-mention-list > div,
+.geospatial-source-row,
+.geospatial-cluster-row {
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+}
+
+.geospatial-mention-list > div:last-child,
+.geospatial-source-row:last-child,
+.geospatial-cluster-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.geospatial-mention-list strong,
+.geospatial-source-row strong,
+.geospatial-cluster-row strong,
+.geospatial-sequence strong,
+.geospatial-finding strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.geospatial-source-row > span,
+.geospatial-cluster-row > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.geospatial-disambiguation-list {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border-inline-start: 2px solid var(--red);
+  background: rgba(153, 68, 56, 0.05);
+}
+
+.geospatial-disambiguation-list > div {
+  display: grid;
+  gap: 2px;
+}
+
+.geospatial-disambiguation-list strong,
+.geospatial-disambiguation-list small {
+  font-size: 9px;
+}
+
+.geospatial-source-row bdi {
+  color: var(--red);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.geospatial-sequence {
+  padding: 9px;
+  border-inline-start: 2px solid var(--clay);
+  background: rgba(233, 223, 201, 0.48);
+}
+
+.geospatial-sequence p {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.geospatial-finding {
+  padding: 10px;
+  border: 1px solid var(--rule);
+  background: rgba(255, 253, 247, 0.72);
+}
+
+.geospatial-finding > div {
+  gap: 6px;
+}
+
+.geospatial-finding > div strong {
+  flex: 1;
+}
+
+.geospatial-finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.geospatial-finding-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  font-size: 10px;
+}
+
+.geospatial-cluster-section {
+  grid-column: 1 / -1;
+}
+
+.geospatial-cluster-row {
+  gap: 8px;
+}
+
+.geospatial-cluster-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+@media (max-width: 960px) {
+  .geospatial-intelligence-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .geospatial-intelligence-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .geospatial-intelligence-panel {
+    padding: 14px;
+  }
+
+  .geospatial-report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .geospatial-cluster-section {
+    grid-column: auto;
+  }
+
+  .geospatial-intelligence-actions label,
+  .geospatial-intelligence-actions button {
+    width: 100%;
+  }
+
+  .geospatial-intelligence-actions select,
+  .geospatial-intelligence-actions input {
+    flex: 1;
+  }
+}
+
+.research-agent-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--rule);
+  background: linear-gradient(135deg, rgba(232, 226, 205, 0.76), rgba(248, 241, 225, 0.82));
+}
+
+.research-agent-head,
+.research-agent-actions,
+.research-agent-summary,
+.research-agent-metrics,
+.research-agent-subhead,
+.research-agent-step,
+.research-agent-evidence-line > div,
+.research-agent-policy,
+.research-agent-gap-list > div,
+.research-agent-recommendation {
+  display: flex;
+  align-items: center;
+}
+
+.research-agent-head,
+.research-agent-summary {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.research-agent-head {
+  align-items: flex-start;
+}
+
+.research-agent-head h3 {
+  margin: 3px 0 5px;
+  font-size: 18px;
+}
+
+.research-agent-head p,
+.research-agent-hint,
+.research-agent-error,
+.research-agent-summary small,
+.research-agent-metrics,
+.research-agent-subhead small,
+.research-agent-step small,
+.research-agent-evidence-line small,
+.research-agent-gap-list small,
+.research-agent-recommendation small,
+.research-agent-policy,
+.research-agent-truncated {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.research-agent-head p {
+  margin: 0;
+}
+
+.research-agent-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.research-agent-question {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: min(340px, 42vw);
+  padding: 7px 9px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+  color: var(--clay);
+}
+
+.research-agent-question input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.research-agent-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.research-agent-hint,
+.research-agent-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  color: var(--red);
+}
+
+.research-agent-report {
+  display: grid;
+  gap: 12px;
+}
+
+.research-agent-summary {
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-inline-start: 3px solid var(--clay);
+  background: var(--white-warm);
+}
+
+.research-agent-summary > div {
+  display: grid;
+  gap: 5px;
+}
+
+.research-agent-summary strong {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.research-agent-answer-label,
+.research-agent-subhead,
+.research-agent-policy,
+.research-agent-evidence-line small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.research-agent-answer-label {
+  color: var(--olive);
+  font-size: 10px;
+}
+
+.research-agent-metrics {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: rgba(255, 253, 247, 0.58);
+}
+
+.research-agent-metrics strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.research-agent-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 10px;
+}
+
+.research-agent-columns > section,
+.research-agent-evidence {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.research-agent-subhead {
+  gap: 6px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.research-agent-subhead strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.research-agent-subhead small {
+  margin-inline-start: auto;
+}
+
+.research-agent-steps,
+.research-agent-gap-list,
+.research-agent-evidence-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.research-agent-step {
+  gap: 7px;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 65%, transparent);
+}
+
+.research-agent-step:last-child {
+  border-bottom: 0;
+}
+
+.research-agent-step-index {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  place-items: center;
+  border: 1px solid var(--rule);
+  color: var(--olive);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.research-agent-step > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.research-agent-step strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-agent-step-unresolved {
+  border-inline-start: 2px solid var(--sand);
+  padding-inline-start: 6px;
+}
+
+.research-agent-gap-list > div,
+.research-agent-recommendation {
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 65%, transparent);
+}
+
+.research-agent-gap-list > div:last-child,
+.research-agent-recommendation:last-child {
+  border-bottom: 0;
+}
+
+.research-agent-gap-list > div > svg {
+  flex: 0 0 auto;
+  color: var(--red);
+}
+
+.research-agent-gap-list > div > span,
+.research-agent-recommendation > span {
+  display: grid;
+  gap: 2px;
+}
+
+.research-agent-gap-list strong,
+.research-agent-recommendation strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.research-agent-recommendation > svg {
+  flex: 0 0 auto;
+  color: var(--olive);
+}
+
+.research-agent-evidence-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.research-agent-evidence-line {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--rule);
+  background: rgba(255, 253, 247, 0.72);
+}
+
+.research-agent-evidence-line > div {
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.research-agent-evidence-line > div > span {
+  color: var(--clay);
+  font-size: 9px;
+}
+
+.research-agent-evidence-line strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-agent-evidence-line p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.research-agent-evidence-line small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-agent-stance-counter_evidence {
+  border-inline-start: 2px solid var(--red);
+}
+
+.research-agent-stance-hypothesis {
+  border-inline-start: 2px solid var(--sand);
+}
+
+.research-agent-policy {
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.research-agent-policy svg {
+  flex: 0 0 auto;
+  color: var(--olive);
+}
+
+.research-agent-truncated {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 960px) {
+  .research-agent-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .research-agent-actions {
+    justify-content: flex-start;
+  }
+
+  .research-agent-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .research-agent-panel {
+    padding: 14px;
+  }
+
+  .research-agent-actions,
+  .research-agent-question,
+  .research-agent-actions button {
+    width: 100%;
+  }
+
+  .research-agent-question {
+    min-width: 0;
+  }
+
+  .research-agent-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .workspace-page {
   --workspace-rule: color-mix(in srgb, var(--rule) 82%, transparent);
 }

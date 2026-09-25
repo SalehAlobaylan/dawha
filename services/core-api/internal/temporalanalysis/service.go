@@ -329,7 +329,7 @@ func (s *Service) ReviewFinding(ctx context.Context, actorID, findingID string, 
 	defer tx.Rollback(ctx)
 	var currentStatus, title, explanation string
 	var runID pgtype.UUID
-	if err := tx.QueryRow(ctx, `SELECT status, temporal_run_id, title_ar, explanation_ar FROM platform_findings WHERE id = $1 AND temporal_run_id IS NOT NULL FOR UPDATE`, id).Scan(&currentStatus, &runID, &title, &explanation); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, temporal_run_id, title_ar, explanation_ar FROM platform_findings WHERE id = $1 AND temporal_run_id IS NOT NULL AND geospatial_run_id IS NULL FOR UPDATE`, id).Scan(&currentStatus, &runID, &title, &explanation); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Finding{}, ErrNotFound
 		}

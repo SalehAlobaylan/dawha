@@ -39,6 +39,8 @@ type WorkspaceContext struct {
 type WorkspacePermissions struct {
 	CanRunResearch             bool `json:"canRunResearch"`
 	CanRunTemporalAnalysis     bool `json:"canRunTemporalAnalysis"`
+	CanRunGeospatialAnalysis   bool `json:"canRunGeospatialAnalysis"`
+	CanRunResearchAgent        bool `json:"canRunResearchAgent"`
 	CanCreateClaim             bool `json:"canCreateClaim"`
 	CanDisputeClaim            bool `json:"canDisputeClaim"`
 	CanLinkEvidence            bool `json:"canLinkEvidence"`
@@ -47,6 +49,7 @@ type WorkspacePermissions struct {
 	CanAttachFinding           bool `json:"canAttachFinding"`
 	CanReviewFinding           bool `json:"canReviewFinding"`
 	CanReviewTemporalFinding   bool `json:"canReviewTemporalFinding"`
+	CanReviewGeospatialFinding bool `json:"canReviewGeospatialFinding"`
 	CanAddNote                 bool `json:"canAddNote"`
 	CanReviewIdentityCandidate bool `json:"canReviewIdentityCandidate"`
 	CanMergeIdentity           bool `json:"canMergeIdentity"`
@@ -946,14 +949,29 @@ func loadWorkspaceFindings(ctx context.Context, q workspaceExecutor, questionID,
 			JOIN question_claims qc ON qc.claim_id = fc.claim_id
 			WHERE qc.question_id = $1
 		   ))
-		  AND (pf.temporal_run_id IS NULL OR EXISTS (
-			SELECT 1 FROM temporal_analysis_runs tr
-			JOIN trees t ON t.id = tr.tree_id
-			WHERE tr.id = pf.temporal_run_id
-			  AND (t.visibility = 'public' OR ($2::uuid IS NOT NULL AND (t.owner_id = $2 OR EXISTS (
-				SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2
-			  ))))
-		  ))
+		  AND (
+			(pf.temporal_run_id IS NULL AND pf.geospatial_run_id IS NULL)
+			OR EXISTS (
+				SELECT 1 FROM temporal_analysis_runs tr
+				JOIN trees t ON t.id = tr.tree_id
+				WHERE tr.id = pf.temporal_run_id
+				  AND (t.visibility = 'public' OR ($2::uuid IS NOT NULL AND (t.owner_id = $2 OR EXISTS (
+					SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2
+				  ))))
+			)
+			OR EXISTS (
+				SELECT 1 FROM geospatial_intelligence_runs gr
+				LEFT JOIN trees gt ON gt.id = gr.tree_id
+				WHERE gr.id = pf.geospatial_run_id
+				  AND (gr.entity_type <> 'source' OR EXISTS (
+					SELECT 1 FROM sources gs
+					WHERE gs.id = gr.entity_id AND (gs.visibility = 'public' OR ($2::uuid IS NOT NULL AND gs.created_by = $2))
+				  ))
+				  AND (gr.tree_id IS NULL OR (gt.visibility = 'public' OR ($2::uuid IS NOT NULL AND (gt.owner_id = $2 OR EXISTS (
+					SELECT 1 FROM tree_collaborators gtc WHERE gtc.tree_id = gt.id AND gtc.user_id = $2
+				  )))))
+			)
+		  )
 		ORDER BY pf.updated_at DESC
 		LIMIT 30
 	`, questionID, nullableUUID(actorID))
@@ -1058,7 +1076,7 @@ func loadWorkspaceCandidates(ctx context.Context, q workspaceExecutor, entityTyp
 
 func buildWorkspacePermissions(actorUUID, questionCreator uuid.UUID, canResearch, canModerate bool) WorkspacePermissions {
 	registered := actorUUID != uuid.Nil
-	return WorkspacePermissions{CanRunResearch: true, CanRunTemporalAnalysis: canResearch, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanReviewTemporalFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
+	return WorkspacePermissions{CanRunResearch: true, CanRunTemporalAnalysis: canResearch, CanRunGeospatialAnalysis: canResearch, CanRunResearchAgent: canResearch, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanReviewTemporalFinding: canResearch, CanReviewGeospatialFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
 }
 
 func (s *Service) workspaceHasResearchRole(ctx context.Context, actorUUID uuid.UUID) (bool, error) {

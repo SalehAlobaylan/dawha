@@ -51,6 +51,7 @@ import type {
   ResearchWorkspaceSnapshot,
   ReviewSourceDependencyInput,
   ReviewSuggestionInput,
+  ReviewGeospatialFindingInput,
   ReviewTemporalFindingInput,
   SearchResponse,
   SourceCandidate,
@@ -60,8 +61,14 @@ import type {
   SourceMetadata,
   SourceProcessing,
   StartTemporalAnalysisInput,
+  StartGeospatialIntelligenceInput,
   TemporalAnalysisRun,
   TemporalAnalysisRunQuery,
+  GeospatialIntelligenceRun,
+  GeospatialFinding,
+  ResearchAgentRun,
+  ResearchAgentRunQuery,
+  StartResearchAgentInput,
   TemporalFinding,
   SuggestionRecord,
   SubmitSuggestionInput,
@@ -740,6 +747,88 @@ export async function fetchMapFeatures(filters: { fromYear?: number; toYear?: nu
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as MapResponse;
+}
+
+export async function startGeospatialIntelligence(input: StartGeospatialIntelligenceInput): Promise<GeospatialIntelligenceRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتشغيل التحليل الجغرافي.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/runs`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as GeospatialIntelligenceRun;
+}
+
+export async function fetchLatestGeospatialIntelligenceRun(query: { question_id?: string; entity_type?: string; entity_id?: string; tree_version_id?: string }): Promise<GeospatialIntelligenceRun | null> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
+  const suffix = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/runs/latest${suffix ? `?${suffix}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as GeospatialIntelligenceRun;
+}
+
+export async function fetchGeospatialFindings(runId?: string, status?: string): Promise<GeospatialFinding[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  if (runId) params.set("run_id", runId);
+  if (status) params.set("status", status);
+  const suffix = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/findings${suffix ? `?${suffix}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const payload = (await response.json()) as { items?: GeospatialFinding[] };
+  return payload.items ?? [];
+}
+
+export async function reviewGeospatialFinding(findingId: string, input: ReviewGeospatialFindingInput): Promise<GeospatialFinding> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/findings/${findingId}/review`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as GeospatialFinding;
+}
+
+export async function startResearchAgent(input: StartResearchAgentInput): Promise<ResearchAgentRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتشغيل وكيل البحث.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ResearchAgentRun;
+}
+
+export async function fetchResearchAgentRun(runId: string): Promise<ResearchAgentRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ResearchAgentRun;
+}
+
+export async function fetchLatestResearchAgentRun(query: ResearchAgentRunQuery): Promise<ResearchAgentRun | null> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
+  const suffix = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/latest${suffix ? `?${suffix}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ResearchAgentRun;
 }
 
 export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Promise<DictionaryIndexResponse> {

@@ -34,11 +34,11 @@ func TestBuildWorkspacePermissions(t *testing.T) {
 	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	creatorID := actorID
 	permissions := buildWorkspacePermissions(actorID, creatorID, true, true)
-	if !permissions.CanRunResearch || !permissions.CanRunTemporalAnalysis || !permissions.CanCreateClaim || !permissions.CanManageSelectedQuestion || !permissions.CanReviewFinding || !permissions.CanReviewTemporalFinding || !permissions.CanMergeIdentity {
+	if !permissions.CanRunResearch || !permissions.CanRunTemporalAnalysis || !permissions.CanRunGeospatialAnalysis || !permissions.CanRunResearchAgent || !permissions.CanCreateClaim || !permissions.CanManageSelectedQuestion || !permissions.CanReviewFinding || !permissions.CanReviewTemporalFinding || !permissions.CanReviewGeospatialFinding || !permissions.CanMergeIdentity {
 		t.Fatalf("unexpected permissions: %+v", permissions)
 	}
 	publicPermissions := buildWorkspacePermissions(uuid.Nil, uuid.Nil, false, false)
-	if !publicPermissions.CanRunResearch || publicPermissions.CanRunTemporalAnalysis || publicPermissions.CanCreateClaim || publicPermissions.CanReviewFinding || publicPermissions.CanReviewTemporalFinding {
+	if !publicPermissions.CanRunResearch || publicPermissions.CanRunTemporalAnalysis || publicPermissions.CanRunGeospatialAnalysis || publicPermissions.CanRunResearchAgent || publicPermissions.CanCreateClaim || publicPermissions.CanReviewFinding || publicPermissions.CanReviewTemporalFinding || publicPermissions.CanReviewGeospatialFinding {
 		t.Fatalf("unexpected public permissions: %+v", publicPermissions)
 	}
 }
