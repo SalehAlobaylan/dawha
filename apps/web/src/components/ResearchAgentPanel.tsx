@@ -1,16 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, BookOpen, BrainCircuit, CheckCircle2, CircleHelp, FileSearch, ListChecks, ShieldAlert, Sparkles } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { AlertTriangle, ArrowLeft, BookOpen, BrainCircuit, Check, CheckCircle2, CircleHelp, ExternalLink, FileSearch, ListChecks, Plus, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, fetchLatestResearchAgentRun, startResearchAgent } from "../lib/api";
+import { ApiError, fetchLatestResearchAgentRun, fetchResearchQuestionCandidates, generateResearchQuestionCandidates, reviewResearchQuestionCandidate, startResearchAgent } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
-import type { ResearchAgentEvidenceRef, ResearchAgentRun, ResearchWorkspaceSnapshot, WorkspaceTreeContext } from "../types";
+import type { ResearchAgentEvidenceRef, ResearchAgentRun, ResearchQuestionCandidate, ResearchWorkspaceSnapshot, ReviewResearchQuestionCandidateInput, WorkspaceTreeContext } from "../types";
 
 interface ResearchAgentPanelProps {
   snapshot: ResearchWorkspaceSnapshot;
   canRun: boolean;
+  canReview: boolean;
 }
 
-export function ResearchAgentPanel({ snapshot, canRun }: ResearchAgentPanelProps) {
+export function ResearchAgentPanel({ snapshot, canRun, canReview }: ResearchAgentPanelProps) {
   const treeContext = useMemo(() => selectTreeContext(snapshot), [snapshot]);
   const personID = snapshot.context.entityType === "person" ? snapshot.context.entityId ?? "" : "";
   const questionID = snapshot.context.questionId;
@@ -70,7 +72,7 @@ export function ResearchAgentPanel({ snapshot, canRun }: ResearchAgentPanelProps
     {!canAnalyze ? <p className="research-agent-hint" id="research-agent-hint"><CircleHelp size={13} /> {hint}</p> : null}
     {latestQuery.isError ? <div className="research-agent-error" role="alert">{errorMessage(latestQuery.error)}</div> : null}
     {message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}
-    {run ? <ResearchAgentReport run={run} /> : latestQuery.isFetching ? <p className="evidence-empty">جارٍ استعادة آخر حزمة بحث محفوظة…</p> : <p className="evidence-empty">لم يبدأ تحقيق الوكيل بعد.</p>}
+    {run ? <><ResearchAgentReport run={run} /><ResearchQuestionCandidates run={run} canReview={canReview} scopeKey={scopeKey} /></> : latestQuery.isFetching ? <p className="evidence-empty">جارٍ استعادة آخر حزمة بحث محفوظة…</p> : <p className="evidence-empty">لم يبدأ تحقيق الوكيل بعد.</p>}
   </section>;
 }
 
@@ -84,6 +86,72 @@ function ResearchAgentReport({ run }: { run: ResearchAgentRun }) {
     <section className="research-agent-evidence"><div className="research-agent-subhead"><FileSearch size={14} /><strong>الأدلة والمراجع</strong><small>{evidence.length} عنصراً قابلاً للتتبع</small></div><div className="research-agent-evidence-grid">{evidence.slice(0, 12).map((item) => <AgentEvidenceLine item={item} key={`${item.referenceType}-${item.referenceId}-${item.stance}`} />)}{evidence.length > 12 ? <small className="research-agent-truncated">عرض 12 من {evidence.length} عنصراً؛ التقرير المحفوظ يحتفظ بالحدود كاملة.</small> : null}{evidence.length === 0 ? <p className="evidence-empty">لا توجد أدلة مؤهلة في النطاق الحالي.</p> : null}</div></section>
     <div className="research-agent-policy"><BookOpen size={13} /><span>السياسة {run.qualificationPolicyVersion} · الخوارزمية {run.algorithmVersion} · الإجراءات المحظورة: {report.restrictedActions?.join("، ") || "غير محددة"}</span></div>
   </div>;
+}
+
+function ResearchQuestionCandidates({ run, canReview, scopeKey }: { run: ResearchAgentRun; canReview: boolean; scopeKey: string }) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState("");
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const candidatesQuery = useQuery({
+    queryKey: ["research-question-candidates", run.id],
+    queryFn: () => fetchResearchQuestionCandidates(run.id),
+    enabled: canReview,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
+  });
+  const generateMutation = useMutation({
+    mutationFn: async ({ requestScopeKey }: { requestScopeKey: string }) => {
+      if (requestScopeKey !== scopeKey) throw new Error("تغير سياق المرشحين أثناء الطلب.");
+      return generateResearchQuestionCandidates(run.id);
+    },
+    onMutate: ({ requestScopeKey }) => {
+      if (scopeKeyRef.current === requestScopeKey) setMessage("جارٍ تحويل الفجوات إلى مرشحي سؤال…");
+    },
+    onSuccess: (items, { requestScopeKey }) => {
+      if (scopeKeyRef.current !== requestScopeKey) return;
+      queryClient.setQueryData(["research-question-candidates", run.id], items);
+      setMessage(items.length ? "أصبحت مرشحات الأسئلة جاهزة للمراجعة." : "لا توجد فجوات قابلة للتحويل إلى سؤال.");
+    },
+    onError: (error, { requestScopeKey }) => {
+      if (scopeKeyRef.current === requestScopeKey) setMessage(candidateErrorMessage(error));
+    },
+  });
+  const reviewMutation = useMutation({
+    mutationFn: async ({ candidate, input, requestScopeKey }: { candidate: ResearchQuestionCandidate; input: ReviewResearchQuestionCandidateInput; requestScopeKey: string }) => {
+      if (requestScopeKey !== scopeKey) throw new Error("تغير سياق المرشحين أثناء الطلب.");
+      return reviewResearchQuestionCandidate(candidate.id, input);
+    },
+    onSuccess: (updated, { requestScopeKey }) => {
+      if (scopeKeyRef.current !== requestScopeKey) return;
+      queryClient.setQueryData<ResearchQuestionCandidate[]>(["research-question-candidates", run.id], (current) => (current ?? []).map((item) => item.id === updated.id ? updated : item));
+      setMessage(updated.status === "converted" ? "حوّل المرشح إلى سؤال مفتوح." : "أُغلق المرشح دون تحويله إلى سؤال.");
+      void queryClient.invalidateQueries({ queryKey: ["research-workspace", run.questionId] });
+    },
+    onError: (error, { requestScopeKey }) => {
+      if (scopeKeyRef.current === requestScopeKey) setMessage(candidateErrorMessage(error));
+    },
+  });
+  useEffect(() => {
+    setMessage("");
+  }, [scopeKey]);
+  if (!canReview) {
+    return <section className="research-question-candidates"><div className="research-agent-subhead"><CircleHelp size={14} /><strong>مرشحو الأسئلة</strong></div><p className="research-agent-hint">مراجعة مرشحي الأسئلة تتطلب صلاحية باحث أو مشرف أو مسؤول.</p></section>;
+  }
+  const candidates = candidatesQuery.data ?? [];
+  return <section className="research-question-candidates"><div className="research-question-candidates-head"><div className="research-agent-subhead"><ListChecks size={14} /><strong>مرشحو الأسئلة</strong><small>الفجوات لا تتحول إلى سؤال دون مراجعة بشرية</small></div><button className="secondary-button" type="button" onClick={() => generateMutation.mutate({ requestScopeKey: scopeKey })} disabled={run.gapCount === 0 || generateMutation.isPending}><Plus size={13} /> {generateMutation.isPending ? "جارٍ الإنشاء…" : "اقترح أسئلة من الفجوات"}</button></div>{message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}{candidatesQuery.isError ? <div className="research-agent-error" role="alert">{candidateErrorMessage(candidatesQuery.error)}</div> : null}{candidates.length ? <div className="research-question-candidate-list">{candidates.map((candidate) => <ResearchQuestionCandidateCard candidate={candidate} key={candidate.id} pending={reviewMutation.isPending} onReview={(item, input) => reviewMutation.mutate({ candidate: item, input, requestScopeKey: scopeKey })} />)}</div> : candidatesQuery.isFetching ? <p className="evidence-empty">جارٍ استعادة المرشحات…</p> : <p className="evidence-empty">لم تُنشأ مرشحات بعد. استخدم زر الاقتراح بعد مراجعة الفجوات.</p>}</section>;
+}
+
+function ResearchQuestionCandidateCard({ candidate, pending, onReview }: { candidate: ResearchQuestionCandidate; pending: boolean; onReview: (candidate: ResearchQuestionCandidate, input: ReviewResearchQuestionCandidateInput) => void }) {
+  const [title, setTitle] = useState(candidate.titleAr);
+  const [priority, setPriority] = useState(candidate.priority);
+  useEffect(() => {
+    setTitle(candidate.titleAr);
+    setPriority(candidate.priority);
+  }, [candidate.id, candidate.titleAr, candidate.priority]);
+  const converted = candidate.status === "converted";
+  const dismissed = candidate.status === "dismissed";
+  return <article className={`research-question-candidate research-question-candidate-${candidate.status}`}><div className="research-question-candidate-head"><div><span className="eyebrow">فجوة {typeof candidate.metadata.gapKind === "string" ? gapKindLabel(candidate.metadata.gapKind) : "بحث"}</span><StatusBadge tone={converted ? "source" : dismissed ? "disputed" : "question"}>{candidateStatusLabel(candidate.status)}</StatusBadge></div><small>{formatCandidateDate(candidate.createdAt)}</small></div>{candidate.status === "proposed" ? <input className="research-question-candidate-title" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="عنوان المرشح" /> : <strong>{candidate.titleAr}</strong>}<p>{candidate.descriptionAr}</p><div className="research-question-candidate-meta"><span>الأولوية: {priorityLabel(candidate.priority)}</span><span>مراجعات: {candidate.reviews.length}</span>{candidate.originQuestionId ? <span>سؤال المصدر: {candidate.originQuestionId.slice(0, 8)}</span> : null}</div>{candidate.status === "proposed" ? <div className="research-question-candidate-actions"><label><span>الأولوية</span><select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="low">منخفضة</option><option value="normal">عادية</option><option value="high">مرتفعة</option></select></label><button className="primary-button" type="button" disabled={pending || title.trim().length < 3} onClick={() => onReview(candidate, { decision: "converted", title_ar: title.trim(), priority })}><Check size={13} /> تحويل إلى سؤال</button><button className="text-button" type="button" disabled={pending} onClick={() => onReview(candidate, { decision: "dismissed" })}><X size={13} /> رفض</button></div> : converted && candidate.questionId ? <Link className="text-button" to="/research/$questionId" params={{ questionId: candidate.questionId }}><ExternalLink size={13} /> فتح السؤال المحفوظ</Link> : null}</article>;
 }
 
 function AgentEvidenceLine({ item }: { item: ResearchAgentEvidenceRef }) {
@@ -128,6 +196,38 @@ function stanceLabel(value: ResearchAgentEvidenceRef["stance"]): string {
 
 function isUuid(value: string | undefined): boolean {
   return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+function gapKindLabel(value: string): string {
+  const labels: Record<string, string> = { missing_source_evidence: "أدلة مصدرية", missing_counter_evidence: "أدلة مضادة", source_dependency: "اعتماد مصادر", missing_graph_path: "مسار شجري", missing_geography: "جغرافيا", missing_chronology: "تسلسل زمني" };
+  return labels[value] ?? "بحث";
+}
+
+function candidateStatusLabel(value: ResearchQuestionCandidate["status"]): string {
+  if (value === "converted") return "محول إلى سؤال";
+  if (value === "dismissed") return "مرفوض";
+  return "بانتظار المراجعة";
+}
+
+function priorityLabel(value: ResearchQuestionCandidate["priority"]): string {
+  if (value === "high") return "مرتفعة";
+  if (value === "low") return "منخفضة";
+  return "عادية";
+}
+
+function formatCandidateDate(value: string): string {
+  return value.slice(0, 10);
+}
+
+function candidateErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "يلزم تسجيل الدخول لمراجعة المرشحين.";
+    if (error.status === 403) return "لا تملك صلاحية مراجعة مرشحي الأسئلة.";
+    if (error.status === 409) return "سبق مراجعة هذا المرشح.";
+    if (error.status === 503) return "خدمة مرشحي الأسئلة غير متاحة حالياً.";
+    return error.message || "تعذر إكمال مراجعة مرشح السؤال.";
+  }
+  return "تعذر إكمال مراجعة مرشح السؤال.";
 }
 
 function errorMessage(error: unknown): string {

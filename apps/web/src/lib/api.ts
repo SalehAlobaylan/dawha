@@ -68,6 +68,8 @@ import type {
   GeospatialFinding,
   ResearchAgentRun,
   ResearchAgentRunQuery,
+  ResearchQuestionCandidate,
+  ReviewResearchQuestionCandidateInput,
   StartResearchAgentInput,
   TemporalFinding,
   SuggestionRecord,
@@ -829,6 +831,38 @@ export async function fetchLatestResearchAgentRun(query: ResearchAgentRunQuery):
   if (response.status === 404) return null;
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as ResearchAgentRun;
+}
+
+export async function generateResearchQuestionCandidates(runId: string): Promise<ResearchQuestionCandidate[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/${encodeURIComponent(runId)}/question-candidates`, { method: "POST", credentials: "include", signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const payload = (await response.json()) as { items?: ResearchQuestionCandidate[] };
+  return payload.items ?? [];
+}
+
+export async function fetchResearchQuestionCandidates(runId: string, status?: string): Promise<ResearchQuestionCandidate[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const suffix = params.toString();
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/${encodeURIComponent(runId)}/question-candidates${suffix ? `?${suffix}` : ""}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const payload = (await response.json()) as { items?: ResearchQuestionCandidate[] };
+  return payload.items ?? [];
+}
+
+export async function reviewResearchQuestionCandidate(candidateId: string, input: ReviewResearchQuestionCandidateInput): Promise<ResearchQuestionCandidate> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research-question-candidates/${encodeURIComponent(candidateId)}`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ResearchQuestionCandidate;
 }
 
 export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Promise<DictionaryIndexResponse> {

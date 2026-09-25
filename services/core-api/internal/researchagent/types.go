@@ -32,6 +32,7 @@ var (
 	ErrValidation          = errors.New("research agent input is invalid")
 	ErrForbidden           = errors.New("research agent access is forbidden")
 	ErrNotFound            = errors.New("research agent resource was not found")
+	ErrConflict            = errors.New("research agent resource changed")
 )
 
 type RunInput struct {

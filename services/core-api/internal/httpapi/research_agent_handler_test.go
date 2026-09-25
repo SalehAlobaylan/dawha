@@ -18,6 +18,9 @@ func TestResearchAgentRoutesRequireAuthentication(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/research-agent/runs", body: `{"question":"ما موضع هجرة عبد الله؟","entity_type":"person","entity_id":"00000000-0000-0000-0000-000000000001"}`},
 		{method: http.MethodGet, path: "/api/v1/research-agent/runs/latest"},
 		{method: http.MethodGet, path: "/api/v1/research-agent/runs/00000000-0000-0000-0000-000000000002"},
+		{method: http.MethodPost, path: "/api/v1/research-agent/runs/00000000-0000-0000-0000-000000000002/question-candidates"},
+		{method: http.MethodGet, path: "/api/v1/research-agent/runs/00000000-0000-0000-0000-000000000002/question-candidates"},
+		{method: http.MethodPatch, path: "/api/v1/research-question-candidates/00000000-0000-0000-0000-000000000003", body: `{"decision":"dismissed"}`},
 	}
 	for _, testCase := range cases {
 		recorder := httptest.NewRecorder()
@@ -38,6 +41,7 @@ func TestResearchAgentErrorMapping(t *testing.T) {
 		{researchagent.ErrValidation, http.StatusBadRequest},
 		{researchagent.ErrForbidden, http.StatusForbidden},
 		{researchagent.ErrNotFound, http.StatusNotFound},
+		{researchagent.ErrConflict, http.StatusConflict},
 		{researchagent.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {

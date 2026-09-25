@@ -37,22 +37,23 @@ type WorkspaceContext struct {
 }
 
 type WorkspacePermissions struct {
-	CanRunResearch             bool `json:"canRunResearch"`
-	CanRunTemporalAnalysis     bool `json:"canRunTemporalAnalysis"`
-	CanRunGeospatialAnalysis   bool `json:"canRunGeospatialAnalysis"`
-	CanRunResearchAgent        bool `json:"canRunResearchAgent"`
-	CanCreateClaim             bool `json:"canCreateClaim"`
-	CanDisputeClaim            bool `json:"canDisputeClaim"`
-	CanLinkEvidence            bool `json:"canLinkEvidence"`
-	CanCreateQuestion          bool `json:"canCreateQuestion"`
-	CanManageSelectedQuestion  bool `json:"canManageSelectedQuestion"`
-	CanAttachFinding           bool `json:"canAttachFinding"`
-	CanReviewFinding           bool `json:"canReviewFinding"`
-	CanReviewTemporalFinding   bool `json:"canReviewTemporalFinding"`
-	CanReviewGeospatialFinding bool `json:"canReviewGeospatialFinding"`
-	CanAddNote                 bool `json:"canAddNote"`
-	CanReviewIdentityCandidate bool `json:"canReviewIdentityCandidate"`
-	CanMergeIdentity           bool `json:"canMergeIdentity"`
+	CanRunResearch                     bool `json:"canRunResearch"`
+	CanRunTemporalAnalysis             bool `json:"canRunTemporalAnalysis"`
+	CanRunGeospatialAnalysis           bool `json:"canRunGeospatialAnalysis"`
+	CanRunResearchAgent                bool `json:"canRunResearchAgent"`
+	CanReviewResearchQuestionCandidate bool `json:"canReviewResearchQuestionCandidate"`
+	CanCreateClaim                     bool `json:"canCreateClaim"`
+	CanDisputeClaim                    bool `json:"canDisputeClaim"`
+	CanLinkEvidence                    bool `json:"canLinkEvidence"`
+	CanCreateQuestion                  bool `json:"canCreateQuestion"`
+	CanManageSelectedQuestion          bool `json:"canManageSelectedQuestion"`
+	CanAttachFinding                   bool `json:"canAttachFinding"`
+	CanReviewFinding                   bool `json:"canReviewFinding"`
+	CanReviewTemporalFinding           bool `json:"canReviewTemporalFinding"`
+	CanReviewGeospatialFinding         bool `json:"canReviewGeospatialFinding"`
+	CanAddNote                         bool `json:"canAddNote"`
+	CanReviewIdentityCandidate         bool `json:"canReviewIdentityCandidate"`
+	CanMergeIdentity                   bool `json:"canMergeIdentity"`
 }
 
 type WorkspaceEvidence struct {
@@ -1076,7 +1077,7 @@ func loadWorkspaceCandidates(ctx context.Context, q workspaceExecutor, entityTyp
 
 func buildWorkspacePermissions(actorUUID, questionCreator uuid.UUID, canResearch, canModerate bool) WorkspacePermissions {
 	registered := actorUUID != uuid.Nil
-	return WorkspacePermissions{CanRunResearch: true, CanRunTemporalAnalysis: canResearch, CanRunGeospatialAnalysis: canResearch, CanRunResearchAgent: canResearch, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanReviewTemporalFinding: canResearch, CanReviewGeospatialFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
+	return WorkspacePermissions{CanRunResearch: true, CanRunTemporalAnalysis: canResearch, CanRunGeospatialAnalysis: canResearch, CanRunResearchAgent: canResearch, CanReviewResearchQuestionCandidate: canResearch, CanCreateClaim: registered, CanDisputeClaim: registered, CanLinkEvidence: registered || canResearch, CanCreateQuestion: registered, CanManageSelectedQuestion: registered && (actorUUID == questionCreator || canResearch), CanAttachFinding: canResearch || actorUUID == questionCreator, CanReviewFinding: canResearch, CanReviewTemporalFinding: canResearch, CanReviewGeospatialFinding: canResearch, CanAddNote: registered && (actorUUID == questionCreator || canResearch), CanReviewIdentityCandidate: canResearch, CanMergeIdentity: canModerate}
 }
 
 func (s *Service) workspaceHasResearchRole(ctx context.Context, actorUUID uuid.UUID) (bool, error) {

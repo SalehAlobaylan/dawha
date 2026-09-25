@@ -511,6 +511,7 @@ export interface ResearchWorkspacePermissions {
   canRunTemporalAnalysis: boolean;
   canRunGeospatialAnalysis: boolean;
   canRunResearchAgent: boolean;
+  canReviewResearchQuestionCandidate: boolean;
   canCreateClaim: boolean;
   canDisputeClaim: boolean;
   canLinkEvidence: boolean;
@@ -1706,6 +1707,46 @@ export interface ResearchAgentRunQuery {
   question_id?: string;
   entity_type?: ResearchAgentEntityType;
   entity_id?: string;
+}
+
+export type ResearchQuestionCandidateStatus = "proposed" | "converted" | "dismissed";
+
+export interface ResearchQuestionCandidateReview {
+  id: string;
+  reviewerId: string;
+  decision: "converted" | "dismissed";
+  questionId?: string;
+  noteAr?: string;
+  createdAt: string;
+}
+
+export interface ResearchQuestionCandidate {
+  id: string;
+  runId: string;
+  originQuestionId?: string;
+  originGapId: string;
+  originRecommendationId?: string;
+  titleAr: string;
+  descriptionAr: string;
+  priority: "low" | "normal" | "high";
+  status: ResearchQuestionCandidateStatus;
+  metadata: Record<string, unknown>;
+  generatedBy: string;
+  questionId?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNoteAr?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviews: ResearchQuestionCandidateReview[];
+}
+
+export interface ReviewResearchQuestionCandidateInput {
+  decision: "converted" | "dismissed";
+  title_ar?: string;
+  description_ar?: string;
+  priority?: "low" | "normal" | "high";
+  note_ar?: string;
 }
 
 export interface JobView {

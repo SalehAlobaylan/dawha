@@ -365,7 +365,7 @@ func (s *Service) requireRunAccess(ctx context.Context, q queryer, run Run, acto
 			return ErrForbidden
 		}
 		var allowed bool
-		if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM trees t WHERE t.id = $1 AND (t.visibility = 'public' OR t.owner_id = $2 OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2)))`, run.TreeID, actor).Scan(&allowed); err != nil {
+		if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM trees t JOIN tree_versions tv ON tv.tree_id = t.id AND tv.id = $3 WHERE t.id = $1 AND tv.state = 'published' AND (t.visibility = 'public' OR t.owner_id = $2 OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2)))`, run.TreeID, actor, run.TreeVersionID).Scan(&allowed); err != nil {
 			return err
 		}
 		if !allowed {

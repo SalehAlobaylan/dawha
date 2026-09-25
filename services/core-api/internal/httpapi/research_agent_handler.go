@@ -56,6 +56,49 @@ func (h researchAgentHandler) getLatestRun(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h researchAgentHandler) generateQuestionCandidates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.GenerateQuestionCandidates(r.Context(), user.ID, r.PathValue("runID"))
+	if err != nil {
+		writeResearchAgentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"items": result})
+}
+
+func (h researchAgentHandler) listQuestionCandidates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.ListQuestionCandidates(r.Context(), user.ID, r.PathValue("runID"), r.URL.Query().Get("status"))
+	if err != nil {
+		writeResearchAgentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": result})
+}
+
+func (h researchAgentHandler) reviewQuestionCandidate(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input researchagent.ReviewQuestionCandidateInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReviewQuestionCandidate(r.Context(), user.ID, r.PathValue("candidateID"), input)
+	if err != nil {
+		writeResearchAgentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h researchAgentHandler) requireUser(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 	if h.Service == nil || h.Auth == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "خدمة وكيل البحث غير متاحة حالياً"})
@@ -86,6 +129,9 @@ func writeResearchAgentError(w http.ResponseWriter, err error) {
 	case errors.Is(err, researchagent.ErrNotFound):
 		status = http.StatusNotFound
 		message = "لم يُعثر على المورد المطلوب."
+	case errors.Is(err, researchagent.ErrConflict):
+		status = http.StatusConflict
+		message = "تغيرت حالة مورد وكيل البحث."
 	case errors.Is(err, researchagent.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
 		message = "خدمة وكيل البحث غير متاحة حالياً."

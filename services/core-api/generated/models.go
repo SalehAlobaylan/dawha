@@ -673,6 +673,37 @@ type ResearchGraphPathEvidence struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ResearchQuestionCandidate struct {
+	ID                     pgtype.UUID
+	RunID                  pgtype.UUID
+	OriginQuestionID       pgtype.UUID
+	OriginGapID            pgtype.UUID
+	OriginRecommendationID pgtype.UUID
+	TitleAr                string
+	DescriptionAr          string
+	Priority               string
+	Status                 string
+	DedupeKey              string
+	Metadata               []byte
+	GeneratedBy            pgtype.UUID
+	QuestionID             pgtype.UUID
+	ReviewedBy             pgtype.UUID
+	ReviewedAt             pgtype.Timestamptz
+	ReviewNoteAr           pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+type ResearchQuestionCandidateReview struct {
+	ID          pgtype.UUID
+	CandidateID pgtype.UUID
+	ReviewerID  pgtype.UUID
+	Decision    string
+	QuestionID  pgtype.UUID
+	NoteAr      pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+}
+
 type ResearchRun struct {
 	ID                                  pgtype.UUID
 	QuestionID                          pgtype.UUID
