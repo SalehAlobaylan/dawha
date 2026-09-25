@@ -78,6 +78,52 @@ func TestSearchHidesPrivateDraftPeopleAndResearchClaims(t *testing.T) {
 	}
 }
 
+// TestClaimNameMatchCannotProbeAHiddenPerson covers the text match inside the claim
+// search: matching a claim by the name of one of its people is enough to learn that
+// the name exists and is attached to a claim, so the person policy gates the match.
+func TestClaimNameMatchCannotProbeAHiddenPerson(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	t.Cleanup(pool.Close)
+	fixture := seedSearchVisibilityFixture(t, ctx, pool)
+	service := NewService(pool)
+
+	hidden, err := service.Search(ctx, Input{Query: "شخص مسود البحث", Kind: "claims"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hidden.Total != 0 {
+		t.Fatalf("a private draft person name pulled claims into an anonymous result: %+v", hidden.Groups)
+	}
+	if len(hidden.Groups) != 0 {
+		t.Fatalf("an empty private match still produced a group: %+v", hidden.Groups)
+	}
+
+	published, err := service.Search(ctx, Input{Query: "شخص منشور البحث", Kind: "claims"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultIDs(published, "claim")[fixture.publicClaimID] {
+		t.Fatalf("the public person name no longer finds its public claim: %+v", published.Groups)
+	}
+
+	owner, err := service.Search(ctx, Input{ActorID: fixture.ownerID.String(), Query: "شخص مسود البحث", Kind: "claims"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerIDs := resultIDs(owner, "claim")
+	if !ownerIDs[fixture.publicClaimID] {
+		t.Fatalf("the owner lost the claim attached to the person they created: %+v", owner.Groups)
+	}
+}
+
 func resultIDs(response Response, kind string) map[uuid.UUID]bool {
 	ids := make(map[uuid.UUID]bool)
 	for _, group := range response.Groups {
@@ -116,7 +162,7 @@ func seedSearchVisibilityFixture(t *testing.T, ctx context.Context, pool *pgxpoo
 	}
 	fixture.draftPersonID = uuid.New()
 	fixture.publishedPersonID = uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) VALUES ($1, 'شخصية بحث مسودة', 'شخصية بحث مسودة', $3), ($2, 'شخصية بحث منشورة', 'شخصية بحث منشورة', $3)`, fixture.draftPersonID, fixture.publishedPersonID, fixture.ownerID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) VALUES ($1, 'شخص مسود البحث', 'شخص مسود البحث', $3), ($2, 'شخص منشور البحث', 'شخص منشور البحث', $3)`, fixture.draftPersonID, fixture.publishedPersonID, fixture.ownerID); err != nil {
 		t.Fatal(err)
 	}
 	treeID := uuid.New()
@@ -214,6 +260,11 @@ func cleanupSearchVisibilityFixture(t *testing.T, pool *pgxpool.Pool, fixture *s
 		if _, err := pool.Exec(ctx, statement, actors); err != nil {
 			t.Errorf("cleanup failed for %q: %v", statement, err)
 		}
+	}
+	// The statements that reference a leftover passage go first so an interrupted
+	// earlier run cannot block the cleanup.
+	if _, err := pool.Exec(ctx, `DELETE FROM source_statements WHERE source_passage_id IN (SELECT id FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%')`); err != nil {
+		t.Errorf("cleanup failed for leftover statements: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%'`); err != nil {
 		t.Errorf("cleanup failed for source passages: %v", err)

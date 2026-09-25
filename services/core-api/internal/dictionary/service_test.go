@@ -20,7 +20,7 @@ func TestValidIndexKind(t *testing.T) {
 
 func TestIndexQueryIncludesAliasSearch(t *testing.T) {
 	query, args := indexQuery("people", "عبد", visibility.Anonymous())
-	if len(args) != 2 || args[0] != "عبد" {
+	if len(args) != 3 || args[0] != "عبد" {
 		t.Fatalf("unexpected query args: %#v", args)
 	}
 	if !containsText(query, "person_aliases") || !containsText(query, "normalized_value_ar") {
@@ -55,8 +55,12 @@ func TestOwnerIndexQueryIncludesOwnerGrant(t *testing.T) {
 	if !containsText(query, "vis_person.created_by = $2::uuid") {
 		t.Fatalf("expected owner grant in query: %s", query)
 	}
-	if len(args) != 2 || args[1] == uuid.Nil {
-		t.Fatalf("expected the actor parameter to be bound: %#v", args)
+	// The person grant and the alias source grant each bind the actor.
+	if len(args) != 3 || args[1] == uuid.Nil || args[2] == uuid.Nil {
+		t.Fatalf("expected both actor parameters to be bound: %#v", args)
+	}
+	if !containsText(query, "pa.source_id IS NULL") {
+		t.Fatalf("expected the alias source rule in query: %s", query)
 	}
 }
 

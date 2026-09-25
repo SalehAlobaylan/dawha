@@ -180,6 +180,11 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
 	params := visibility.NewParams()
 	personPredicate := policy.PersonPredicate(params, "p.id")
+	// The person row's secondary name is an alias value, and the alias score reads the
+	// alias table, so both follow the alias rule: an alias taken from a research-only
+	// source is not searchable and not shown.
+	aliasSource := policy.SourcePredicate(params, "pa.source_id")
+	visibleAlias := `(pa.source_id IS NULL OR ` + aliasSource + `)`
 	personRef := params.Add(input.EntityID)
 	placeRef := params.Add(input.PlaceID)
 	termRef := params.Add(query)
@@ -187,10 +192,10 @@ func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, que
 	rows, err := s.Pool.Query(ctx, `
 		WITH results AS (
 			SELECT p.id, 'person'::text AS kind, p.canonical_name_ar AS name,
-			       COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id ORDER BY pa.created_at LIMIT 1), '') AS secondary,
+			       COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id AND `+visibleAlias+` ORDER BY pa.created_at LIMIT 1), '') AS secondary,
 			       p.identity_status AS status,
 			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END,
-			                CASE WHEN EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END,
+			                CASE WHEN EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND `+visibleAlias+` AND pa.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END,
 			                similarity(p.normalized_name_ar, `+termRef+`) * 70) AS score
 			FROM people p
 			WHERE `+personPredicate+`
@@ -270,6 +275,11 @@ func (s *Service) searchSources(ctx context.Context, query string, input Input) 
 func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
 	params := visibility.NewParams()
 	claimPredicate := policy.ClaimPredicate(params, "c.id")
+	// Matching a claim by the name of one of its people would otherwise let an
+	// anonymous caller probe a private draft person: a hit reveals that the name
+	// exists and is attached to a claim. The person policy therefore gates the name
+	// match, so a hidden person cannot pull a claim into the result set.
+	matchedPerson := policy.PersonPredicate(params, "p.id")
 	termRef := params.Add(query)
 	statusRef := params.Add(input.Status)
 	personRef := params.Add(input.PersonID)
@@ -282,7 +292,7 @@ func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, qu
 		SELECT c.id, c.predicate, COALESCE(c.notes_ar, ''), c.status,
 		       GREATEST(CASE WHEN c.predicate = `+termRef+` THEN 100 ELSE 0 END, similarity(c.predicate, `+termRef+`) * 70, CASE WHEN COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' THEN 60 ELSE 0 END) AS score
 		FROM claims c
-		WHERE (`+termRef+` = '' OR c.predicate ILIKE '%' || `+termRef+` || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND p.canonical_name_ar ILIKE '%' || `+termRef+` || '%'))
+		WHERE (`+termRef+` = '' OR c.predicate ILIKE '%' || `+termRef+` || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND `+matchedPerson+` AND p.canonical_name_ar ILIKE '%' || `+termRef+` || '%'))
 		  AND `+claimPredicate+`
 		  AND (`+statusRef+` = '' OR c.status = `+statusRef+`)
 		  AND (`+personRef+` = '' OR c.subject_id = `+personRef+`::uuid OR c.object_id = `+personRef+`::uuid)

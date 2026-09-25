@@ -268,19 +268,28 @@ func (s *Service) personDetail(ctx context.Context, policy visibility.Policy, id
 	item.Kind = "person"
 	item.DescriptionAR = textValue(notes)
 	var err error
-	if item.Aliases, err = s.aliases(ctx, s.Pool, "person_aliases", "person_id", id); err != nil {
+	if item.Aliases, err = s.personAliases(ctx, s.Pool, policy, id); err != nil {
 		return Detail{}, err
 	}
+	// A place reaches this page through an association or a claim, and either can be
+	// research-only. Both branches apply the same rule the place page uses: an
+	// association backed by a source is kept only while that source is visible, and a
+	// claim is kept only while the claim itself is. An association with no source is a
+	// platform record, so it stays.
+	placeParams := visibility.NewParams()
+	personRef := placeParams.Add(id)
+	associationSource := policy.SourcePredicate(placeParams, "ga.source_id")
+	placeClaim := policy.ClaimPredicate(placeParams, "c.id")
 	if item.Places, err = s.references(ctx, s.Pool, `
 		SELECT DISTINCT p.id, p.canonical_name_ar, p.place_type, ga.status
 		FROM places p JOIN geographic_associations ga ON ga.place_id = p.id
-		WHERE ga.entity_type = 'person' AND ga.entity_id = $1
+		WHERE ga.entity_type = 'person' AND ga.entity_id = `+personRef+` AND (ga.source_id IS NULL OR `+associationSource+`)
 		UNION
 		SELECT DISTINCT p.id, p.canonical_name_ar, p.place_type, c.status
 		FROM places p JOIN claims c ON c.place_id = p.id
-		WHERE (c.subject_type = 'person' AND c.subject_id = $1) OR (c.object_type = 'person' AND c.object_id = $1)
+		WHERE `+placeClaim+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`))
 		ORDER BY 2
-	`, id); err != nil {
+	`, placeParams.Args()...); err != nil {
 		return Detail{}, err
 	}
 	if item.PublishedTrees, err = s.publishedTrees(ctx, s.Pool, id); err != nil {
@@ -380,13 +389,23 @@ func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
 		return `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE ` + sourcePredicate + ` AND (` + term + ` = '' OR s.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY s.title_ar LIMIT 100`, params.Args()
 	case "people":
 		personPredicate := policy.PersonPredicate(params, "p.id")
-		return `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id) FROM people p WHERE ` + personPredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+		// The secondary name is an alias value, so it follows the alias rule: only
+		// aliases whose source is visible to the actor may be counted or shown.
+		aliasSource := policy.SourcePredicate(params, "pa.source_id")
+		visibleAlias := `(pa.source_id IS NULL OR ` + aliasSource + `)`
+		return `SELECT p.id, 'person', p.canonical_name_ar, COALESCE((SELECT pa.value_ar FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + ` ORDER BY pa.created_at LIMIT 1), ''), p.identity_status, (SELECT count(*) FROM person_aliases pa WHERE pa.person_id = p.id AND ` + visibleAlias + `) FROM people p WHERE ` + personPredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM person_aliases pa WHERE pa.person_id = p.id AND pa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
 	case "questions":
 		questionPredicate := policy.QuestionPredicate(params, "q.id")
 		return `SELECT q.id, 'question', q.title_ar, COALESCE(q.description_ar, ''), q.status, (SELECT count(*) FROM question_notes qn WHERE qn.question_id = q.id) FROM open_questions q WHERE ` + questionPredicate + ` AND (` + term + ` = '' OR q.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(q.description_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY q.updated_at DESC LIMIT 100`, params.Args()
 	case "disputed-claims":
 		claimPredicate := policy.ClaimPredicate(params, "c.id")
-		return `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id WHERE ` + claimPredicate + ` AND c.status IN ('disputed', 'contested') AND (` + term + ` = '' OR COALESCE(ps.canonical_name_ar, c.subject_id::text) ILIKE '%' || ` + term + ` || '%' OR COALESCE(po.canonical_name_ar, c.object_id::text) ILIKE '%' || ` + term + ` || '%') ORDER BY c.updated_at DESC LIMIT 100`, params.Args()
+		// The subject and object names come from people rows, so the person policy
+		// belongs in the join condition. An unreadable person does not join, the
+		// COALESCE fallback reports the id the row already exposes, and the name of a
+		// private draft person cannot reach the label or match the search term.
+		subjectPerson := policy.PersonPredicate(params, "ps.id")
+		objectPerson := policy.PersonPredicate(params, "po.id")
+		return `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id AND ` + subjectPerson + ` LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id AND ` + objectPerson + ` WHERE ` + claimPredicate + ` AND c.status IN ('disputed', 'contested') AND (` + term + ` = '' OR COALESCE(ps.canonical_name_ar, c.subject_id::text) ILIKE '%' || ` + term + ` || '%' OR COALESCE(po.canonical_name_ar, c.object_id::text) ILIKE '%' || ` + term + ` || '%') ORDER BY c.updated_at DESC LIMIT 100`, params.Args()
 	}
 	return "", nil
 }
@@ -407,8 +426,34 @@ func scanIndex(row pgx.Row) (IndexItem, error) {
 	return item, nil
 }
 
+// aliases reads the aliases of a family or a tribe. Neither table carries a source
+// column, so there is nothing to scope and the rows stay public.
 func (s *Service) aliases(ctx context.Context, q dbExecutor, table, column string, id uuid.UUID) ([]AliasView, error) {
 	rows, err := q.Query(ctx, `SELECT value_ar, alias_type FROM `+table+` WHERE `+column+` = $1 ORDER BY created_at, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]AliasView, 0)
+	for rows.Next() {
+		var item AliasView
+		if err := rows.Scan(&item.ValueAR, &item.Type); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// personAliases reads the aliases of a person. person_aliases can record the source a
+// spelling was taken from, so an alias derived from a research-only source must not
+// reach a public reader: on a published person page that alias is a way to disclose a
+// private source. An alias with no source is a platform record and stays.
+func (s *Service) personAliases(ctx context.Context, q dbExecutor, policy visibility.Policy, personID uuid.UUID) ([]AliasView, error) {
+	params := visibility.NewParams()
+	personRef := params.Add(personID)
+	sourcePredicate := policy.SourcePredicate(params, "pa.source_id")
+	rows, err := q.Query(ctx, `SELECT pa.value_ar, pa.alias_type FROM person_aliases pa WHERE pa.person_id = `+personRef+` AND (pa.source_id IS NULL OR `+sourcePredicate+`) ORDER BY pa.created_at, pa.id`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}

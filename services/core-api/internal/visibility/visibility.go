@@ -379,9 +379,17 @@ func questionGrants(questionReference, actorReference string, research bool) []g
 	return grants
 }
 
+// treeGrants keeps the same all-or-nothing rule the person grants use: a tree is
+// public only once a version of it is published. A public tree whose versions are
+// all drafts still holds unpublished interpretations, so it stays closed to
+// anonymous callers. The owner and collaborator grants open the draft to the people
+// working on it.
 func treeGrants(treeReference, actorReference string) []grant {
 	return []grant{
-		{access: AccessPublic, sql: fmt.Sprintf(`EXISTS (SELECT 1 FROM trees vis_tree WHERE vis_tree.id = %s AND vis_tree.visibility = 'public')`, treeReference)},
+		{access: AccessPublic, sql: fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM trees vis_tree
+			JOIN tree_versions vis_version ON vis_version.tree_id = vis_tree.id AND vis_version.state = 'published'
+			WHERE vis_tree.id = %s AND vis_tree.visibility = 'public')`, treeReference)},
 		{access: AccessOwner, sql: fmt.Sprintf(`EXISTS (SELECT 1 FROM trees vis_tree WHERE vis_tree.id = %s AND vis_tree.owner_id = %s)`, treeReference, actorReference)},
 		{access: AccessCollaborator, sql: fmt.Sprintf(`EXISTS (SELECT 1 FROM trees vis_tree JOIN tree_collaborators vis_collaborator ON vis_collaborator.tree_id = vis_tree.id WHERE vis_tree.id = %s AND vis_collaborator.user_id = %s)`, treeReference, actorReference)},
 	}

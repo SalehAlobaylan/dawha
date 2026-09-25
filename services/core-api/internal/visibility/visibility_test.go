@@ -94,6 +94,9 @@ func TestResearchRoleCannotBypassPeople(t *testing.T) {
 	if tree := policy.TreePredicate(params, "t.id"); strings.Contains(tree, "TRUE") {
 		t.Fatalf("research role must not bypass tree visibility: %s", tree)
 	}
+	if tree := policy.TreePredicate(params, "t.id"); !strings.Contains(tree, "vis_version.state = 'published'") {
+		t.Fatalf("the public tree grant must require a published version: %s", tree)
+	}
 	if source := policy.SourcePredicate(params, "s.id"); !strings.Contains(source, "TRUE") {
 		t.Fatalf("research role must reach research-only sources: %s", source)
 	}
@@ -132,6 +135,8 @@ type policyFixture struct {
 	adminID               uuid.UUID
 	draftPersonID         uuid.UUID
 	publishedPersonID     uuid.UUID
+	unpublishedTreeID     uuid.UUID
+	unpublishedDraftID    uuid.UUID
 	publicSourceID        uuid.UUID
 	privateSourceID       uuid.UUID
 	publicClaimID         uuid.UUID
@@ -277,6 +282,45 @@ func TestPolicyAuthorizationMatrixAgainstDatabase(t *testing.T) {
 		}
 	}
 
+	// A public tree is public data only once a version is published. Until then the
+	// tree stays closed to anonymous callers and to unrelated researchers, while the
+	// owner and the collaborators keep their drafts.
+	treeCases := map[string]Access{
+		"anonymous":            AccessHidden,
+		"unrelated researcher": AccessHidden,
+		"owner":                AccessOwner,
+		"collaborator":         AccessCollaborator,
+		"researcher":           AccessHidden,
+		"admin":                AccessHidden,
+	}
+	publishedTreeID := uuid.New()
+	publishedVersionID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة عامة منشورة', 'public', $2)`, publishedTreeID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state, created_by) VALUES ($1, $2, 1, 'published', $3)`, publishedVersionID, publishedTreeID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	for _, subject := range policies {
+		access, accessErr := subject.policy.Tree(ctx, pool, publishedTreeID)
+		if accessErr != nil || access != AccessPublic {
+			t.Fatalf("%s reading a published public tree = %s (%v), want %s", subject.name, access, accessErr, AccessPublic)
+		}
+	}
+	for _, subject := range policies {
+		access, accessErr := subject.policy.Tree(ctx, pool, fixture.unpublishedTreeID)
+		if accessErr != nil {
+			t.Fatalf("%s reading a public tree with no published version: %v", subject.name, accessErr)
+		}
+		if access != treeCases[subject.name] {
+			t.Fatalf("%s reading a public tree with no published version = %s, want %s", subject.name, access, treeCases[subject.name])
+		}
+		access, accessErr = subject.policy.Tree(ctx, pool, uuid.New())
+		if accessErr != nil || access != AccessMissing {
+			t.Fatalf("%s reading a missing tree = %s (%v), want missing", subject.name, access, accessErr)
+		}
+	}
+
 	for _, subject := range policies {
 		access, accessErr := subject.policy.Person(ctx, pool, uuid.New())
 		if accessErr != nil || access != AccessMissing {
@@ -361,6 +405,17 @@ func seedPolicyFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *p
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_collaborators (tree_id, user_id, permission_level, invited_by) VALUES ($1, $2, 'view', $3)`, privateTreeID, fixture.collaboratorID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	fixture.unpublishedTreeID = uuid.New()
+	fixture.unpublishedDraftID = uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة عامة غير منشورة', 'public', $2)`, fixture.unpublishedTreeID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state, created_by) VALUES ($1, $2, 1, 'draft', $3)`, fixture.unpublishedDraftID, fixture.unpublishedTreeID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tree_collaborators (tree_id, user_id, permission_level, invited_by) VALUES ($1, $2, 'view', $3)`, fixture.unpublishedTreeID, fixture.collaboratorID, fixture.ownerID); err != nil {
 		t.Fatal(err)
 	}
 	fixture.draftPersonID = uuid.New()
