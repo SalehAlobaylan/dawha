@@ -1,3 +1,5 @@
+github.com/SalehAlobaylan/dawha/services/core-api/internal/auth
+github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration
 github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary
 github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence
 github.com/SalehAlobaylan/dawha/services/core-api/internal/geospatialintelligence
@@ -11,4 +13,5 @@ github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing
 github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions
 github.com/SalehAlobaylan/dawha/services/core-api/internal/temporalanalysis
 github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport
+github.com/SalehAlobaylan/dawha/services/core-api/internal/trees
 github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility

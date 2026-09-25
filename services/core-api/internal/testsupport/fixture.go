@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -75,8 +74,12 @@ func New(t *testing.T) *Fixture {
 		schema: SchemaPrefix + randomToken(t),
 		tag:    randomToken(t),
 	}
-	fixture.build(t, databaseURL, repositoryRoot)
+	// Registered before the build so a build that fails halfway - a lock wait
+	// that times out, a migration that errors - still drops the schema it
+	// managed to create instead of leaving a hundred-odd tables behind in the
+	// developer's database.
 	t.Cleanup(fixture.drop)
+	fixture.build(t, databaseURL, repositoryRoot)
 	return fixture
 }
 
@@ -109,12 +112,23 @@ func (f *Fixture) build(t *testing.T, databaseURL, repositoryRoot string) {
 	if _, err := admin.Exec(ctx, `SET search_path TO `+pgx.Identifier{f.schema}.Sanitize()+`, public`); err != nil {
 		t.Fatalf("set fixture search_path: %v", err)
 	}
+	// Building a hundred-odd tables is heavy DDL. Go runs packages in parallel
+	// and every package here builds a schema, so without this lock a full
+	// `go test ./...` exhausts the server's shared memory and fixtures fail for
+	// a reason that has nothing to do with the code under test. The lock only
+	// serialises the schema build; the tests themselves still run in parallel.
+	if err := lockSchemaDDL(ctx, admin); err != nil {
+		t.Fatalf("lock schema ddl: %v", err)
+	}
 	script, err := FixtureScript(repositoryRoot, f.schema)
 	if err != nil {
 		t.Fatalf("build fixture script: %v", err)
 	}
 	if _, err := admin.Exec(ctx, script); err != nil {
 		t.Fatalf("migrate fixture schema: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `SELECT pg_advisory_unlock($1)`, schemaDDLLockKey); err != nil {
+		t.Fatalf("release schema ddl lock: %v", err)
 	}
 
 	config, err := pgxpool.ParseConfig(databaseURL)
@@ -135,6 +149,16 @@ func (f *Fixture) build(t *testing.T, databaseURL, repositoryRoot string) {
 	}
 }
 
+// schemaDDLLockKey is the advisory lock every fixture takes around the heavy
+// part of its lifecycle: creating the migrated schema, and dropping it again.
+// Any constant works as long as every fixture agrees on it.
+const schemaDDLLockKey int64 = 0x504034
+
+func lockSchemaDDL(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, schemaDDLLockKey)
+	return err
+}
+
 func (f *Fixture) drop() {
 	if err := f.dropNow(); err != nil {
 		f.t.Errorf("drop fixture schema %s: %v", f.schema, err)
@@ -145,15 +169,28 @@ func (f *Fixture) drop() {
 // connection because the pool is closed first, and because the post-run leak
 // audit in tools/dbtestguard calls the same path after the whole suite ended.
 func (f *Fixture) dropNow() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, os.Getenv(DatabaseURLEnv))
 	if err != nil {
 		return err
 	}
 	defer admin.Close(context.Background())
-	_, err = admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+pgx.Identifier{f.schema}.Sanitize()+` CASCADE`)
-	return err
+	if err := lockSchemaDDL(ctx, admin); err != nil {
+		return fmt.Errorf("lock schema ddl: %w", err)
+	}
+	statement := `DROP SCHEMA IF EXISTS ` + pgx.Identifier{f.schema}.Sanitize() + ` CASCADE`
+	// A drop can lose a race with a connection that has not finished releasing
+	// its locks, so it is retried rather than left half-done. A leaked schema
+	// costs memory in a database the developer is also using.
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if _, lastErr = admin.Exec(ctx, statement); lastErr == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+	return lastErr
 }
 
 // FixtureScript concatenates every migration followed by the synthetic seed,
@@ -209,40 +246,13 @@ func (f *Fixture) Unique(prefix string) string {
 // Email is a unique address inside the reserved plan004.test domain.
 func (f *Fixture) Email() string { return f.Unique("user") + "@plan004.test" }
 
-// RegisterUser creates a user through the production auth service, so the
-// fixture exercises the same registration path a real signup takes.
-func (f *Fixture) RegisterUser(displayName string) auth.User {
+// GrantRole gives an actor a platform role such as researcher or moderator.
+// Roles are not part of a public signup journey - they are how a reviewer is
+// distinguished from an ordinary registrant - so a fixture that needs one
+// grants it explicitly rather than waiting for a role the API never assigns.
+func (f *Fixture) GrantRole(userID, role string) {
 	f.t.Helper()
-	user, err := auth.NewService(f.pool).Register(f.ctx, f.Email(), displayName, f.Unique("pw"))
-	if err != nil {
-		f.t.Fatalf("register fixture user: %v", err)
-	}
-	return user
-}
-
-// Auth returns the auth service bound to the fixture pool.
-func (f *Fixture) Auth() *auth.Service { return auth.NewService(f.pool) }
-
-// Login returns a live session token for an already registered user, which is
-// what the HTTP layer reads out of the session cookie.
-func (f *Fixture) Login(email, password string) string {
-	f.t.Helper()
-	_, token, err := f.Auth().Login(f.ctx, email, password)
-	if err != nil {
-		f.t.Fatalf("login fixture user %s: %v", email, err)
-	}
-	return token
-}
-
-// RegisterAndLogin is the common case: a fresh account with a live session.
-func (f *Fixture) RegisterAndLogin(displayName string) (auth.User, string) {
-	f.t.Helper()
-	password := f.Unique("pw")
-	user, err := f.Auth().Register(f.ctx, f.Email(), displayName, password)
-	if err != nil {
-		f.t.Fatalf("register fixture user: %v", err)
-	}
-	return user, f.Login(user.Email, password)
+	f.Exec(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, role)
 }
 
 // QueryRow is a fixture-scoped convenience for assertions.

@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 )
 
 // TestFixtureIsIsolatedAndDropped pins the isolation contract the rest of the
@@ -34,7 +36,7 @@ func TestFixtureIsIsolatedAndDropped(t *testing.T) {
 		t.Fatalf("seeded people rows = %d, want 1", got)
 	}
 
-	user := fixture.RegisterUser("باحث العزل")
+	user := register(t, fixture, "باحث العزل")
 	if got := fixture.Count(`SELECT count(*) FROM users WHERE id = $1`, user.ID); got != 1 {
 		t.Fatalf("fixture user rows = %d, want 1", got)
 	}
@@ -58,10 +60,13 @@ func TestFixtureIsIsolatedAndDropped(t *testing.T) {
 	if containsString(after, schema) {
 		t.Fatalf("fixture schema %s survived the drop; visible fixture schemas: %v", schema, after)
 	}
-	for _, name := range after {
-		if !containsString(before, name) {
-			t.Fatalf("the fixture left a schema behind: %s", name)
-		}
+	// Only this fixture's schema is asserted on here. Other packages run in
+	// parallel against the same database, so a schema that appeared after the
+	// baseline may legitimately belong to one of them; the post-run leak audit
+	// in tools/dbtestguard is what checks the whole database once every package
+	// has finished.
+	if len(before) > len(after) {
+		t.Fatalf("fixture schemas went from %d to %d; the drop removed more than it owned", len(before), len(after))
 	}
 }
 
@@ -73,14 +78,26 @@ func TestFixturesDoNotShareRows(t *testing.T) {
 	if first.Schema() == second.Schema() {
 		t.Fatalf("two fixtures share the schema %s", first.Schema())
 	}
-	firstUser := first.RegisterUser("باحث أول")
-	secondUser := second.RegisterUser("باحث ثانٍ")
+	firstUser := register(t, first, "باحث أول")
+	secondUser := register(t, second, "باحث ثانٍ")
 	if got := second.Count(`SELECT count(*) FROM users WHERE id = $1`, firstUser.ID); got != 0 {
 		t.Fatalf("the second fixture sees %d row(s) of the first fixture's user", got)
 	}
 	if got := first.Count(`SELECT count(*) FROM users WHERE id = $1`, secondUser.ID); got != 0 {
 		t.Fatalf("the first fixture sees %d row(s) of the second fixture's user", got)
 	}
+}
+
+// register creates an account the way the auth service does. This package's own
+// test cannot use internal/testsupport/actor - that package imports this one -
+// so it reaches for the production auth service directly instead.
+func register(t *testing.T, fixture *Fixture, displayName string) auth.User {
+	t.Helper()
+	user, err := auth.NewService(fixture.Pool()).Register(fixture.Ctx(), fixture.Email(), displayName, fixture.Unique("pw"))
+	if err != nil {
+		t.Fatalf("register fixture user: %v", err)
+	}
+	return user
 }
 
 func databaseURLOrSkip(t *testing.T) string {
