@@ -307,7 +307,6 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 	if status != "pending" {
 		return SuggestionView{}, ErrConflict
 	}
-	var questionID *uuid.UUID
 	if plan != nil {
 		applied, err := applyChangeSet(ctx, tx, *plan, reviewerUUID)
 		if err != nil {
@@ -326,10 +325,12 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 		}); err != nil {
 			return SuggestionView{}, err
 		}
-		if err := settleReview(ctx, tx, id, reviewerUUID, input, questionID, status); err != nil {
+		// A change set is the decision, so the suggestion points at no question.
+		if err := settleReview(ctx, tx, id, reviewerUUID, input, nil, status); err != nil {
 			return SuggestionView{}, err
 		}
 	} else {
+		var questionID *uuid.UUID
 		if input.Decision == "converted" || input.Decision == "accepted" {
 			createdID, err := createSuggestionQuestion(ctx, tx, id, reviewerUUID, textAR, input.QuestionTitleAR, input.Decision)
 			if err != nil {
