@@ -602,6 +602,22 @@ type ResearchEvidence struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ResearchGraphAncestorFrontier struct {
+	RunID             pgtype.UUID
+	PathID            pgtype.UUID
+	TreeID            pgtype.UUID
+	TreeVersionID     pgtype.UUID
+	RootNodeID        pgtype.UUID
+	AlgorithmVersion  string
+	InputFingerprint  string
+	Limits            []byte
+	Summary           []byte
+	Status            string
+	Truncated         bool
+	TruncationReasons []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
 type ResearchGraphComparison struct {
 	RunID             pgtype.UUID
 	FromPathID        pgtype.UUID

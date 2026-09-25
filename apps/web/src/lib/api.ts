@@ -47,6 +47,8 @@ import type {
   GraphRelationshipImpactResult,
   GraphBranchStructureComparisonInput,
   GraphBranchStructureComparisonResult,
+  GraphAncestorFrontierInput,
+  GraphAncestorFrontierResult,
   ResearchQueryInput,
   ResearchQueryResult,
   ResearchRunDetail,
@@ -239,6 +241,23 @@ export async function queryGraphBranchStructureComparison(input: GraphBranchStru
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as GraphBranchStructureComparisonResult;
+}
+
+export async function queryGraphAncestorFrontier(input: GraphAncestorFrontierInput): Promise<GraphAncestorFrontierResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لتفعيل إطار الأسلاف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/ancestor-frontier`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as GraphAncestorFrontierResult;
 }
 
 export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {

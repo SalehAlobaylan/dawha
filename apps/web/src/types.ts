@@ -455,7 +455,7 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
-export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison";
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison" | "ancestor_frontier";
 
 export interface GraphTreeScope {
   treeId?: string;
@@ -649,6 +649,56 @@ export interface GraphBranchStructureComparisonResult {
   truncationReasons: string[];
   status: string;
   explanation: string;
+}
+
+export interface GraphAncestorFrontierInput {
+  tree_id: string;
+  tree_version_id: string;
+  root_node_id: string;
+  max_depth?: number;
+}
+
+export interface GraphAncestorFrontierLimits {
+  maxDepth: number;
+  maxNodes: number;
+  maxEdges: number;
+}
+
+export interface GraphAncestorDepthCount {
+  depth: number;
+  count: number;
+}
+
+export interface GraphAncestorStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface GraphAncestorFrontierSummary {
+  treeScope: GraphTreeScope;
+  rootNodeId: string;
+  pathId: string;
+  inputFingerprint: string;
+  boundedAncestorCount: number;
+  boundedEdgeCount: number;
+  maxDepthReached: number;
+  nodesByDepth: GraphAncestorDepthCount[];
+  edgeStatusCounts: GraphAncestorStatusCount[];
+  truncated: boolean;
+  truncationReasons: string[];
+  cycleDetected: boolean;
+  status: string;
+}
+
+export interface GraphAncestorFrontierResult {
+  runId: string;
+  createdAt: string;
+  operation: GraphOperation;
+  algorithmVersion: string;
+  structuralOnly: boolean;
+  limits: GraphAncestorFrontierLimits;
+  summary: GraphAncestorFrontierSummary;
+  path: GraphPath;
 }
 
 export interface ResearchRetrievalStats {
@@ -931,6 +981,7 @@ export interface ResearchRunDetail extends ResearchRunSummary {
   contexts: ResearchRunContext[];
   graphPaths: GraphPath[];
   comparison?: GraphBranchStructureComparisonResult;
+  ancestorFrontier?: GraphAncestorFrontierSummary;
 }
 
 export interface ResearchWorkspaceSnapshot {

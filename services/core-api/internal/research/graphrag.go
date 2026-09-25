@@ -25,11 +25,13 @@ const (
 	GraphOperationConnectedComponent = "connected_component"
 	GraphOperationRelationshipImpact = "relationship_impact"
 	GraphOperationBranchComparison   = "branch_structure_comparison"
+	GraphOperationAncestorFrontier   = "ancestor_frontier"
 	GraphAlgorithmVersion            = "graphrag-v1"
 	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
 	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
 	GraphRelationshipImpactAlgorithm = "graphrag-impact-tree-v1"
 	GraphBranchComparisonAlgorithm   = "graphrag-branch-structure-tree-v1"
+	GraphAncestorFrontierAlgorithm   = "graphrag-ancestor-frontier-tree-v1"
 	GraphDefaultDepth                = 2
 	GraphMaxDepth                    = 3
 	GraphMaxPaths                    = 5
@@ -47,6 +49,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationConnectedComponent: {},
 	GraphOperationRelationshipImpact: {},
 	GraphOperationBranchComparison:   {},
+	GraphOperationAncestorFrontier:   {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -179,6 +182,8 @@ func validateGraphEndpointCombination(input QueryInput) error {
 	case GraphOperationRelationshipImpact:
 		return ErrValidation
 	case GraphOperationBranchComparison:
+		return ErrValidation
+	case GraphOperationAncestorFrontier:
 		return ErrValidation
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
@@ -344,6 +349,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationBranchComparison {
 		return GraphBranchComparisonAlgorithm
 	}
+	if operation == GraphOperationAncestorFrontier {
+		return GraphAncestorFrontierAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -364,6 +372,9 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 	}
 	if operation == GraphOperationBranchComparison {
 		return "مقارنة بنية الفروع داخل نسختين منشورتين؛ تصف الشكل والحالة البنيوية فقط ولا تثبت صلة أو نسباً تاريخياً."
+	}
+	if operation == GraphOperationAncestorFrontier {
+		return "إطار أسلاف محدود داخل تفسير شجرة منشورة؛ يصف البنية 방향ية ولا يثبت نسباً تاريخياً."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."
