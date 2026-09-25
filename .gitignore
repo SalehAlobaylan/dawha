@@ -15,3 +15,8 @@ __pycache__/
 *.egg-info/
 services/core-api/bin/
 tmp/
+
+# Playwright and local runtime artifacts
+test-results/
+playwright-report/
+.data/

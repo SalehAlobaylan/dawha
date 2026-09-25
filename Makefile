@@ -101,8 +101,29 @@ AI_EVAL_REPORT ?= services/ai-research/evaluation/report.json
 ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
 
-# e2e starts the deterministic local stack the Playwright suite needs and runs
-# it. See apps/web/playwright.config.ts for the ports and the environment each
-# service requires. Nothing here is needed by `verify`.
+# e2e builds the web app against the local API and runs the Playwright suite
+# against the deterministic local stack. See apps/web/.env.e2e.example and
+# apps/web/playwright.config.ts for the ports and the environment each service
+# needs. Nothing here is required by `verify`.
+#
+#   COMPOSE_PROJECT_NAME=dawha make db-migrate db-seed
+#   COMPOSE_PROJECT_NAME=dawha make e2e
+#
+# COMPOSE_PROJECT_NAME reuses an already running `db` container. Point
+# POSTGRES_DB at a scratch database to keep the run off the one you develop
+# against; the runner uses POSTGRES_DB to build DATABASE_URL.
+E2E_PORT ?= 4173
+E2E_API_PORT ?= 8181
+E2E_AI_PORT ?= 8182
 e2e:
-	cd apps/web && npx playwright test
+	@$(MAKE) db-migrate
+	cd apps/web && VITE_API_URL="$${VITE_API_URL:-http://localhost:$(E2E_API_PORT)}" npm run build
+	cd apps/web && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		SOURCE_STORAGE_DIR="$${SOURCE_STORAGE_DIR:-../../.data/source-storage}" \
+		CORE_API_PORT="$(E2E_API_PORT)" \
+		AI_RESEARCH_PORT="$(E2E_AI_PORT)" \
+		AI_RESEARCH_URL="http://localhost:$(E2E_AI_PORT)" \
+		WEB_E2E_PORT="$(E2E_PORT)" \
+		WEB_ORIGIN="http://localhost:$(E2E_PORT)" \
+		npx playwright test
