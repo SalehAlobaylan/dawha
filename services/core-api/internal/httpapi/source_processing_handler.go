@@ -103,7 +103,7 @@ type unsupportedSourceFormatResponse struct {
 
 func writeSourceProcessingError(w http.ResponseWriter, err error) {
 	var unsupported *sourceprocessing.UnsupportedContentError
-	if errors.As(err, &unsupported) || errors.Is(err, sourceprocessing.ErrUnsupportedDocument) {
+	if errors.As(err, &unsupported) || errors.Is(err, sourceprocessing.ErrUnsupportedContent) || errors.Is(err, sourceprocessing.ErrUnsupportedDocument) {
 		writeJSON(w, http.StatusUnsupportedMediaType, unsupportedSourceFormatResponse{
 			Error:                 err.Error(),
 			Code:                  "unsupported_source_format",

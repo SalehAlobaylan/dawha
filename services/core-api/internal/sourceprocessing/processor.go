@@ -78,7 +78,7 @@ func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
 	// it is claimed, read, or sent to the model: the outcome is the same on every
 	// attempt and the run can never reach a succeeded state.
 	if !IsSupportedContentType(file.MimeType) {
-		return s.failProcessing(ctx, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q uses a format that cannot be extracted", normalizeContentType(file.MimeType))))
+		return s.failProcessing(ctx, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q (%s) uses a format that cannot be extracted", file.Filename, normalizeContentType(file.MimeType))))
 	}
 	if s.AI == nil {
 		return ErrAIUnavailable
@@ -410,9 +410,45 @@ func (s *Service) persistProcessedPages(ctx context.Context, file sourceFileReco
 
 func (s *Service) failProcessing(ctx context.Context, runID, fileID uuid.UUID, cause error) error {
 	message := safeProcessingError(cause)
-	_, _ = s.Pool.Exec(ctx, `UPDATE source_processing_runs SET status = 'failed', stage = 'failed', error = $1, updated_at = now() WHERE id = $2`, message, runID)
-	_, _ = s.Pool.Exec(ctx, `UPDATE source_files SET processing_status = 'failed', processing_error = $1 WHERE id = $2`, message, fileID)
-	return cause
+	failures := make([]error, 0, 2)
+	if _, err := s.Pool.Exec(ctx, `UPDATE source_processing_runs SET status = 'failed', stage = 'failed', error = $1, updated_at = now() WHERE id = $2`, message, runID); err != nil {
+		failures = append(failures, fmt.Errorf("mark the processing run failed: %w", err))
+	}
+	if _, err := s.Pool.Exec(ctx, `UPDATE source_files SET processing_status = 'failed', processing_error = $1 WHERE id = $2`, message, fileID); err != nil {
+		failures = append(failures, fmt.Errorf("mark the source file failed: %w", err))
+	}
+	if len(failures) == 0 {
+		return cause
+	}
+	return &unrecordedFailureError{cause: cause, failures: failures}
+}
+
+// unrecordedFailureError says the failure is known but could not be written
+// down, which is a different outcome from a recorded refusal: left in the
+// database as it is, the run keeps looking unfinished while its job dies. The
+// refusal is kept for the reader, and the error chain carries the database
+// failures instead of the refusal, so nothing can mistake the two apart.
+type unrecordedFailureError struct {
+	cause    error
+	failures []error
+}
+
+func (e *unrecordedFailureError) Error() string {
+	messages := make([]string, 0, len(e.failures))
+	for _, failure := range e.failures {
+		messages = append(messages, failure.Error())
+	}
+	return fmt.Sprintf("%v was not recorded: %s", e.cause, strings.Join(messages, "; "))
+}
+
+func (e *unrecordedFailureError) Unwrap() error {
+	return errors.Join(e.failures...)
+}
+
+// Refusal is the failure that could not be recorded, kept readable without
+// putting it back on the error chain.
+func (e *unrecordedFailureError) Refusal() error {
+	return e.cause
 }
 
 func safeProcessingError(cause error) string {

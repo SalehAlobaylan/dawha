@@ -2,11 +2,17 @@ package sourceprocessing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
 )
+
+// errExtractorUnavailable is a mistake in the worker wiring, not a statement
+// about the caller's file. It is deliberately neither ErrUnsupportedDocument nor
+// ErrUnsupportedContent, so it can never reach a caller as a format refusal.
+var errExtractorUnavailable = errors.New("source extractor is unavailable")
 
 type TextExtractor struct {
 	MaxPageRunes int
@@ -19,7 +25,7 @@ func NewTextExtractor() *TextExtractor {
 
 func (e *TextExtractor) Extract(ctx context.Context, input ExtractInput) ([]Page, error) {
 	if e == nil || input.Reader == nil {
-		return nil, ErrUnsupportedDocument
+		return nil, errExtractorUnavailable
 	}
 	if !IsSupportedContentType(input.ContentType) {
 		return nil, unsupportedContent(fmt.Sprintf("the stored content type %q cannot be extracted", normalizeContentType(input.ContentType)))
