@@ -199,6 +199,12 @@ func (h researchHandler) workspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// listRuns and getRun share one public contract: research run metadata is
+// research-only data. A caller without a research role is refused with 403 before
+// any run row is read, so the response is the same whether or not the run exists and
+// no query text, status, model, route, count or timestamp is disclosed. The optional
+// session lookup stays optional on purpose: an unauthenticated caller must receive
+// the neutral 403 rather than a 401 that would confirm the endpoint is live.
 func (h researchHandler) listRuns(w http.ResponseWriter, r *http.Request) {
 	if h.Service == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "research service is not configured"})

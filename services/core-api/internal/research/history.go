@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -61,10 +62,17 @@ func (s *Service) ListRuns(ctx context.Context, actorID, questionID string) ([]R
 	if err != nil {
 		return nil, ErrValidation
 	}
-	includeAnswer, err := s.canViewResearchHistory(ctx, actorID)
+	policy, err := loadHistoryPolicy(ctx, s.Pool, actorID)
 	if err != nil {
 		return nil, err
 	}
+	// Research run metadata is research-only data. An unauthorized caller is refused
+	// before the summary query runs, so the answer never depends on whether the run
+	// or the question exists and the response cannot be an existence oracle.
+	if !policy.CanViewResearchHistory() {
+		return nil, ErrForbidden
+	}
+	includeAnswer := true
 	summaries, err := listRuns(ctx, s.Pool, questionUUID, includeAnswer)
 	if err != nil {
 		return nil, err
@@ -80,18 +88,23 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 	if err != nil {
 		return ResearchRunDetail{}, ErrNotFound
 	}
-	includeAnswer, err := s.canViewResearchHistory(ctx, actorID)
+	policy, err := loadHistoryPolicy(ctx, s.Pool, actorID)
 	if err != nil {
 		return ResearchRunDetail{}, err
 	}
-	if includeAnswer {
-		allowed, accessErr := s.canAccessPersistedRun(ctx, runUUID, actorID)
-		if accessErr != nil {
-			return ResearchRunDetail{}, accessErr
-		}
-		if !allowed {
-			return ResearchRunDetail{}, ErrForbidden
-		}
+	// The refusal happens before the summary is loaded, so an anonymous or
+	// unregistered caller cannot read query text, status, model, route, counts or
+	// timestamps, and a denied run is indistinguishable from a missing one.
+	if !policy.CanViewResearchHistory() {
+		return ResearchRunDetail{}, ErrForbidden
+	}
+	includeAnswer := true
+	allowed, accessErr := s.canAccessPersistedRun(ctx, runUUID, actorID)
+	if accessErr != nil {
+		return ResearchRunDetail{}, accessErr
+	}
+	if !allowed {
+		return ResearchRunDetail{}, ErrForbidden
 	}
 	summary, err := scanRunSummary(s.Pool.QueryRow(ctx, `
 		SELECT rr.id, rr.question_id, rr.query, rr.status, rr.insufficient_evidence,
@@ -424,15 +437,20 @@ func graphSourceDependencyPathVisible(ctx context.Context, executor historyExecu
 	return true, nil
 }
 
+// canViewPersistedSource and canViewPersistedTree delegate to the central visibility
+// policy so research history, dictionary, search and claims agree on who may read a
+// source or a tree.
 func canViewPersistedSource(ctx context.Context, executor historyExecutor, sourceID, actorID uuid.UUID) (bool, error) {
-	if sourceID == uuid.Nil {
-		return false, nil
+	policy, err := resolveResearchScope(ctx, executor, actorID)
+	if err != nil {
+		return false, err
 	}
-	var allowed bool
-	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND (s.visibility = 'public' OR s.created_by = $2 OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $2 AND ur.role IN ('researcher', 'moderator', 'admin'))))`, sourceID, actorID).Scan(&allowed)
-	return allowed, err
+	access, err := policy.Source(ctx, executor, sourceID)
+	return access.Allowed(), err
 }
 
+// canViewPersistedPublicSource keeps the deliberately public source dependency graph
+// contract: a public source is readable by everyone and nothing else is.
 func canViewPersistedPublicSource(ctx context.Context, executor historyExecutor, sourceID uuid.UUID) (bool, error) {
 	if sourceID == uuid.Nil {
 		return false, nil
@@ -447,12 +465,33 @@ func (s *Service) canViewPersistedTree(ctx context.Context, treeID, actorID uuid
 }
 
 func (s *Service) canViewPersistedTreeWithExecutor(ctx context.Context, executor historyExecutor, treeID, actorID uuid.UUID) (bool, error) {
-	if treeID == uuid.Nil {
-		return false, nil
+	policy, err := resolveResearchScope(ctx, executor, actorID)
+	if err != nil {
+		return false, err
 	}
-	var allowed bool
-	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM trees t WHERE t.id = $1 AND (t.visibility = 'public' OR t.owner_id = $2 OR EXISTS (SELECT 1 FROM tree_collaborators tc WHERE tc.tree_id = t.id AND tc.user_id = $2)))`, treeID, actorID).Scan(&allowed)
-	return allowed, err
+	access, err := policy.Tree(ctx, executor, treeID)
+	return access.Allowed(), err
+}
+
+// loadHistoryPolicy resolves the central policy for a history caller and maps a
+// malformed actor onto the package's own forbidden error, so the handler keeps its
+// existing status mapping.
+func loadHistoryPolicy(ctx context.Context, executor historyExecutor, actorID string) (visibility.Policy, error) {
+	policy, err := visibility.Load(ctx, executor, actorID)
+	if err != nil {
+		if errors.Is(err, visibility.ErrForbidden) {
+			return visibility.Policy{}, ErrForbidden
+		}
+		return visibility.Policy{}, err
+	}
+	return policy, nil
+}
+
+// resolveResearchScope fills in the research role the central policy needs. The actor
+// identifier arrives as a uuid here, so the role lookup is run separately instead of
+// re-parsing a string.
+func resolveResearchScope(ctx context.Context, executor historyExecutor, actorID uuid.UUID) (visibility.Policy, error) {
+	return loadHistoryPolicy(ctx, executor, actorID.String())
 }
 
 func listRuns(ctx context.Context, executor historyExecutor, questionID uuid.UUID, includeAnswer bool) ([]ResearchRunSummary, error) {
@@ -663,20 +702,4 @@ func scanRunSummary(row pgx.Row) (ResearchRunSummary, error) {
 	item.Route = textValue(route)
 	item.Error = textValue(runError)
 	return item, nil
-}
-
-func (s *Service) canViewResearchHistory(ctx context.Context, actorID string) (bool, error) {
-	actorID = strings.TrimSpace(actorID)
-	if actorID == "" {
-		return false, nil
-	}
-	actorUUID, err := uuid.Parse(actorID)
-	if err != nil {
-		return false, ErrForbidden
-	}
-	var allowed bool
-	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM user_roles WHERE user_id = $1 AND role IN ('researcher', 'moderator', 'admin'))`, actorUUID).Scan(&allowed); err != nil {
-		return false, err
-	}
-	return allowed, nil
 }

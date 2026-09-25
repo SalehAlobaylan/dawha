@@ -2,6 +2,7 @@ package research
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -48,12 +49,16 @@ func TestGraphPersistenceAgainstDatabase(t *testing.T) {
 	if err := service.persistRun(context.Background(), runIDText, QueryResult{Answer: "إجابة", GraphPaths: result.Paths, GraphStats: result.Stats}); err != nil {
 		t.Fatal(err)
 	}
-	publicDetail, err := service.GetRun(context.Background(), "", runIDText)
-	if err != nil {
-		t.Fatal(err)
+	// The public contract is now existence-neutral refusal: an anonymous caller is
+	// refused before the run row is read, so it cannot learn that the run exists.
+	if _, err := service.GetRun(context.Background(), "", runIDText); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("anonymous graph history read = %v, want %v", err, ErrForbidden)
 	}
-	if len(publicDetail.GraphPaths) != 0 || publicDetail.GraphPathCount != 0 || publicDetail.GraphOperation != "" || len(publicDetail.Contexts) != 0 {
-		t.Fatalf("public graph detail leaked metadata: %+v", publicDetail)
+	if _, err := service.GetRun(context.Background(), "", uuid.New().String()); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("anonymous missing run read = %v, want %v", err, ErrForbidden)
+	}
+	if _, err := service.ListRuns(context.Background(), "", uuid.New().String()); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("anonymous run list = %v, want %v", err, ErrForbidden)
 	}
 	loaded, err := runGraphPaths(context.Background(), pool, runID)
 	if err != nil {
