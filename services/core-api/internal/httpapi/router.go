@@ -200,6 +200,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/research/runs/{runID}", researchHandler.getRun)
 	mux.HandleFunc("POST /api/v1/research/query", researchHandler.query)
 	mux.HandleFunc("POST /api/v1/research/graph/relationship-impact", researchHandler.relationshipImpact)
+	mux.HandleFunc("POST /api/v1/research/graph/branch-structure-comparison", researchHandler.branchStructureComparison)
 	mux.HandleFunc("POST /api/v1/research-agent/runs", researchAgentHandler.start)
 	mux.HandleFunc("GET /api/v1/research-agent/runs/latest", researchAgentHandler.getLatestRun)
 	mux.HandleFunc("GET /api/v1/research-agent/runs/{runID}", researchAgentHandler.getRun)

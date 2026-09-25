@@ -255,7 +255,13 @@ func researchRoutingContext(passages []Citation) string {
 	return string(value)
 }
 
-func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string) (string, time.Time, error) {
+type researchRunContextInput struct {
+	ScopeType string
+	ScopeID   uuid.UUID
+	Role      string
+}
+
+func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string, extraContexts ...researchRunContextInput) (string, time.Time, error) {
 	questionUUID, err := parseOptionalUUID(input.QuestionID)
 	if err != nil {
 		return "", time.Time{}, err
@@ -284,82 +290,50 @@ func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string
 	`, runID, nullableUUID(questionUUID), nullableUUID(actorUUID), input.Question, identity.NormalizeArabicName(input.Question), graphOperation, graphMaxDepth).Scan(&createdAt); err != nil {
 		return "", time.Time{}, err
 	}
-	contexts := make([]struct {
-		scopeType string
-		scopeID   uuid.UUID
-		role      string
-	}, 0, 7)
+	contexts := make([]researchRunContextInput, 0, 7+len(extraContexts))
 	if questionUUID != uuid.Nil {
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{"question", questionUUID, "question"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: "question", ScopeID: questionUUID, Role: "question"})
 	}
 	if input.EntityID != "" {
 		entityUUID, parseErr := uuid.Parse(input.EntityID)
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{input.EntityType, entityUUID, "subject"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: input.EntityType, ScopeID: entityUUID, Role: "subject"})
 	}
 	if input.TreeID != "" {
 		treeUUID, parseErr := uuid.Parse(input.TreeID)
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{"tree", treeUUID, "filter"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: "tree", ScopeID: treeUUID, Role: "filter"})
 	}
 	if input.TreeVersionID != "" {
 		versionUUID, parseErr := uuid.Parse(input.TreeVersionID)
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{"tree_version", versionUUID, "filter"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: "tree_version", ScopeID: versionUUID, Role: "filter"})
 	}
 	if input.SourceID != "" {
 		sourceUUID, parseErr := uuid.Parse(input.SourceID)
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{"source", sourceUUID, "filter"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: "source", ScopeID: sourceUUID, Role: "filter"})
 	}
 	if input.GraphOperation != "" {
 		startUUID, parseErr := uuid.Parse(input.GraphStartID)
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{input.GraphStartType, startUUID, "graph_start"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: input.GraphStartType, ScopeID: startUUID, Role: "graph_start"})
 		if input.GraphEndID != "" {
 			endUUID, endErr := uuid.Parse(input.GraphEndID)
 			if endErr != nil {
 				return "", time.Time{}, ErrValidation
 			}
-			contexts = append(contexts, struct {
-				scopeType string
-				scopeID   uuid.UUID
-				role      string
-			}{input.GraphEndType, endUUID, "graph_end"})
+			contexts = append(contexts, researchRunContextInput{ScopeType: input.GraphEndType, ScopeID: endUUID, Role: "graph_end"})
 		}
 	}
 	if input.PlaceID != "" {
@@ -367,14 +341,11 @@ func (s *Service) startRun(ctx context.Context, input QueryInput, actorID string
 		if parseErr != nil {
 			return "", time.Time{}, ErrValidation
 		}
-		contexts = append(contexts, struct {
-			scopeType string
-			scopeID   uuid.UUID
-			role      string
-		}{"place", placeUUID, "filter"})
+		contexts = append(contexts, researchRunContextInput{ScopeType: "place", ScopeID: placeUUID, Role: "filter"})
 	}
+	contexts = append(contexts, extraContexts...)
 	for _, context := range contexts {
-		if _, err := tx.Exec(ctx, `INSERT INTO research_run_contexts (run_id, scope_type, scope_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, runID, context.scopeType, context.scopeID, context.role); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO research_run_contexts (run_id, scope_type, scope_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, runID, context.ScopeType, context.ScopeID, context.Role); err != nil {
 			return "", time.Time{}, err
 		}
 	}

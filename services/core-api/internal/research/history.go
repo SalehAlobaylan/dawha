@@ -40,8 +40,9 @@ type ResearchRunContext struct {
 
 type ResearchRunDetail struct {
 	ResearchRunSummary
-	Contexts   []ResearchRunContext `json:"contexts"`
-	GraphPaths []GraphPath          `json:"graphPaths"`
+	Contexts   []ResearchRunContext                  `json:"contexts"`
+	GraphPaths []GraphPath                           `json:"graphPaths"`
+	Comparison *GraphBranchStructureComparisonResult `json:"comparison,omitempty"`
 }
 
 type historyExecutor interface {
@@ -110,6 +111,7 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 	}
 	contexts := make([]ResearchRunContext, 0)
 	graphPaths := make([]GraphPath, 0)
+	var comparison *GraphBranchStructureComparisonResult
 	if includeAnswer {
 		contexts, err = runContexts(ctx, s.Pool, runUUID)
 		if err != nil {
@@ -129,8 +131,12 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (ResearchRu
 			summary.GraphMaxDepth = 0
 			summary.GraphTruncated = false
 		}
+		comparison, err = runGraphComparison(ctx, s.Pool, runUUID)
+		if err != nil {
+			return ResearchRunDetail{}, err
+		}
 	}
-	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths}, nil
+	return ResearchRunDetail{ResearchRunSummary: summary, Contexts: contexts, GraphPaths: graphPaths, Comparison: comparison}, nil
 }
 
 func (s *Service) filterResearchRunSummaries(ctx context.Context, actorID string, summaries []ResearchRunSummary) ([]ResearchRunSummary, error) {

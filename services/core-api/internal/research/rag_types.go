@@ -102,6 +102,7 @@ type GraphNode struct {
 	Label      string `json:"label,omitempty"`
 	PersonID   string `json:"personId,omitempty"`
 	TreeNodeID string `json:"treeNodeId,omitempty"`
+	Depth      int    `json:"depth,omitempty"`
 	Position   int    `json:"position"`
 }
 

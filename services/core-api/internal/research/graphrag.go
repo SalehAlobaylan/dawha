@@ -24,10 +24,12 @@ const (
 	GraphOperationShortestPath       = "shortest_relationship_path"
 	GraphOperationConnectedComponent = "connected_component"
 	GraphOperationRelationshipImpact = "relationship_impact"
+	GraphOperationBranchComparison   = "branch_structure_comparison"
 	GraphAlgorithmVersion            = "graphrag-v1"
 	GraphShortestPathAlgorithm       = "graphrag-shortest-tree-v1"
 	GraphComponentAlgorithm          = "graphrag-component-tree-v1"
 	GraphRelationshipImpactAlgorithm = "graphrag-impact-tree-v1"
+	GraphBranchComparisonAlgorithm   = "graphrag-branch-structure-tree-v1"
 	GraphDefaultDepth                = 2
 	GraphMaxDepth                    = 3
 	GraphMaxPaths                    = 5
@@ -44,6 +46,7 @@ var graphOperations = map[string]struct{}{
 	GraphOperationShortestPath:       {},
 	GraphOperationConnectedComponent: {},
 	GraphOperationRelationshipImpact: {},
+	GraphOperationBranchComparison:   {},
 }
 
 var graphEntityTypes = map[string]struct{}{
@@ -174,6 +177,8 @@ func validateGraphEndpointCombination(input QueryInput) error {
 			return ErrValidation
 		}
 	case GraphOperationRelationshipImpact:
+		return ErrValidation
+	case GraphOperationBranchComparison:
 		return ErrValidation
 	case GraphOperationBranchClaims:
 		if !isGraphSelectionType(input.GraphStartType) || input.GraphEndID != "" {
@@ -336,6 +341,9 @@ func graphAlgorithmVersion(operation string) string {
 	if operation == GraphOperationRelationshipImpact {
 		return GraphRelationshipImpactAlgorithm
 	}
+	if operation == GraphOperationBranchComparison {
+		return GraphBranchComparisonAlgorithm
+	}
 	return GraphAlgorithmVersion
 }
 
@@ -353,6 +361,9 @@ func graphExplanation(operation, status string, structuralOnly bool) string {
 	}
 	if operation == GraphOperationRelationshipImpact {
 		return "أثر downstream محدد داخل تفسير شجرة منشورة؛ يصف النطاق المتأثر ولا يثبت نسباً تاريخياً نهائياً."
+	}
+	if operation == GraphOperationBranchComparison {
+		return "مقارنة بنية الفروع داخل نسختين منشورتين؛ تصف الشكل والحالة البنيوية فقط ولا تثبت صلة أو نسباً تاريخياً."
 	}
 	if structuralOnly {
 		return "مسار بنيوي من تفسير منشور؛ يوضح بنية العلاقة ولا يثبت حقيقة تاريخية نهائية."
@@ -515,7 +526,11 @@ func persistGraphRun(ctx context.Context, tx pgx.Tx, runID string, result QueryR
 	for _, path := range result.GraphPaths {
 		totalEdges += len(path.Edges)
 	}
-	if totalEdges > GraphMaxEdges {
+	maxTotalEdges := GraphMaxEdges
+	if result.GraphStats.Operation == GraphOperationBranchComparison {
+		maxTotalEdges = GraphMaxEdges * len(result.GraphPaths)
+	}
+	if totalEdges > maxTotalEdges {
 		return ErrValidation
 	}
 	for pathIndex := range result.GraphPaths {

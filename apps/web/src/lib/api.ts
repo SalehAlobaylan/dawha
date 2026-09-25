@@ -45,6 +45,8 @@ import type {
   ResearchClaim,
   GraphRelationshipImpactInput,
   GraphRelationshipImpactResult,
+  GraphBranchStructureComparisonInput,
+  GraphBranchStructureComparisonResult,
   ResearchQueryInput,
   ResearchQueryResult,
   ResearchRunDetail,
@@ -220,6 +222,23 @@ export async function queryGraphRelationshipImpact(input: GraphRelationshipImpac
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as GraphRelationshipImpactResult;
+}
+
+export async function queryGraphBranchStructureComparison(input: GraphBranchStructureComparisonInput): Promise<GraphBranchStructureComparisonResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لتفعيل مقارنة بنية الفروع.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/branch-structure-comparison`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as GraphBranchStructureComparisonResult;
 }
 
 export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {

@@ -2,8 +2,8 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, CheckCircle2, CircleAlert, FileSearch, Filter, GitBranch, Link2, Plus, Search, Send, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
-import { queryGraphRelationshipImpact, queryResearch } from "../lib/api";
-import type { EpistemicTone, GraphOperation, GraphPath, GraphRelationshipImpactResult, GraphStats, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
+import { queryGraphBranchStructureComparison, queryGraphRelationshipImpact, queryResearch } from "../lib/api";
+import type { EpistemicTone, GraphBranchStructureComparisonResult, GraphOperation, GraphPath, GraphRelationshipImpactResult, GraphStats, ResearchCitation, ResearchQueryResult, ResearchRoute } from "../types";
 import { EvidenceComparison, SourceCard } from "../components/EvidencePanels";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -19,6 +19,7 @@ export function ResearchPage() {
   const [researchQuestion, setResearchQuestion] = useState("");
   const [researchResult, setResearchResult] = useState<ResearchQueryResult | null>(null);
   const [relationshipImpactResult, setRelationshipImpactResult] = useState<GraphRelationshipImpactResult | null>(null);
+  const [branchComparisonResult, setBranchComparisonResult] = useState<GraphBranchStructureComparisonResult | null>(null);
   const [researchError, setResearchError] = useState("");
   const [researchLoading, setResearchLoading] = useState(false);
   const [graphOperation, setGraphOperation] = useState<GraphOperation | "">("");
@@ -28,6 +29,12 @@ export function ResearchPage() {
   const [graphTreeID, setGraphTreeID] = useState(() => isUuid(contextSearch.treeId) ? contextSearch.treeId || "" : "");
   const [graphTreeVersionID, setGraphTreeVersionID] = useState(() => isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId || "" : "");
   const [graphMaxDepth, setGraphMaxDepth] = useState(2);
+  const [fromTreeID, setFromTreeID] = useState(() => isUuid(contextSearch.treeId) ? contextSearch.treeId || "" : "");
+  const [fromTreeVersionID, setFromTreeVersionID] = useState(() => isUuid(contextSearch.treeVersionId) ? contextSearch.treeVersionId || "" : "");
+  const [fromRootNodeID, setFromRootNodeID] = useState("");
+  const [toTreeID, setToTreeID] = useState("");
+  const [toTreeVersionID, setToTreeVersionID] = useState("");
+  const [toRootNodeID, setToRootNodeID] = useState("");
   const contextualEntityType = isUuid(contextSearch.entityId) ? contextSearch.entityType : undefined;
   const contextualEntityID = isUuid(contextSearch.entityId) ? contextSearch.entityId : "";
   const graphStartIDValue = graphOperation === "source_entities" ? graphStartID : graphStartID || contextualEntityID;
@@ -42,15 +49,22 @@ export function ResearchPage() {
   const runResearch = async () => {
     const question = researchQuestion.trim();
     const relationshipImpactMode = graphOperation === "relationship_impact";
-    if ((!question && !relationshipImpactMode) || researchLoading) return;
+    const branchComparisonMode = graphOperation === "branch_structure_comparison";
+    if ((!question && !relationshipImpactMode && !branchComparisonMode) || researchLoading) return;
     setResearchLoading(true);
     setResearchError("");
     try {
-      if (relationshipImpactMode) {
+      if (branchComparisonMode) {
         setResearchResult(null);
+        setRelationshipImpactResult(null);
+        setBranchComparisonResult(await queryGraphBranchStructureComparison({ from_tree_id: fromTreeID, from_tree_version_id: fromTreeVersionID, from_root_node_id: fromRootNodeID, to_tree_id: toTreeID, to_tree_version_id: toTreeVersionID, to_root_node_id: toRootNodeID, max_depth: graphMaxDepth }));
+      } else if (relationshipImpactMode) {
+        setResearchResult(null);
+        setBranchComparisonResult(null);
         setRelationshipImpactResult(await queryGraphRelationshipImpact({ tree_id: graphTreeID, tree_version_id: graphTreeVersionID, relationship_id: graphRelationshipID, max_depth: graphMaxDepth }));
       } else {
         setRelationshipImpactResult(null);
+        setBranchComparisonResult(null);
         const graphStartType = graphStartTypeFor(graphOperation, contextualEntityType);
         const graphInput = graphOperation ? {
           graph_operation: graphOperation,
@@ -67,6 +81,7 @@ export function ResearchPage() {
     } catch (error) {
       setResearchResult(null);
       setRelationshipImpactResult(null);
+      setBranchComparisonResult(null);
       setResearchError(error instanceof Error ? error.message : "تعذر تشغيل البحث.");
     } finally {
       setResearchLoading(false);
@@ -107,17 +122,18 @@ export function ResearchPage() {
           <section className="research-focus-card">
             <div className="research-focus-head"><div><div className="eyebrow">السؤال النشط</div><h2>من كان والد عبدالله في هذه الروايات؟</h2></div><StatusBadge tone="question">قيد التحقيق</StatusBadge></div>
             <form className="research-query-form" onSubmit={(event) => { event.preventDefault(); void runResearch(); }}>
-              <label htmlFor="research-question">{graphOperation === "relationship_impact" ? "حلّل أثر علاقة في تفسير منشور" : "اسأل عن أدلة مصدرة"}</label>
+              <label htmlFor="research-question">{graphOperation === "relationship_impact" ? "حلّل أثر علاقة في تفسير منشور" : graphOperation === "branch_structure_comparison" ? "قارن شكل الفروع في نسختين" : "اسأل عن أدلة مصدرة"}</label>
               <div className="research-query-input-row">
-                <input id="research-question" value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} placeholder={graphOperation === "relationship_impact" ? "اختياري: أضف سياقاً للسجل" : "مثال: من كان والد عبدالله في هذه الروايات؟"} />
-                <button className="primary-button" type="submit" disabled={researchLoading || (!researchQuestion.trim() && graphOperation !== "relationship_impact")}>{researchLoading ? "جارٍ البحث…" : "ابحث في الأدلة"}<Search size={15} /></button>
+                <input id="research-question" value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} placeholder={graphOperation === "relationship_impact" || graphOperation === "branch_structure_comparison" ? "اختياري: أضف سياقاً للسجل" : "مثال: من كان والد عبدالله في هذه الروايات؟"} />
+                <button className="primary-button" type="submit" disabled={researchLoading || (!researchQuestion.trim() && graphOperation !== "relationship_impact" && graphOperation !== "branch_structure_comparison")}>{researchLoading ? "جارٍ البحث…" : graphOperation === "branch_structure_comparison" ? "قارن البنية" : graphOperation === "relationship_impact" ? "حلّل الأثر" : "ابحث في الأدلة"}<Search size={15} /></button>
               </div>
             </form>
             <div className="research-graph-mode">
               <div className="research-graph-mode-copy"><GitBranch size={15} /><div><strong>مسار 관계</strong><small>اجعل الاستعلام يستخدم بنية relationships محدودة، مع إبقاء الأدلة قابلة للتتبع.</small></div></div>
               <div className="research-graph-fields">
-                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="connected_component">مكوّن متصل داخل تفسير منشور</option><option value="relationship_impact">أثر علاقة على الأبناء</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
-                {graphOperation ? <><label>{graphOperation === "relationship_impact" ? "معرف العلاقة" : graphOperation === "connected_component" ? "الشخص الجذر" : "نقطة البداية"}<input required value={graphOperation === "relationship_impact" ? graphRelationshipID : graphStartIDValue} onChange={(event) => graphOperation === "relationship_impact" ? setGraphRelationshipID(event.target.value) : setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" && graphOperation !== "connected_component" && graphOperation !== "relationship_impact" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphTreeScoped ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
+                <label>نوع المسار<select value={graphOperation} onChange={(event) => setGraphOperation(event.target.value as GraphOperation | "")}><option value="">بدون مسار رسومي</option><option value="common_ancestor_path">سلف مشترك</option><option value="shortest_relationship_path">أقصر مسار بين شخصين</option><option value="connected_component">مكوّن متصل داخل تفسير منشور</option><option value="relationship_impact">أثر علاقة على الأبناء</option><option value="branch_structure_comparison">مقارنة بنية فرعين</option><option value="evidence_connection">رابط أدلة بين كيانين</option><option value="branch_claims">ادعاءات حول فرع أو كيان</option><option value="source_entities">كيانات مرتبطة بمصدر</option><option value="geographic_path">مسار جغرافي</option></select></label>
+                {graphOperation && graphOperation !== "branch_structure_comparison" ? <><label>{graphOperation === "relationship_impact" ? "معرف العلاقة" : graphOperation === "connected_component" ? "الشخص الجذر" : "نقطة البداية"}<input required value={graphOperation === "relationship_impact" ? graphRelationshipID : graphStartIDValue} onChange={(event) => graphOperation === "relationship_impact" ? setGraphRelationshipID(event.target.value) : setGraphStartID(event.target.value)} placeholder="معرف UUID" /></label>{graphOperation !== "branch_claims" && graphOperation !== "source_entities" && graphOperation !== "connected_component" && graphOperation !== "relationship_impact" ? <label>{graphOperation === "geographic_path" ? "المكان المرجعي" : graphOperation === "shortest_relationship_path" ? "الشخص الآخر" : "نقطة النهاية"}<input required={graphEndRequired} value={graphEndID} onChange={(event) => setGraphEndID(event.target.value)} placeholder="معرف UUID" /></label> : null}{graphOperation !== "source_entities" ? <label>أقصى عمق<select value={graphMaxDepth} onChange={(event) => setGraphMaxDepth(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label> : null}{graphTreeScoped ? <><label>معرف الشجرة<input required value={graphTreeID} onChange={(event) => setGraphTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={graphTreeVersionID} onChange={(event) => setGraphTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label></> : null}</> : null}
+                {graphOperation === "branch_structure_comparison" ? <GraphBranchComparisonFields fromTreeID={fromTreeID} fromTreeVersionID={fromTreeVersionID} fromRootNodeID={fromRootNodeID} toTreeID={toTreeID} toTreeVersionID={toTreeVersionID} toRootNodeID={toRootNodeID} onFromTreeID={setFromTreeID} onFromTreeVersionID={setFromTreeVersionID} onFromRootNodeID={setFromRootNodeID} onToTreeID={setToTreeID} onToTreeVersionID={setToTreeVersionID} onToRootNodeID={setToRootNodeID} /> : null}
               </div>
             </div>
             {researchError ? <p className="research-query-error">{researchError}</p> : null}
@@ -131,6 +147,7 @@ export function ResearchPage() {
 
           {researchResult ? <ResearchResultPanel result={researchResult} /> : null}
           {relationshipImpactResult ? <GraphRelationshipImpactPanel result={relationshipImpactResult} /> : null}
+          {branchComparisonResult ? <GraphBranchComparisonPanel result={branchComparisonResult} /> : null}
 
           <EvidenceComparison />
 
@@ -188,6 +205,19 @@ function routeLabel(route: ResearchRoute): string {
   if (route === "ignore") return "تم تجاهل الطلب";
   if (route === "cheap") return "مسار سريع";
   return "مسار عميق";
+}
+
+function GraphBranchComparisonPanel({ result }: { result: GraphBranchStructureComparisonResult }) {
+  const reasonLabels: Record<string, string> = { depth_limit: "حد العمق", node_limit: "حد العقد", edge_limit: "حد العلاقات" };
+  return <section className="research-result-card" aria-live="polite"><div className="research-result-head"><div><div className="eyebrow">مقارنة بنية الفروع</div><h2>فروق الشكل داخل تفسيرين منشورين</h2></div><StatusBadge tone="interpretation">بنيوي فقط</StatusBadge></div><p className="research-result-answer">{result.explanation}</p><div className="research-result-stats"><span><strong>{result.delta.nodeCount >= 0 ? "+" : ""}{result.delta.nodeCount}</strong> فرق عقد</span><span><strong>{result.delta.edgeCount >= 0 ? "+" : ""}{result.delta.edgeCount}</strong> فرق علاقات</span><span><strong>{result.delta.leafCount >= 0 ? "+" : ""}{result.delta.leafCount}</strong> فرق أوراق</span><span>{result.truncated.from || result.truncated.to ? result.truncationReasons.map((reason) => reasonLabels[reason] || reason).join(" · ") : "ضمن الحدود"}</span></div><div className="research-branch-comparison-grid"><GraphBranchComparisonSide title="النسخة الأولى" side={result.from} /><GraphBranchComparisonSide title="النسخة الثانية" side={result.to} /></div></section>;
+}
+
+function GraphBranchComparisonSide({ title, side }: { title: string; side: GraphBranchStructureComparisonResult["from"] }) {
+  return <article className="research-branch-comparison-side"><h3>{title}</h3><small>النطاق: {side.treeScope.treeId?.slice(0, 8)} · النسخة {side.treeScope.versionNumber}</small><div className="research-branch-comparison-metrics"><span><strong>{side.nodeCount}</strong> عقدة</span><span><strong>{side.edgeCount}</strong> علاقة</span><span><strong>{side.leafCount}</strong> ورقة</span><span><strong>{side.maxDepth}</strong> عمق</span></div><div className="research-branch-comparison-details"><span>حسب العمق: {side.nodesByDepth.map((item) => `${item.depth}:${item.count}`).join(" · ")}</span><span>حسب الأبناء: {side.childCountHistogram.map((item) => `${item.childCount}:${item.nodeCount}`).join(" · ")}</span><span>الحالات: {side.edgeStatusCounts.map((item) => `${item.status}:${item.count}`).join(" · ") || "بدون"}</span>{side.cycleDetected ? <span>تم اكتشاف دورة بنيوية</span> : null}</div>{side.truncated ? <p className="research-graph-warning"><CircleAlert size={13} /> تم قص النطاق عند الحد الآمن.</p> : null}</article>;
+}
+
+function GraphBranchComparisonFields({ fromTreeID, fromTreeVersionID, fromRootNodeID, toTreeID, toTreeVersionID, toRootNodeID, onFromTreeID, onFromTreeVersionID, onFromRootNodeID, onToTreeID, onToTreeVersionID, onToRootNodeID }: { fromTreeID: string; fromTreeVersionID: string; fromRootNodeID: string; toTreeID: string; toTreeVersionID: string; toRootNodeID: string; onFromTreeID: (value: string) => void; onFromTreeVersionID: (value: string) => void; onFromRootNodeID: (value: string) => void; onToTreeID: (value: string) => void; onToTreeVersionID: (value: string) => void; onToRootNodeID: (value: string) => void }) {
+  return <div className="research-branch-comparison-fields"><strong>الجذر الأول</strong><label>معرف الشجرة<input required value={fromTreeID} onChange={(event) => onFromTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={fromTreeVersionID} onChange={(event) => onFromTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label><label>عقدة الجذر<input required value={fromRootNodeID} onChange={(event) => onFromRootNodeID(event.target.value)} placeholder="tree_node UUID" /></label><strong>الجذر الثاني</strong><label>معرف الشجرة<input required value={toTreeID} onChange={(event) => onToTreeID(event.target.value)} placeholder="tree UUID" /></label><label>نسخة الشجرة<input required value={toTreeVersionID} onChange={(event) => onToTreeVersionID(event.target.value)} placeholder="tree_version UUID" /></label><label>عقدة الجذر<input required value={toRootNodeID} onChange={(event) => onToRootNodeID(event.target.value)} placeholder="tree_node UUID" /></label></div>;
 }
 
 function GraphRelationshipImpactPanel({ result }: { result: GraphRelationshipImpactResult }) {
@@ -307,7 +337,7 @@ function graphNodeLabel(path: GraphPath, nodeId: string): string {
 }
 
 function graphOperationLabel(operation: GraphOperation): string {
-  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", relationship_impact: "أثر العلاقة على الأبناء", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
+  const labels: Record<GraphOperation, string> = { common_ancestor_path: "سلف مشترك", shortest_relationship_path: "أقصر مسار بين شخصين", connected_component: "مكوّن متصل", relationship_impact: "أثر العلاقة على الأبناء", branch_structure_comparison: "مقارنة بنية الفروع", evidence_connection: "رابط أدلة", branch_claims: "ادعاءات حول كيان", source_entities: "كيانات مصدر", geographic_path: "مسار جغرافي" };
   return labels[operation];
 }
 

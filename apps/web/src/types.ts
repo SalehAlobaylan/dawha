@@ -455,7 +455,7 @@ export interface ResearchLayeredEvidence {
   openQuestions: ResearchCitation[];
 }
 
-export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact";
+export type GraphOperation = "common_ancestor_path" | "evidence_connection" | "branch_claims" | "source_entities" | "geographic_path" | "shortest_relationship_path" | "connected_component" | "relationship_impact" | "branch_structure_comparison";
 
 export interface GraphTreeScope {
   treeId?: string;
@@ -470,6 +470,7 @@ export interface GraphNode {
   label?: string;
   personId?: string;
   treeNodeId?: string;
+  depth?: number;
   position: number;
 }
 
@@ -572,6 +573,82 @@ export interface GraphRelationshipImpactResult {
   depth: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export interface GraphBranchStructureComparisonInput {
+  from_tree_id: string;
+  from_tree_version_id: string;
+  from_root_node_id: string;
+  to_tree_id: string;
+  to_tree_version_id: string;
+  to_root_node_id: string;
+  max_depth?: number;
+}
+
+export interface GraphBranchStructureComparisonLimits {
+  maxDepth: number;
+  maxNodesPerSide: number;
+  maxEdgesPerSide: number;
+}
+
+export interface GraphBranchStructureDepthCount {
+  depth: number;
+  count: number;
+}
+
+export interface GraphBranchStructureChildCount {
+  childCount: number;
+  nodeCount: number;
+}
+
+export interface GraphBranchStructureStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface GraphBranchStructureSide {
+  pathId: string;
+  treeScope: GraphTreeScope;
+  rootNodeId: string;
+  nodeCount: number;
+  edgeCount: number;
+  maxDepth: number;
+  leafCount: number;
+  nodesByDepth: GraphBranchStructureDepthCount[];
+  childCountHistogram: GraphBranchStructureChildCount[];
+  edgeStatusCounts: GraphBranchStructureStatusCount[];
+  truncated: boolean;
+  truncationReasons: string[];
+  cycleDetected: boolean;
+}
+
+export interface GraphBranchStructureDelta {
+  nodeCount: number;
+  edgeCount: number;
+  maxDepth: number;
+  leafCount: number;
+}
+
+export interface GraphBranchStructureTruncation {
+  from: boolean;
+  to: boolean;
+}
+
+export interface GraphBranchStructureComparisonResult {
+  runId: string;
+  createdAt: string;
+  operation: GraphOperation;
+  algorithmVersion: string;
+  structuralOnly: boolean;
+  inputFingerprint: string;
+  from: GraphBranchStructureSide;
+  to: GraphBranchStructureSide;
+  delta: GraphBranchStructureDelta;
+  limits: GraphBranchStructureComparisonLimits;
+  truncated: GraphBranchStructureTruncation;
+  truncationReasons: string[];
+  status: string;
+  explanation: string;
 }
 
 export interface ResearchRetrievalStats {
@@ -853,6 +930,7 @@ export interface ResearchRunContext {
 export interface ResearchRunDetail extends ResearchRunSummary {
   contexts: ResearchRunContext[];
   graphPaths: GraphPath[];
+  comparison?: GraphBranchStructureComparisonResult;
 }
 
 export interface ResearchWorkspaceSnapshot {
