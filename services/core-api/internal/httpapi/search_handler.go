@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -56,13 +57,16 @@ func (h searchHandler) search(w http.ResponseWriter, r *http.Request) {
 func writeSearchError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	message := "search operation failed"
-	switch err {
-	case search.ErrValidation:
+	switch {
+	case errors.Is(err, search.ErrValidation):
 		status = http.StatusBadRequest
 		message = err.Error()
-	case search.ErrDatabaseUnavailable:
+	case errors.Is(err, search.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
 		message = "search service is not configured"
+	case errors.Is(err, search.ErrAIUnavailable):
+		status = http.StatusServiceUnavailable
+		message = "خدمة تضمين النص غير متاحة حالياً."
 	}
 	writeJSON(w, status, map[string]string{"error": message})
 }

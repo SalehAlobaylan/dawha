@@ -512,10 +512,15 @@ func validateEmbedding(result EmbeddingResponse) error {
 	if result.Dimensions < 16 || result.Dimensions > 1536 || len(result.Embedding) != result.Dimensions || result.Model == "" {
 		return ErrValidation
 	}
+	norm := 0.0
 	for _, value := range result.Embedding {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < -1 || value > 1 {
 			return ErrValidation
 		}
+		norm += value * value
+	}
+	if norm <= 1e-12 {
+		return ErrValidation
 	}
 	return nil
 }

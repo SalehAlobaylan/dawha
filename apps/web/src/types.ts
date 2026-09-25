@@ -1456,6 +1456,14 @@ export interface SearchResult {
   score: number;
   route?: string;
   sourceId?: string;
+  passageId?: string;
+  statementId?: string;
+  locatorAr?: string;
+  pageNumber?: number;
+  reviewStatus?: string;
+  dependencyStatus?: string;
+  matchKind?: "semantic";
+  embeddingModel?: string;
 }
 
 export interface SearchGroup {
@@ -1469,6 +1477,7 @@ export interface SearchResponse {
   normalizedQuery: string;
   groups: SearchGroup[];
   total: number;
+  embeddingModel?: string;
 }
 
 export interface MapResponse {

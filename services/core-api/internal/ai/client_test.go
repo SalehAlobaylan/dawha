@@ -132,6 +132,12 @@ func TestHTTPProviderRetriesTransientFailures(t *testing.T) {
 	}
 }
 
+func TestValidateEmbeddingRejectsZeroVector(t *testing.T) {
+	if err := validateEmbedding(EmbeddingResponse{Embedding: make([]float64, 16), Dimensions: 16, Model: "test"}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("error = %v, want ErrValidation", err)
+	}
+}
+
 func TestHTTPProviderRejectsMalformedSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

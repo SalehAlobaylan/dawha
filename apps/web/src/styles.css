@@ -9023,6 +9023,24 @@ a {
   background: rgba(243, 235, 221, 0.48);
 }
 
+.search-semantic-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-inline-start: 3px solid var(--clay);
+  background: rgba(243, 235, 221, 0.58);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.search-semantic-note svg {
+  flex: 0 0 auto;
+  color: var(--clay);
+}
+
 .search-filter-label {
   gap: 5px;
   color: var(--muted);
@@ -9202,6 +9220,20 @@ a {
 
 .search-result-row:hover {
   background: rgba(153, 68, 56, 0.05);
+}
+
+.search-result-row-semantic {
+  background: rgba(116, 113, 83, 0.035);
+}
+
+.search-group-icon-semantic {
+  background: rgba(116, 113, 83, 0.16);
+  color: var(--olive);
+}
+
+.search-result-provenance {
+  color: var(--olive) !important;
+  font-size: 8px !important;
 }
 
 .search-result-icon {

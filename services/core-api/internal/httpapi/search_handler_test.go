@@ -33,6 +33,7 @@ func TestSearchErrorMapping(t *testing.T) {
 	}{
 		{search.ErrValidation, http.StatusBadRequest},
 		{search.ErrDatabaseUnavailable, http.StatusServiceUnavailable},
+		{search.ErrAIUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, testCase := range cases {
 		recorder := httptest.NewRecorder()

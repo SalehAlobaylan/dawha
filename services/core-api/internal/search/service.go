@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
+	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,7 +21,10 @@ import (
 var (
 	ErrDatabaseUnavailable = errors.New("search database is unavailable")
 	ErrValidation          = errors.New("search input is invalid")
+	ErrAIUnavailable       = errors.New("semantic embedding service is unavailable")
 )
+
+const semanticEmbeddingTimeout = 10 * time.Second
 
 type Input struct {
 	Query     string
@@ -35,15 +41,23 @@ type Input struct {
 }
 
 type Result struct {
-	ID       string  `json:"id"`
-	Kind     string  `json:"kind"`
-	Title    string  `json:"title"`
-	Subtitle string  `json:"subtitle,omitempty"`
-	Body     string  `json:"body,omitempty"`
-	Status   string  `json:"status,omitempty"`
-	Score    float64 `json:"score"`
-	Route    string  `json:"route,omitempty"`
-	SourceID string  `json:"sourceId,omitempty"`
+	ID               string  `json:"id"`
+	Kind             string  `json:"kind"`
+	Title            string  `json:"title"`
+	Subtitle         string  `json:"subtitle,omitempty"`
+	Body             string  `json:"body,omitempty"`
+	Status           string  `json:"status,omitempty"`
+	Score            float64 `json:"score"`
+	Route            string  `json:"route,omitempty"`
+	SourceID         string  `json:"sourceId,omitempty"`
+	PassageID        string  `json:"passageId,omitempty"`
+	StatementID      string  `json:"statementId,omitempty"`
+	LocatorAR        string  `json:"locatorAr,omitempty"`
+	PageNumber       *int    `json:"pageNumber,omitempty"`
+	ReviewStatus     string  `json:"reviewStatus,omitempty"`
+	DependencyStatus string  `json:"dependencyStatus,omitempty"`
+	MatchKind        string  `json:"matchKind,omitempty"`
+	EmbeddingModel   string  `json:"embeddingModel,omitempty"`
 }
 
 type Group struct {
@@ -57,10 +71,16 @@ type Response struct {
 	NormalizedQuery string  `json:"normalizedQuery"`
 	Groups          []Group `json:"groups"`
 	Total           int     `json:"total"`
+	EmbeddingModel  string  `json:"embeddingModel,omitempty"`
+}
+
+type EmbeddingProvider interface {
+	Embed(context.Context, ai.EmbeddingRequest) (ai.EmbeddingResponse, error)
 }
 
 type Service struct {
 	Pool *pgxpool.Pool
+	AI   EmbeddingProvider
 }
 
 type dbExecutor interface {
@@ -69,8 +89,12 @@ type dbExecutor interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{Pool: pool}
+func NewService(pool *pgxpool.Pool, providers ...EmbeddingProvider) *Service {
+	var provider EmbeddingProvider
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	return &Service{Pool: pool, AI: provider}
 }
 
 func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
@@ -80,6 +104,18 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	input, normalized, vector, err := validateInput(input)
 	if err != nil {
 		return Response{}, err
+	}
+	embeddingModel := ""
+	if vector != nil {
+		embeddingModel = "caller_provided"
+	}
+	if input.Kind == "semantic" && vector == nil {
+		generatedVector, generatedModel, embedErr := s.embedQuery(ctx, normalized)
+		if embedErr != nil {
+			return Response{}, embedErr
+		}
+		vector = &generatedVector
+		embeddingModel = generatedModel
 	}
 	groups := make([]Group, 0, 6)
 	if input.Kind == "" || input.Kind == "all" || input.Kind == "names" {
@@ -118,7 +154,7 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 		groups = appendGroup(groups, "questions", "الأسئلة المفتوحة", items)
 	}
 	if vector != nil && (input.Kind == "" || input.Kind == "all" || input.Kind == "passages" || input.Kind == "semantic") {
-		items, err := s.semanticPassages(ctx, *vector, input.Limit)
+		items, err := s.semanticPassages(ctx, *vector, input, embeddingModel)
 		if err != nil {
 			return Response{}, err
 		}
@@ -128,7 +164,7 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	for _, group := range groups {
 		total += len(group.Items)
 	}
-	return Response{Query: strings.TrimSpace(input.Query), NormalizedQuery: normalized, Groups: groups, Total: total}, nil
+	return Response{Query: strings.TrimSpace(input.Query), NormalizedQuery: normalized, Groups: groups, Total: total, EmbeddingModel: embeddingModel}, nil
 }
 
 func (s *Service) searchNames(ctx context.Context, query string, input Input) ([]Result, error) {
@@ -220,8 +256,8 @@ func (s *Service) searchClaims(ctx context.Context, query string, input Input) (
 		  AND ($3 = '' OR c.subject_id = $3::uuid OR c.object_id = $3::uuid)
 		  AND ($4 = '' OR c.place_id = $4::uuid)
 		  AND ($5 = '' OR EXISTS (SELECT 1 FROM claim_evidence ce WHERE ce.claim_id = c.id AND ce.source_statement_id IN (SELECT ss.id FROM source_statements ss WHERE ss.source_id = $5::uuid)))
-		  AND ($6 = 0 OR c.time_from IS NULL OR EXTRACT(YEAR FROM c.time_from) <= $7)
-		  AND ($7 = 0 OR c.time_to IS NULL OR EXTRACT(YEAR FROM c.time_to) >= $6)
+		  AND ($7 = 0 OR c.time_from IS NULL OR EXTRACT(YEAR FROM c.time_from) <= $7)
+		  AND ($6 = 0 OR c.time_to IS NULL OR EXTRACT(YEAR FROM c.time_to) >= $6)
 		  AND NOT EXISTS (
 			SELECT 1 FROM claim_evidence ce
 			JOIN source_statements ss ON ss.id = ce.source_statement_id
@@ -313,13 +349,72 @@ func (s *Service) searchQuestions(ctx context.Context, query string, input Input
 	return items, rows.Err()
 }
 
-func (s *Service) semanticPassages(ctx context.Context, vector pgvector.Vector, limit int) ([]Result, error) {
+func (s *Service) embedQuery(ctx context.Context, query string) (pgvector.Vector, string, error) {
+	if s.AI == nil {
+		return pgvector.Vector{}, "", ErrAIUnavailable
+	}
+	embeddingContext, cancel := context.WithTimeout(ctx, semanticEmbeddingTimeout)
+	defer cancel()
+	result, err := s.AI.Embed(embeddingContext, ai.EmbeddingRequest{Text: query, Dimensions: 1536})
+	if err != nil || result.Dimensions != 1536 || len(result.Embedding) != 1536 || strings.TrimSpace(result.Model) == "" {
+		return pgvector.Vector{}, "", ErrAIUnavailable
+	}
+	values := make([]float32, len(result.Embedding))
+	norm := 0.0
+	for index, value := range result.Embedding {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < -1 || value > 1 {
+			return pgvector.Vector{}, "", ErrAIUnavailable
+		}
+		values[index] = float32(value)
+		norm += value * value
+	}
+	if norm <= 1e-12 {
+		return pgvector.Vector{}, "", ErrAIUnavailable
+	}
+	return pgvector.NewVector(values), result.Model, nil
+}
+
+func (s *Service) semanticPassages(ctx context.Context, vector pgvector.Vector, input Input, embeddingModel string) ([]Result, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT sp.id, s.title_ar, sp.text_ar, sp.locator_ar, 1 - (sp.embedding <=> $1) AS score
-		FROM source_passages sp JOIN sources s ON s.id = sp.source_id
+		SELECT sp.id::text, sp.source_id::text, s.title_ar, sp.text_ar,
+		       COALESCE(statement.locator_ar, sp.locator_ar), sp.page_number,
+		       COALESCE(statement.id::text, ''), COALESCE(statement.review_status, 'unreviewed'),
+		       CASE
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies d WHERE d.source_id = s.id AND d.status = 'confirmed') THEN 'derived'
+		         WHEN EXISTS (SELECT 1 FROM source_dependencies d WHERE d.source_id = s.id AND d.status = 'needs_review') THEN 'likely_dependent'
+		         ELSE s.dependency_status
+		       END,
+		       1 - (sp.embedding <=> $1) AS score
+		FROM source_passages sp
+		JOIN sources s ON s.id = sp.source_id
+		LEFT JOIN LATERAL (
+			SELECT ss.id, ss.review_status, ss.locator_ar
+			FROM source_statements ss
+			WHERE ss.source_passage_id = sp.id AND ss.source_id = s.id
+			ORDER BY CASE ss.review_status WHEN 'accepted' THEN 0 WHEN 'needs_review' THEN 1 ELSE 2 END, ss.created_at, ss.id
+			LIMIT 1
+		) statement ON TRUE
 		WHERE sp.embedding IS NOT NULL AND s.visibility = 'public'
-		ORDER BY sp.embedding <=> $1 LIMIT $2
-	`, vector, limit)
+		  AND 1 - (sp.embedding <=> $1) > 0
+		  AND ($2 = '' OR sp.source_id = $2::uuid)
+		  AND ($3 = '' OR EXISTS (
+			SELECT 1
+			FROM claim_evidence ce
+			JOIN claims c ON c.id = ce.claim_id
+			WHERE (ce.source_passage_id = sp.id OR ce.source_statement_id IN (SELECT ss.id FROM source_statements ss WHERE ss.source_passage_id = sp.id AND ss.source_id = s.id))
+			  AND (ce.source_statement_id IS NULL OR EXISTS (SELECT 1 FROM source_statements linked WHERE linked.id = ce.source_statement_id AND linked.source_id = s.id))
+			  AND (c.subject_id = $3::uuid OR c.object_id = $3::uuid)
+		  ))
+		  AND ($4 = '' OR EXISTS (
+			SELECT 1 FROM geographic_associations ga WHERE ga.source_id = s.id AND ga.place_id = $4::uuid
+			UNION ALL
+			SELECT 1 FROM migration_events me WHERE me.source_id = s.id AND (me.from_place_id = $4::uuid OR me.to_place_id = $4::uuid)
+		  ))
+		  AND ($6 = 0 OR s.publication_date_from IS NULL OR EXTRACT(YEAR FROM s.publication_date_from) <= $6)
+		  AND ($5 = 0 OR s.publication_date_to IS NULL OR EXTRACT(YEAR FROM s.publication_date_to) >= $5)
+		ORDER BY sp.embedding <=> $1, sp.id
+		LIMIT $7
+	`, vector, input.SourceID, input.PersonID, input.PlaceID, input.FromYear, input.ToYear, input.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -328,12 +423,25 @@ func (s *Service) semanticPassages(ctx context.Context, vector pgvector.Vector, 
 	for rows.Next() {
 		var item Result
 		var locator pgtype.Text
-		if err := rows.Scan(&item.ID, &item.Title, &item.Body, &locator, &item.Score); err != nil {
+		var pageNumber pgtype.Int4
+		if err := rows.Scan(&item.PassageID, &item.SourceID, &item.Title, &item.Body, &locator, &pageNumber, &item.StatementID, &item.ReviewStatus, &item.DependencyStatus, &item.Score); err != nil {
 			return nil, err
 		}
+		if math.IsNaN(item.Score) || math.IsInf(item.Score, 0) {
+			return nil, ErrAIUnavailable
+		}
+		item.ID = item.PassageID
 		item.Kind = "passage"
-		item.Subtitle = textValue(locator)
+		item.LocatorAR = textValue(locator)
+		item.Subtitle = item.LocatorAR
+		item.Status = item.ReviewStatus
+		item.MatchKind = "semantic"
+		item.EmbeddingModel = embeddingModel
 		item.Route = "/sources"
+		if pageNumber.Valid {
+			value := int(pageNumber.Int32)
+			item.PageNumber = &value
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -368,6 +476,9 @@ func validateInput(input Input) (Input, string, *pgvector.Vector, error) {
 		return Input{}, "", nil, ErrValidation
 	}
 	normalized := identity.NormalizeArabicName(input.Query)
+	if input.Kind == "semantic" && normalized == "" {
+		return Input{}, "", nil, ErrValidation
+	}
 	var vector *pgvector.Vector
 	if input.Embedding != "" {
 		parsed, err := parseVector(input.Embedding)
@@ -387,6 +498,16 @@ func validKind(kind string) bool {
 func parseVector(raw string) (pgvector.Vector, error) {
 	var values []float32
 	if err := json.Unmarshal([]byte(raw), &values); err != nil || len(values) != 1536 {
+		return pgvector.Vector{}, ErrValidation
+	}
+	norm := 0.0
+	for _, value := range values {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < -1 || value > 1 {
+			return pgvector.Vector{}, ErrValidation
+		}
+		norm += float64(value) * float64(value)
+	}
+	if norm <= 1e-12 {
 		return pgvector.Vector{}, ErrValidation
 	}
 	return pgvector.NewVector(values), nil

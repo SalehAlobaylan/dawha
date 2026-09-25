@@ -177,11 +177,16 @@ func (s *Service) buildPages(ctx context.Context, pages []Page) ([]processedPage
 			return nil, ErrValidation
 		}
 		values := make([]float32, len(embedding.Embedding))
+		norm := 0.0
 		for index, value := range embedding.Embedding {
 			if math.IsNaN(value) || math.IsInf(value, 0) {
 				return nil, ErrValidation
 			}
 			values[index] = float32(value)
+			norm += value * value
+		}
+		if norm <= 1e-12 {
+			return nil, ErrValidation
 		}
 		entities, err := s.AI.ExtractEntities(ctx, ai.ExtractionRequest{Text: page.Text})
 		if err != nil {

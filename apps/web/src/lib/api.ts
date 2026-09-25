@@ -716,7 +716,7 @@ export async function recoverStaleJobs(olderThanSeconds = 900): Promise<{ recove
   return (await response.json()) as { recovered: number; jobs: JobView[] };
 }
 
-export async function fetchSearch(filters: { q: string; kind?: string; status?: string; personId?: string; placeId?: string; sourceId?: string; entityId?: string; fromYear?: number; toYear?: number; limit?: number }): Promise<SearchResponse> {
+export async function fetchSearch(filters: { q: string; kind?: string; status?: string; personId?: string; placeId?: string; sourceId?: string; entityId?: string; fromYear?: number; toYear?: number; limit?: number; signal?: AbortSignal }): Promise<SearchResponse> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لبدء البحث.", 503);
   }
@@ -730,7 +730,9 @@ export async function fetchSearch(filters: { q: string; kind?: string; status?: 
   if (filters.fromYear !== undefined) params.set("from_year", String(filters.fromYear));
   if (filters.toYear !== undefined) params.set("to_year", String(filters.toYear));
   if (filters.limit !== undefined) params.set("limit", String(filters.limit));
-  const response = await fetch(`${apiBaseUrl}/api/v1/search?${params.toString()}`, { signal: AbortSignal.timeout(5000) });
+  const timeoutSignal = AbortSignal.timeout(filters.kind === "semantic" ? 12000 : 5000);
+  const signal = filters.signal ? AbortSignal.any([timeoutSignal, filters.signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/search?${params.toString()}`, { signal });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
