@@ -16,148 +16,153 @@ import (
 func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 	cases := []struct {
 		name  string
-		input ReviewInput
+		input ChangeSet
 	}{
 		{
 			name:  "unknown target",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{Target: "tree"}},
+			input: ChangeSet{Target: "tree"},
 		},
 		{
 			name:  "empty change set",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{}},
+			input: ChangeSet{},
 		},
 		{
 			name:  "target without its block",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{Target: ChangeTargetClaim}},
+			input: ChangeSet{Target: ChangeTargetClaim},
 		},
 		{
 			name: "block that does not match the target",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetClaim,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب"},
-			}},
+			},
 		},
 		{
 			name: "second block beside the target block",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetClaim,
 				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"},
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب"},
-			}},
+			},
 		},
 		{
 			name: "malformed identifier",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "not-a-uuid", NameAR: "لقب"},
-			}},
+			},
 		},
 		{
 			name: "unknown alias type",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب", AliasType: "nickname"},
-			}},
+			},
 		},
 		{
 			name: "empty name",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "  "},
-			}},
+			},
 		},
 		{
 			name: "unknown predicate",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetClaim,
 				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "شغله"},
-			}},
+			},
 		},
 		{
 			name: "unknown entity type",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetRelationship,
 				Relationship: &RelationshipChange{
 					SubjectType: "ship", SubjectID: "10000000-0000-0000-0000-000000000001",
 					ObjectType: "person", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "sibling_of",
 				},
-			}},
+			},
 		},
 		{
 			name: "relationship with itself",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetRelationship,
 				Relationship: &RelationshipChange{
 					SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000001", Predicate: "sibling_of",
 				},
-			}},
+			},
 		},
 		{
 			name: "inverted validity range",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetClaim,
 				Claim: &ClaimChange{
 					SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002",
 					Predicate: "father_of", TimeFrom: "1900-01-01", TimeTo: "1800-01-01",
 				},
-			}},
+			},
 		},
 		{
 			name: "malformed date",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetClaim,
 				Claim: &ClaimChange{
 					SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002",
 					Predicate: "father_of", TimeFrom: "من قرن",
 				},
-			}},
+			},
 		},
 		{
 			name: "source link with no reference",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target:     ChangeTargetSourceLink,
 				SourceLink: &SourceLinkChange{ClaimID: "60000000-0000-0000-0000-000000000001"},
-			}},
+			},
 		},
 		{
 			name: "source link with two references",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetSourceLink,
 				SourceLink: &SourceLinkChange{
 					ClaimID:           "60000000-0000-0000-0000-000000000001",
 					SourceStatementID: "20000000-0000-0000-0000-000000000001",
 					SourcePassageID:   "20000000-0000-0000-0000-000000000002",
 				},
-			}},
+			},
 		},
 		{
 			name: "source link with an unknown relation",
-			input: ReviewInput{Decision: "accepted", ChangeSet: &ChangeSet{
+			input: ChangeSet{
 				Target: ChangeTargetSourceLink,
 				SourceLink: &SourceLinkChange{
 					ClaimID: "60000000-0000-0000-0000-000000000001", SourceStatementID: "20000000-0000-0000-0000-000000000001", Relation: "proves",
 				},
-			}},
-		},
-		{
-			name: "a change set on a rejection",
-			input: ReviewInput{Decision: "rejected", NoteAR: "لا أساس", ChangeSet: &ChangeSet{
-				Target: ChangeTargetClaim,
-				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"},
-			}},
-		},
-		{
-			name: "a change set on a conversion",
-			input: ReviewInput{Decision: "converted", ChangeSet: &ChangeSet{
-				Target: ChangeTargetClaim,
-				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"},
-			}},
+			},
 		},
 	}
 	for _, testCase := range cases {
-		if _, err := validateReviewInput(testCase.input); !errors.Is(err, ErrValidation) {
+		if _, err := validateChangeSet(testCase.input); !errors.Is(err, ErrValidation) {
 			t.Fatalf("%s: expected a validation error, got %v", testCase.name, err)
 		}
+	}
+}
+
+// A change set is a change, so it belongs to an acceptance. This is the decision-level
+// half of the validation; the structure of the change set is checked once, in
+// validateChangeSet, before the review transaction opens.
+func TestChangeSetIsRefusedOnADecisionThatChangesNothing(t *testing.T) {
+	change := &ChangeSet{
+		Target: ChangeTargetClaim,
+		Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"},
+	}
+	for _, decision := range []string{"rejected", "converted"} {
+		input := ReviewInput{Decision: decision, NoteAR: "قرار", ChangeSet: change}
+		if _, err := validateReviewInput(input); !errors.Is(err, ErrValidation) {
+			t.Fatalf("a change set on a %s review: expected a validation error, got %v", decision, err)
+		}
+	}
+	if _, err := validateReviewInput(ReviewInput{Decision: "accepted", ChangeSet: change}); err != nil {
+		t.Fatalf("an accepted review with a change set was rejected: %v", err)
 	}
 }
 

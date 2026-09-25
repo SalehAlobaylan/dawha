@@ -276,6 +276,7 @@ func (s *Service) Review(ctx context.Context, suggestionID, actorID string, inpu
 	if err != nil {
 		return SuggestionView{}, err
 	}
+	// The one validation point for a change set, before the transaction opens.
 	var plan *changePlan
 	if input.ChangeSet != nil {
 		validated, err := validateChangeSet(*input.ChangeSet)
@@ -526,15 +527,10 @@ func validateReviewInput(input ReviewInput) (ReviewInput, error) {
 	if (input.Decision != "accepted" && input.Decision != "rejected" && input.Decision != "converted") || len([]rune(input.NoteAR)) > 5000 || len([]rune(input.QuestionTitleAR)) > 500 || (input.Decision == "rejected" && input.NoteAR == "") {
 		return ReviewInput{}, ErrValidation
 	}
-	if input.ChangeSet != nil {
-		// A change set only means something on an acceptance. A rejection or a
-		// conversion carrying one is a review that contradicts itself.
-		if input.Decision != "accepted" {
-			return ReviewInput{}, ErrValidation
-		}
-		if _, err := validateChangeSet(*input.ChangeSet); err != nil {
-			return ReviewInput{}, err
-		}
+	if input.ChangeSet != nil && input.Decision != "accepted" {
+		// A change set only means something on an acceptance. A rejection or a conversion
+		// carrying one is a review that contradicts itself.
+		return ReviewInput{}, ErrValidation
 	}
 	return input, nil
 }
