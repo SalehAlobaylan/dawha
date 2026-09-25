@@ -20,3 +20,4 @@ tmp/
 test-results/
 playwright-report/
 .data/
+services/ai-research/evaluation/report.json

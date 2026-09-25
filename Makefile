@@ -96,8 +96,11 @@ db-verify:
 # baseline in this repository, so the report says so rather than claiming a
 # GraphRAG or embedding improvement.
 #
-#   AI_EVAL_REPORT=/tmp/daiha-eval.json make ai-eval
-AI_EVAL_REPORT ?= services/ai-research/evaluation/report.json
+#   AI_EVAL_REPORT=/tmp/dawha-eval.json make ai-eval
+#
+# AI_EVAL_REPORT is resolved inside services/ai-research, so the default lands
+# next to the fixtures it describes.
+AI_EVAL_REPORT ?= evaluation/report.json
 ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
 

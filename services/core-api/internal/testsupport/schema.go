@@ -36,7 +36,11 @@ func InspectSchema(ctx context.Context, databaseURL, migrationsDir string) Schem
 
 	rows, err := conn.Query(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
-		state.ConnectError = fmt.Errorf("read schema_migrations: %w", err)
+		// A reachable database with no migration table has never been migrated.
+		// That is a missing schema, not an unreachable server, and the audit
+		// reports it as such rather than as a connection problem.
+		state.MissingMigrations, _ = MigrationVersions(migrationsDir)
+		state.ConnectError = nil
 		return state
 	}
 	applied := map[string]bool{}
