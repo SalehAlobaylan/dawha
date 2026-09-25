@@ -105,7 +105,7 @@ ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
 
 # e2e builds the web app against the local API and runs the Playwright suite
-# against the deterministic local stack. See apps/web/.env.e2e.example and
+# against the deterministic local stack. See apps/web/e2e/README.md and
 # apps/web/playwright.config.ts for the ports and the environment each service
 # needs. Nothing here is required by `verify`.
 #
