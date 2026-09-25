@@ -168,7 +168,13 @@ func (h evidenceHandler) reviewDependency(w http.ResponseWriter, r *http.Request
 }
 
 func (h evidenceHandler) listClaims(w http.ResponseWriter, r *http.Request) {
-	items, err := h.Service.ListClaims(r.Context())
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	items, err := h.Service.ListClaims(r.Context(), actorID)
 	if err != nil {
 		writeEvidenceError(w, err)
 		return
@@ -177,7 +183,13 @@ func (h evidenceHandler) listClaims(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h evidenceHandler) getClaim(w http.ResponseWriter, r *http.Request) {
-	result, err := h.Service.GetClaim(r.Context(), r.PathValue("claimID"))
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	result, err := h.Service.GetClaim(r.Context(), r.PathValue("claimID"), actorID)
 	if err != nil {
 		writeEvidenceError(w, err)
 		return

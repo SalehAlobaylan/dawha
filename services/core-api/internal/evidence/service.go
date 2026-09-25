@@ -9,6 +9,7 @@ import (
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/claims"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -406,18 +407,27 @@ func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string,
 	return s.GetSourceForActor(ctx, sourceUUID.String(), actorID)
 }
 
-func (s *Service) ListClaims(ctx context.Context) ([]ClaimSummary, error) {
+// ListClaims lists claims the actor may read. The same claim predicate that guards a
+// direct read guards the list, so the two can never disagree.
+func (s *Service) ListClaims(ctx context.Context, actorID string) ([]ClaimSummary, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
+	policy, err := visibility.Load(ctx, s.Pool, actorID)
+	if err != nil {
+		return nil, err
+	}
+	params := visibility.NewParams()
+	claimPredicate := policy.ClaimPredicate(params, "c.id")
 	rows, err := s.Pool.Query(ctx, `
 		SELECT c.id, c.subject_type, c.predicate, c.object_type, c.status, c.created_at,
 		       (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id)
 		     + (SELECT count(*) FROM claim_counter_evidence cce WHERE cce.claim_id = c.id)
 		FROM claims c
+		WHERE `+claimPredicate+`
 		ORDER BY c.created_at DESC
 		LIMIT 100
-	`)
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -433,21 +443,37 @@ func (s *Service) ListClaims(ctx context.Context) ([]ClaimSummary, error) {
 	return items, rows.Err()
 }
 
-func (s *Service) GetClaim(ctx context.Context, claimID string) (ClaimView, error) {
+// GetClaim returns a claim the actor may read. A claim the actor cannot read answers
+// exactly like a missing claim, so the endpoint is not an existence oracle. The
+// evidence list keeps the distinction between source statements and research claims:
+// attached evidence is only rendered when its source is visible to this actor.
+func (s *Service) GetClaim(ctx context.Context, claimID, actorID string) (ClaimView, error) {
 	if err := s.ready(); err != nil {
 		return ClaimView{}, err
 	}
-	claimUUID, err := uuid.Parse(claimID)
+	policy, err := visibility.Load(ctx, s.Pool, actorID)
 	if err != nil {
+		return ClaimView{}, err
+	}
+	claimUUID, err := uuid.Parse(strings.TrimSpace(claimID))
+	if err != nil {
+		return ClaimView{}, ErrNotFound
+	}
+	access, err := policy.Claim(ctx, s.Pool, claimUUID)
+	if err != nil {
+		return ClaimView{}, err
+	}
+	if !access.Allowed() {
 		return ClaimView{}, ErrNotFound
 	}
 	var item ClaimView
 	var subjectID, objectID, placeID, createdBy pgtype.UUID
 	var timeFrom, timeTo pgtype.Date
+	var notes pgtype.Text
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT id, subject_type, subject_id, predicate, object_type, object_id, time_from, time_to, place_id, status, notes_ar, created_by, created_at, updated_at
 		FROM claims WHERE id = $1
-	`, claimUUID).Scan(&item.ID, &item.SubjectType, &subjectID, &item.Predicate, &item.ObjectType, &objectID, &timeFrom, &timeTo, &placeID, &item.Status, &item.NotesAR, &createdBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	`, claimUUID).Scan(&item.ID, &item.SubjectType, &subjectID, &item.Predicate, &item.ObjectType, &objectID, &timeFrom, &timeTo, &placeID, &item.Status, &notes, &createdBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ClaimView{}, ErrNotFound
 		}
@@ -456,10 +482,11 @@ func (s *Service) GetClaim(ctx context.Context, claimID string) (ClaimView, erro
 	item.SubjectID = uuidString(subjectID)
 	item.ObjectID = uuidString(objectID)
 	item.PlaceID = uuidString(placeID)
+	item.NotesAR = textValue(notes)
 	item.TimeFrom = dateText(timeFrom)
 	item.TimeTo = dateText(timeTo)
 	item.CreatedBy = uuidString(createdBy)
-	item.Evidence, err = s.claimEvidence(ctx, claimUUID)
+	item.Evidence, err = s.claimEvidence(ctx, policy, claimUUID)
 	if err != nil {
 		return ClaimView{}, err
 	}
@@ -506,7 +533,7 @@ func (s *Service) CreateClaim(ctx context.Context, actorID string, input CreateC
 	if err := writeAudit(ctx, s.Pool, actorUUID, "claim_created", "claim", claimID, nil, snapshot); err != nil {
 		return ClaimView{}, err
 	}
-	return s.GetClaim(ctx, claimID.String())
+	return s.GetClaim(ctx, claimID.String(), actorID)
 }
 
 func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, input AddEvidenceInput) (ClaimView, error) {
@@ -576,7 +603,7 @@ func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, inpu
 	if err := writeAudit(ctx, s.Pool, actorUUID, "claim_evidence_linked", "claim", claimUUID, nil, input); err != nil {
 		return ClaimView{}, err
 	}
-	return s.GetClaim(ctx, claimUUID.String())
+	return s.GetClaim(ctx, claimUUID.String(), actorID)
 }
 
 func (s *Service) ready() error {
@@ -710,39 +737,41 @@ func (s *Service) statements(ctx context.Context, q dbExecutor, sourceID uuid.UU
 	return items, rows.Err()
 }
 
-func (s *Service) claimEvidence(ctx context.Context, claimID uuid.UUID) ([]EvidenceView, error) {
-	rows, err := s.Pool.Query(ctx, `
-		SELECT ce.id, ce.relation, ce.evidence_note_ar, ce.source_statement_id, ce.source_passage_id,
-		       s.id, s.title_ar,
+// claimEvidence renders the evidence and counter-evidence attached to a claim. A row
+// is kept only when its source is visible to the actor, so a research-only source
+// cannot reach a public reader through a claim page. Counter-evidence keeps the
+// "contradicts" relation so support and opposition stay distinguishable.
+func (s *Service) claimEvidence(ctx context.Context, policy visibility.Policy, claimID uuid.UUID) ([]EvidenceView, error) {
+	params := visibility.NewParams()
+	claimRef := params.Add(claimID)
+	sourcePredicate := policy.SourcePredicate(params, "s.id")
+	dependencyStatus := `
 		       CASE
 		         WHEN s.id IS NULL THEN ''
 		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
 		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
 		         ELSE s.dependency_status
-		       END,
+		       END`
+	rows, err := s.Pool.Query(ctx, `
+		SELECT ce.id, ce.relation, ce.evidence_note_ar, ce.source_statement_id, ce.source_passage_id,
+		       s.id, s.title_ar,`+dependencyStatus+`,
 		       ss.statement_text_ar, sp.text_ar
 		FROM claim_evidence ce
 		LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = ce.source_passage_id
 		LEFT JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
-		WHERE ce.claim_id = $1 AND (s.id IS NULL OR s.visibility = 'public')
+		WHERE ce.claim_id = `+claimRef+` AND (s.id IS NULL OR `+sourcePredicate+`)
 		UNION ALL
 		SELECT cce.id, 'contradicts', cce.note_ar, cce.source_statement_id, cce.source_passage_id,
-		       s.id, s.title_ar,
-		       CASE
-		         WHEN s.id IS NULL THEN ''
-		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'confirmed') THEN 'derived'
-		         WHEN EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.source_id = s.id AND sd.status = 'needs_review') THEN 'likely_dependent'
-		         ELSE s.dependency_status
-		       END,
+		       s.id, s.title_ar,`+dependencyStatus+`,
 		       ss.statement_text_ar, sp.text_ar
 		FROM claim_counter_evidence cce
 		LEFT JOIN source_statements ss ON ss.id = cce.source_statement_id
 		LEFT JOIN source_passages sp ON sp.id = cce.source_passage_id
 		LEFT JOIN sources s ON s.id = COALESCE(ss.source_id, sp.source_id)
-		WHERE cce.claim_id = $1 AND (s.id IS NULL OR s.visibility = 'public')
+		WHERE cce.claim_id = `+claimRef+` AND (s.id IS NULL OR `+sourcePredicate+`)
 		ORDER BY 1
-	`, claimID)
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
