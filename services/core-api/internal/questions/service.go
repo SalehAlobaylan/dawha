@@ -286,6 +286,8 @@ func (s *Service) getQuestion(ctx context.Context, questionID string, includeFin
 	return QuestionDetail{Question: question, Claims: claims, Sources: sources, Disputes: disputes, Entities: entities, Findings: findings, Notes: notes, Activity: activity}, nil
 }
 
+// CreateQuestion writes the question row and its audit event in one transaction, so a
+// failed audit never leaves a question whose creation is unrecorded.
 func (s *Service) CreateQuestion(ctx context.Context, actorID string, input CreateQuestionInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -298,19 +300,30 @@ func (s *Service) CreateQuestion(ctx context.Context, actorID string, input Crea
 	if err != nil {
 		return QuestionDetail{}, err
 	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	defer tx.Rollback(ctx)
 	questionID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO open_questions (id, title_ar, description_ar, status, priority, created_by)
 		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6)
 	`, questionID, input.TitleAR, input.DescriptionAR, input.Status, input.Priority, actorUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_created", "open_question", questionID, nil, input); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "question_created", "open_question", questionID, nil, input); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionID.String())
 }
 
+// UpdateQuestion commits the question row and its audit event together. The read that
+// builds the audit before-value still runs first, so the recorded before-state stays
+// the state the update actually replaced.
 func (s *Service) UpdateQuestion(ctx context.Context, questionID, actorID string, input UpdateQuestionInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -347,19 +360,29 @@ func (s *Service) UpdateQuestion(ctx context.Context, questionID, actorID string
 	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
 		UPDATE open_questions
 		SET title_ar = $1, description_ar = NULLIF($2, ''), status = $3, priority = $4, updated_at = now()
 		WHERE id = $5
 	`, merged.TitleAR, merged.DescriptionAR, merged.Status, merged.Priority, questionUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_updated", "open_question", questionUUID, current, merged); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "question_updated", "open_question", questionUUID, current, merged); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
 }
 
+// AddNote keeps the note row, the question's touched timestamp, and the audit event in
+// one transaction; a note that exists without its audit is a partial history.
 func (s *Service) AddNote(ctx context.Context, questionID, actorID string, input QuestionNoteInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -379,19 +402,28 @@ func (s *Service) AddNote(ctx context.Context, questionID, actorID string, input
 	if input.NoteAR == "" || len([]rune(input.NoteAR)) > 5000 {
 		return QuestionDetail{}, ErrValidation
 	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	defer tx.Rollback(ctx)
 	noteID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_notes (id, question_id, note_ar, created_by) VALUES ($1, $2, $3, $4)`, noteID, questionUUID, input.NoteAR, actorUUID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO question_notes (id, question_id, note_ar, created_by) VALUES ($1, $2, $3, $4)`, noteID, questionUUID, input.NoteAR, actorUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `UPDATE open_questions SET updated_at = now() WHERE id = $1`, questionUUID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE open_questions SET updated_at = now() WHERE id = $1`, questionUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_note_added", "question_note", noteID, nil, input); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "question_note_added", "question_note", noteID, nil, input); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
 }
 
+// LinkClaim writes the link row and its audit event in one transaction.
 func (s *Service) LinkClaim(ctx context.Context, questionID, actorID string, input QuestionClaimInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -411,15 +443,24 @@ func (s *Service) LinkClaim(ctx context.Context, questionID, actorID string, inp
 	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_claims (question_id, claim_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, claimUUID, input.Role); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_claim_linked", "open_question", questionUUID, nil, input); err != nil {
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO question_claims (question_id, claim_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, claimUUID, input.Role); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := writeAudit(ctx, tx, actorUUID, "question_claim_linked", "open_question", questionUUID, nil, input); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
 }
 
+// LinkSource writes the link row and its audit event in one transaction.
 func (s *Service) LinkSource(ctx context.Context, questionID, actorID string, input QuestionSourceInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -439,15 +480,24 @@ func (s *Service) LinkSource(ctx context.Context, questionID, actorID string, in
 	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_sources (question_id, source_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, sourceUUID, input.Role); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_source_linked", "open_question", questionUUID, nil, input); err != nil {
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO question_sources (question_id, source_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, sourceUUID, input.Role); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := writeAudit(ctx, tx, actorUUID, "question_source_linked", "open_question", questionUUID, nil, input); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
 }
 
+// LinkDispute writes the link row and its audit event in one transaction.
 func (s *Service) LinkDispute(ctx context.Context, questionID, actorID string, input QuestionDisputeInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -467,15 +517,25 @@ func (s *Service) LinkDispute(ctx context.Context, questionID, actorID string, i
 	if err != nil {
 		return QuestionDetail{}, ErrValidation
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_disputes (question_id, dispute_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionUUID, disputeUUID); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_dispute_linked", "open_question", questionUUID, nil, input); err != nil {
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO question_disputes (question_id, dispute_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionUUID, disputeUUID); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := writeAudit(ctx, tx, actorUUID, "question_dispute_linked", "open_question", questionUUID, nil, input); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestion(ctx, questionUUID.String())
 }
 
+// LinkEntity writes the link row and its audit event in one transaction, so a link that
+// exists without its audit cannot survive a failure.
 func (s *Service) LinkEntity(ctx context.Context, questionID, actorID string, input QuestionEntityInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -512,21 +572,30 @@ func (s *Service) LinkEntity(ctx context.Context, questionID, actorID string, in
 	default:
 		return QuestionDetail{}, ErrValidation
 	}
-	if err := s.Pool.QueryRow(ctx, query, entityUUID).Scan(&name); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := tx.QueryRow(ctx, query, entityUUID).Scan(&name); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return QuestionDetail{}, ErrNotFound
 		}
 		return QuestionDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_entities (question_id, entity_type, entity_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, entityType, entityUUID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO question_entities (question_id, entity_type, entity_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, questionUUID, entityType, entityUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_entity_linked", "open_question", questionUUID, nil, map[string]any{"entity_type": entityType, "entity_id": entityUUID.String(), "name_ar": textValue(name)}); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "question_entity_linked", "open_question", questionUUID, nil, map[string]any{"entity_type": entityType, "entity_id": entityUUID.String(), "name_ar": textValue(name)}); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestionForActor(ctx, questionID, actorID)
 }
 
+// LinkFinding writes the link row and its audit event in one transaction.
 func (s *Service) LinkFinding(ctx context.Context, questionID, actorID string, input QuestionFindingInput) (QuestionDetail, error) {
 	if err := s.ready(); err != nil {
 		return QuestionDetail{}, err
@@ -546,17 +615,25 @@ func (s *Service) LinkFinding(ctx context.Context, questionID, actorID string, i
 	if err != nil {
 		return QuestionDetail{}, ErrValidation
 	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return QuestionDetail{}, err
+	}
+	defer tx.Rollback(ctx)
 	var exists bool
-	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM platform_findings WHERE id = $1)`, findingUUID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM platform_findings WHERE id = $1)`, findingUUID).Scan(&exists); err != nil {
 		return QuestionDetail{}, err
 	}
 	if !exists {
 		return QuestionDetail{}, ErrNotFound
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO question_findings (question_id, finding_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionUUID, findingUUID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO question_findings (question_id, finding_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, questionUUID, findingUUID); err != nil {
 		return QuestionDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "question_finding_linked", "open_question", questionUUID, nil, map[string]any{"finding_id": findingUUID.String()}); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "question_finding_linked", "open_question", questionUUID, nil, map[string]any{"finding_id": findingUUID.String()}); err != nil {
+		return QuestionDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return QuestionDetail{}, err
 	}
 	return s.GetQuestionForActor(ctx, questionID, actorID)
@@ -601,6 +678,7 @@ func (s *Service) GetDispute(ctx context.Context, disputeID string) (DisputeDeta
 	return DisputeDetail{Dispute: dispute, Claims: claims}, nil
 }
 
+// CreateDispute writes the dispute row and its audit event in one transaction.
 func (s *Service) CreateDispute(ctx context.Context, actorID string, input CreateDisputeInput) (DisputeDetail, error) {
 	if err := s.ready(); err != nil {
 		return DisputeDetail{}, err
@@ -613,16 +691,25 @@ func (s *Service) CreateDispute(ctx context.Context, actorID string, input Creat
 	if err != nil {
 		return DisputeDetail{}, err
 	}
-	disputeID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO disputes (id, title_ar, description_ar, status, created_by) VALUES ($1, $2, NULLIF($3, ''), $4, $5)`, disputeID, input.TitleAR, input.DescriptionAR, input.Status, actorUUID); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
 		return DisputeDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "dispute_created", "dispute", disputeID, nil, input); err != nil {
+	defer tx.Rollback(ctx)
+	disputeID := uuid.New()
+	if _, err := tx.Exec(ctx, `INSERT INTO disputes (id, title_ar, description_ar, status, created_by) VALUES ($1, $2, NULLIF($3, ''), $4, $5)`, disputeID, input.TitleAR, input.DescriptionAR, input.Status, actorUUID); err != nil {
+		return DisputeDetail{}, err
+	}
+	if err := writeAudit(ctx, tx, actorUUID, "dispute_created", "dispute", disputeID, nil, input); err != nil {
+		return DisputeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return DisputeDetail{}, err
 	}
 	return s.GetDispute(ctx, disputeID.String())
 }
 
+// UpdateDispute commits the dispute row and its audit event together.
 func (s *Service) UpdateDispute(ctx context.Context, disputeID, actorID string, input UpdateDisputeInput) (DisputeDetail, error) {
 	if err := s.ready(); err != nil {
 		return DisputeDetail{}, err
@@ -655,19 +742,28 @@ func (s *Service) UpdateDispute(ctx context.Context, disputeID, actorID string, 
 	if merged.Status == "resolved" && merged.ResolutionAR == "" {
 		return DisputeDetail{}, ErrValidation
 	}
-	if _, err := s.Pool.Exec(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return DisputeDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
 		UPDATE disputes
 		SET status = $1, resolution_ar = NULLIF($2, ''), resolved_by = CASE WHEN $1 = 'resolved' THEN $3::uuid ELSE NULL::uuid END, updated_at = now()
 		WHERE id = $4
 	`, merged.Status, merged.ResolutionAR, actorUUID, disputeUUID); err != nil {
 		return DisputeDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "dispute_updated", "dispute", disputeUUID, current, merged); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "dispute_updated", "dispute", disputeUUID, current, merged); err != nil {
+		return DisputeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return DisputeDetail{}, err
 	}
 	return s.GetDispute(ctx, disputeUUID.String())
 }
 
+// LinkDisputeClaim writes the link row and its audit event in one transaction.
 func (s *Service) LinkDisputeClaim(ctx context.Context, disputeID, actorID string, input DisputeClaimInput) (DisputeDetail, error) {
 	if err := s.ready(); err != nil {
 		return DisputeDetail{}, err
@@ -687,10 +783,18 @@ func (s *Service) LinkDisputeClaim(ctx context.Context, disputeID, actorID strin
 	if err != nil {
 		return DisputeDetail{}, err
 	}
-	if _, err := s.Pool.Exec(ctx, `INSERT INTO dispute_claims (dispute_id, claim_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, disputeUUID, claimUUID, input.Position); err != nil {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
 		return DisputeDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "dispute_claim_linked", "dispute", disputeUUID, nil, input); err != nil {
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO dispute_claims (dispute_id, claim_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, disputeUUID, claimUUID, input.Position); err != nil {
+		return DisputeDetail{}, err
+	}
+	if err := writeAudit(ctx, tx, actorUUID, "dispute_claim_linked", "dispute", disputeUUID, nil, input); err != nil {
+		return DisputeDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return DisputeDetail{}, err
 	}
 	return s.GetDispute(ctx, disputeUUID.String())

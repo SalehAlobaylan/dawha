@@ -359,6 +359,8 @@ func (s *Service) CreatePassage(ctx context.Context, sourceID, actorID string, i
 	return s.GetSourceForActor(ctx, sourceUUID.String(), actorID)
 }
 
+// CreateStatement records a source statement. The statement row and its audit event
+// share one transaction, so a failed audit never leaves a statement with no history.
 func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string, input SourceStatementInput) (SourceDetail, error) {
 	if err := s.ready(); err != nil {
 		return SourceDetail{}, err
@@ -371,7 +373,12 @@ func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string,
 	if err != nil {
 		return SourceDetail{}, err
 	}
-	allowed, err := canManageSource(ctx, s.Pool, sourceUUID, actorUUID)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return SourceDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+	allowed, err := canManageSource(ctx, tx, sourceUUID, actorUUID)
 	if err != nil {
 		return SourceDetail{}, err
 	}
@@ -385,7 +392,7 @@ func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string,
 			return SourceDetail{}, ErrValidation
 		}
 		var exists bool
-		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM source_passages WHERE id = $1 AND source_id = $2)`, passageUUID, sourceUUID).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM source_passages WHERE id = $1 AND source_id = $2)`, passageUUID, sourceUUID).Scan(&exists); err != nil {
 			return SourceDetail{}, err
 		}
 		if !exists {
@@ -394,14 +401,17 @@ func (s *Service) CreateStatement(ctx context.Context, sourceID, actorID string,
 		passageArg = passageUUID
 	}
 	statementID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO source_statements
 			(id, source_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status, created_by)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), 'manual', $6, $7)
 	`, statementID, sourceUUID, passageArg, input.StatementTextAR, input.LocatorAR, input.ReviewStatus, actorUUID); err != nil {
 		return SourceDetail{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "source_statement_recorded", "source_statement", statementID, nil, input); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "source_statement_recorded", "source_statement", statementID, nil, input); err != nil {
+		return SourceDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return SourceDetail{}, err
 	}
 	return s.GetSourceForActor(ctx, sourceUUID.String(), actorID)
@@ -493,6 +503,9 @@ func (s *Service) GetClaim(ctx context.Context, claimID, actorID string) (ClaimV
 	return item, nil
 }
 
+// CreateClaim writes a claim, its first version snapshot, and the audit event as one
+// unit. A claim without its version row, or a claim whose audit never landed, is a
+// broken provenance record, so the three writes commit or vanish together.
 func (s *Service) CreateClaim(ctx context.Context, actorID string, input CreateClaimInput) (ClaimView, error) {
 	if err := s.ready(); err != nil {
 		return ClaimView{}, err
@@ -515,8 +528,13 @@ func (s *Service) CreateClaim(ctx context.Context, actorID string, input CreateC
 	if err != nil {
 		return ClaimView{}, err
 	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return ClaimView{}, err
+	}
+	defer tx.Rollback(ctx)
 	claimID := uuid.New()
-	if _, err := s.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO claims
 			(id, subject_type, subject_id, predicate, object_type, object_id, time_from, time_to, place_id, status, notes_ar, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12)
@@ -524,18 +542,24 @@ func (s *Service) CreateClaim(ctx context.Context, actorID string, input CreateC
 		return ClaimView{}, err
 	}
 	snapshot := map[string]any{"subject_type": input.SubjectType, "subject_id": input.SubjectID, "predicate": input.Predicate, "object_type": input.ObjectType, "object_id": input.ObjectID, "status": input.Status}
-	if _, err := s.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO claim_versions (claim_id, version_number, snapshot, change_reason_ar, created_by)
 		VALUES ($1, 1, $2, NULLIF($3, ''), $4)
 	`, claimID, mustJSON(snapshot), input.NotesAR, actorUUID); err != nil {
 		return ClaimView{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "claim_created", "claim", claimID, nil, snapshot); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "claim_created", "claim", claimID, nil, snapshot); err != nil {
+		return ClaimView{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return ClaimView{}, err
 	}
 	return s.GetClaim(ctx, claimID.String(), actorID)
 }
 
+// AddEvidence links a source statement or passage to a claim. The link row and its
+// audit event commit together, so a claim never shows evidence that the audit log
+// does not explain.
 func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, input AddEvidenceInput) (ClaimView, error) {
 	if err := s.ready(); err != nil {
 		return ClaimView{}, err
@@ -548,7 +572,12 @@ func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, inpu
 	if err != nil {
 		return ClaimView{}, err
 	}
-	allowed, err := canManageClaim(ctx, s.Pool, claimUUID, actorUUID)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return ClaimView{}, err
+	}
+	defer tx.Rollback(ctx)
+	allowed, err := canManageClaim(ctx, tx, claimUUID, actorUUID)
 	if err != nil {
 		return ClaimView{}, err
 	}
@@ -562,7 +591,7 @@ func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, inpu
 		if err != nil {
 			return ClaimView{}, ErrValidation
 		}
-		if err := s.Pool.QueryRow(ctx, `SELECT source_id FROM source_statements WHERE id = $1`, statementUUID).Scan(&statementSource); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM source_statements WHERE id = $1`, statementUUID).Scan(&statementSource); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ClaimView{}, ErrNotFound
 			}
@@ -575,7 +604,7 @@ func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, inpu
 		if err != nil {
 			return ClaimView{}, ErrValidation
 		}
-		if err := s.Pool.QueryRow(ctx, `SELECT source_id FROM source_passages WHERE id = $1`, passageUUID).Scan(&passageSource); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM source_passages WHERE id = $1`, passageUUID).Scan(&passageSource); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ClaimView{}, ErrNotFound
 			}
@@ -588,19 +617,22 @@ func (s *Service) AddEvidence(ctx context.Context, claimID, actorID string, inpu
 	}
 	evidenceID := uuid.New()
 	if input.Relation == "contradicts" || input.Relation == "refutes" {
-		if _, err := s.Pool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO claim_counter_evidence (id, claim_id, source_statement_id, source_passage_id, note_ar, created_by)
 			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6)
 		`, evidenceID, claimUUID, statementArg, passageArg, input.EvidenceNoteAR, actorUUID); err != nil {
 			return ClaimView{}, err
 		}
-	} else if _, err := s.Pool.Exec(ctx, `
+	} else if _, err := tx.Exec(ctx, `
 		INSERT INTO claim_evidence (id, claim_id, source_statement_id, source_passage_id, evidence_note_ar, relation, created_by)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
 	`, evidenceID, claimUUID, statementArg, passageArg, input.EvidenceNoteAR, input.Relation, actorUUID); err != nil {
 		return ClaimView{}, err
 	}
-	if err := writeAudit(ctx, s.Pool, actorUUID, "claim_evidence_linked", "claim", claimUUID, nil, input); err != nil {
+	if err := writeAudit(ctx, tx, actorUUID, "claim_evidence_linked", "claim", claimUUID, nil, input); err != nil {
+		return ClaimView{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return ClaimView{}, err
 	}
 	return s.GetClaim(ctx, claimUUID.String(), actorID)
