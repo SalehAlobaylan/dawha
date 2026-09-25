@@ -807,6 +807,55 @@ type SourceCandidateReview struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type SourceCharacterizationEvidence struct {
+	ID                 pgtype.UUID
+	RunID              pgtype.UUID
+	AttributeKey       string
+	Relation           string
+	SourcePassageID    pgtype.UUID
+	SourceStatementID  pgtype.UUID
+	ClaimID            pgtype.UUID
+	PlaceID            pgtype.UUID
+	SourceDependencyID pgtype.UUID
+	RelatedSourceID    pgtype.UUID
+	ExcerptAr          string
+	Position           int32
+	Metadata           []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
+type SourceCharacterizationReview struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	ReviewerID pgtype.UUID
+	Decision   string
+	NoteAr     pgtype.Text
+	CreatedAt  pgtype.Timestamptz
+}
+
+type SourceCharacterizationRun struct {
+	ID                         pgtype.UUID
+	SourceID                   pgtype.UUID
+	RequestedBy                pgtype.UUID
+	QuestionID                 pgtype.UUID
+	Status                     string
+	ReportStatus               pgtype.Text
+	ReviewStatus               string
+	ExecutionMode              string
+	AlgorithmVersion           string
+	QualificationPolicyVersion string
+	ModelVersion               pgtype.Text
+	InputFingerprint           string
+	Scope                      []byte
+	Report                     []byte
+	FindingCount               int32
+	Error                      pgtype.Text
+	CreatedAt                  pgtype.Timestamptz
+	StartedAt                  pgtype.Timestamptz
+	CompletedAt                pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+}
+
 type SourceDependency struct {
 	ID                pgtype.UUID
 	SourceID          pgtype.UUID

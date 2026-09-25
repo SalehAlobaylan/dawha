@@ -66,7 +66,7 @@ jobs:
         working-directory: services/core-api
         env:
           DATABASE_URL: postgres://dawha:dawha_local@localhost:55432/dawha
-      - run: go test ./internal/temporalanalysis ./internal/geospatialintelligence ./internal/researchagent ./internal/contradiction
+      - run: go test ./internal/temporalanalysis ./internal/geospatialintelligence ./internal/researchagent ./internal/contradiction ./internal/evidence
         working-directory: services/core-api
         env:
           DATABASE_URL: postgres://dawha:dawha_local@localhost:55432/dawha

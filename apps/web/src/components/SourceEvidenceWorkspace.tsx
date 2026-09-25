@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { addClaimEvidence, ApiError, createClaim, createSource, createSourcePassage, createSourceStatement, fetchSource, fetchSources } from "../lib/api";
 import { SourceProcessingPanel } from "./SourceProcessingPanel";
 import { SourceDependencyPanel } from "./SourceDependencyPanel";
+import { SourceCharacterizationPanel } from "./SourceCharacterizationPanel";
 import { StatusBadge } from "./StatusBadge";
 import type { AddEvidenceInput, CreatePassageInput, CreateStatementInput, ResearchClaim, SourceDetail } from "../types";
 
@@ -70,6 +71,7 @@ export function SourceEvidenceWorkspace() {
       queryClient.setQueryData(["source", selectedSourceId], updated);
       await queryClient.invalidateQueries({ queryKey: ["sources"] });
       await queryClient.invalidateQueries({ queryKey: ["source-dependencies", selectedSourceId] });
+      await queryClient.invalidateQueries({ queryKey: ["source-characterization", selectedSourceId] });
     },
     onError: (error) => setMessage(errorMessage(error)),
   });
@@ -83,6 +85,7 @@ export function SourceEvidenceWorkspace() {
       queryClient.setQueryData(["source", selectedSourceId], updated);
       await queryClient.invalidateQueries({ queryKey: ["sources"] });
       await queryClient.invalidateQueries({ queryKey: ["source-dependencies", selectedSourceId] });
+      await queryClient.invalidateQueries({ queryKey: ["source-characterization", selectedSourceId] });
     },
     onError: (error) => setMessage(errorMessage(error)),
   });
@@ -142,6 +145,7 @@ export function SourceEvidenceWorkspace() {
       </div>
       {selectedSource ? <SourceProcessingPanel sourceId={selectedSource.source.id} sourceTitle={selectedSource.source.titleAr} /> : null}
       {selectedSource ? <SourceDependencyPanel source={selectedSource.source} allSources={sourceItems} initialGraph={{ sourceId: selectedSource.source.id, items: selectedSource.dependencies, summary: selectedSource.dependencySummary, detectedCount: 0, scannedPassageCount: 0, truncated: false }} /> : null}
+      {selectedSource ? <SourceCharacterizationPanel source={selectedSource.source} /> : null}
       <div className="evidence-claim-area"><div className="evidence-column-heading"><div><div className="detail-label">الادعاء والدليل</div><small>اكتب الفرضية، ثم اربط ما يدعمها أو يعارضها.</small></div><ShieldAlert size={16} /></div><div className="evidence-claim-grid"><form className="evidence-claim-form" onSubmit={submitClaim}><div className="evidence-form-title"><Link2 size={16} /><strong>ادعاء جديد</strong></div><div className="evidence-form-grid"><label className="composer-label">معرف الموضوع<input required value={claimSubjectId} onChange={(event) => setClaimSubjectId(event.target.value)} /></label><label className="composer-label">العلاقة<input required value={claimPredicate} onChange={(event) => setClaimPredicate(event.target.value)} placeholder="father_of" /></label><label className="composer-label">معرف الموضوع الآخر<input required value={claimObjectId} onChange={(event) => setClaimObjectId(event.target.value)} /></label><label className="composer-label">الحالة<select value={claimStatus} onChange={(event) => setClaimStatus(event.target.value)}><option value="unresolved">غير محسوم</option><option value="supported">مدعوم مبدئياً</option><option value="disputed">متنازع عليه</option></select></label><label className="composer-label">ملاحظة<textarea value={claimNotes} onChange={(event) => setClaimNotes(event.target.value)} rows={2} /></label></div><button className="primary-button" type="submit" disabled={createClaimMutation.isPending}>{createClaimMutation.isPending ? "جارٍ الحفظ…" : "احفظ الادعاء"}</button></form><div className="evidence-claim-result">{claim ? <><div className="evidence-claim-result-head"><StatusBadge tone="claim">{claim.status}</StatusBadge><span>{claim.predicate}</span></div><div className="evidence-evidence-list">{claim.evidence.length > 0 ? claim.evidence.map((item) => <div className="evidence-evidence-row" key={item.id}><DependencyWarning status={item.dependencyStatus} /><StatusBadge tone={item.relation === "supports" ? "source" : item.relation === "contradicts" || item.relation === "refutes" ? "disputed" : "claim"}>{evidenceRelationLabel(item.relation)}</StatusBadge><div><strong>{item.sourceTitleAr ?? "مصدر"}</strong><p>{item.statementTextAr ?? item.passageTextAr ?? "مقطع مصدر"}</p></div></div>) : <p className="evidence-empty">لم يُربط دليل بعد.</p>}</div><form className="evidence-link-form" onSubmit={submitEvidence}><label className="composer-label">الدليل<select required value={evidenceTarget} onChange={(event) => setEvidenceTarget(event.target.value)}><option value="">اختر عبارة أو مقطعاً</option>{selectedSource?.statements.map((item) => <option key={item.id} value={`statement:${item.id}`}>عبارة: {item.statementTextAr}</option>)}{selectedSource?.passages.map((item) => <option key={item.id} value={`passage:${item.id}`}>مقطع {item.sequenceNumber}: {item.textAr.slice(0, 55)}</option>)}</select></label><div className="evidence-link-fields"><label className="composer-label">العلاقة<select value={evidenceRelation} onChange={(event) => setEvidenceRelation(event.target.value as typeof evidenceRelation)}><option value="supports">يدعم</option><option value="contextualizes">يضع سياقاً</option><option value="contradicts">يعارض</option><option value="refutes">ينفي</option></select></label><label className="composer-label">ملاحظة<input value={evidenceNote} onChange={(event) => setEvidenceNote(event.target.value)} placeholder="لماذا هذا دليل؟" /></label></div><button className="secondary-button" type="submit" disabled={!evidenceTarget || evidenceMutation.isPending}>{evidenceMutation.isPending ? "جارٍ الربط…" : "اربط الدليل"}</button></form></> : <p className="evidence-empty">احفظ ادعاءً أولاً، ثم اختر عبارة من المصدر لربطها.</p>}</div></div></div>
     </section>
   );

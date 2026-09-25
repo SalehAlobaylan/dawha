@@ -219,6 +219,70 @@ func (h evidenceHandler) addEvidence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
+func (h evidenceHandler) startSourceCharacterization(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input evidence.SourceCharacterizationInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.StartSourceCharacterization(r.Context(), user.ID, input)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h evidenceHandler) getSourceCharacterizationRun(w http.ResponseWriter, r *http.Request) {
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	result, err := h.Service.GetSourceCharacterizationRun(r.Context(), actorID, r.PathValue("runID"))
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h evidenceHandler) getLatestSourceCharacterization(w http.ResponseWriter, r *http.Request) {
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	result, err := h.Service.GetLatestSourceCharacterization(r.Context(), actorID, evidence.SourceCharacterizationInput{SourceID: r.URL.Query().Get("source_id"), QuestionID: r.URL.Query().Get("question_id"), ClaimID: r.URL.Query().Get("claim_id"), PlaceID: r.URL.Query().Get("place_id")})
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h evidenceHandler) reviewSourceCharacterization(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input evidence.ReviewSourceCharacterizationInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReviewSourceCharacterization(r.Context(), user.ID, r.PathValue("runID"), input)
+	if err != nil {
+		writeEvidenceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h evidenceHandler) requireUser(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 	if h.Service == nil || h.Auth == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "evidence service is not configured"})

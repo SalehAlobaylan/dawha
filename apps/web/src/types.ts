@@ -176,6 +176,124 @@ export interface SourceDetail {
   dependencySummary: SourceDependencySummary;
 }
 
+export type SourceCharacterizationAttributeState = "observed" | "unknown" | "needs_review";
+export type SourceCharacterizationReviewStatus = "needs_review" | "confirmed" | "dismissed";
+export type SourceCharacterizationReportStatus = "succeeded" | "insufficient_evidence" | "failed";
+export type SourceCharacterizationDecision = "confirm" | "dismiss" | "reopen";
+
+export interface SourceCharacterizationInput {
+  source_id: string;
+  question_id?: string;
+  claim_id?: string;
+  place_id?: string;
+}
+
+export interface SourceCharacterizationScope {
+  sourceId: string;
+  questionId?: string;
+  claimId?: string;
+  placeId?: string;
+}
+
+export interface SourceCharacterizationSource {
+  id: string;
+  titleAr: string;
+  authorAr?: string;
+  sourceType: string;
+  publicationDateFrom?: string;
+  publicationDateTo?: string;
+  editionAr?: string;
+  citationAr?: string;
+  locationAr?: string;
+  dependencyStatus: string;
+  visibility: string;
+  passageCount: number;
+  statementCount: number;
+  acceptedStatementCount: number;
+}
+
+export interface SourceCharacterizationAttribute {
+  key: string;
+  labelAr: string;
+  value: string;
+  state: SourceCharacterizationAttributeState;
+  rationaleAr: string;
+  evidenceIds: string[];
+}
+
+export interface SourceCharacterizationCorroborator {
+  sourceId: string;
+  sourceTitleAr: string;
+  claimIds: string[];
+  evidenceCount: number;
+}
+
+export interface SourceCharacterizationCorroboration {
+  independentSourceCount: number;
+  sources: SourceCharacterizationCorroborator[];
+}
+
+export interface SourceCharacterizationReport {
+  source: SourceCharacterizationSource;
+  attributes: SourceCharacterizationAttribute[];
+  corroboration: SourceCharacterizationCorroboration;
+  limitations: string[];
+  generatedAt: string;
+}
+
+export interface SourceCharacterizationEvidence {
+  id: string;
+  attributeKey: string;
+  relation: string;
+  sourcePassageId?: string;
+  sourceStatementId?: string;
+  claimId?: string;
+  placeId?: string;
+  sourceDependencyId?: string;
+  relatedSourceId?: string;
+  excerptAr: string;
+  position: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SourceCharacterizationReview {
+  id: string;
+  reviewerId: string;
+  decision: SourceCharacterizationDecision;
+  noteAr?: string;
+  createdAt: string;
+}
+
+export interface SourceCharacterizationRun {
+  id: string;
+  sourceId: string;
+  requestedBy: string;
+  questionId?: string;
+  status: "running" | "succeeded" | "failed";
+  reportStatus: SourceCharacterizationReportStatus;
+  reviewStatus: SourceCharacterizationReviewStatus;
+  executionMode: string;
+  algorithmVersion: string;
+  qualificationPolicyVersion: string;
+  modelVersion?: string;
+  inputFingerprint: string;
+  scope: SourceCharacterizationScope;
+  report: SourceCharacterizationReport;
+  findingCount: number;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+  evidence: SourceCharacterizationEvidence[];
+  reviews: SourceCharacterizationReview[];
+}
+
+export interface ReviewSourceCharacterizationInput {
+  decision: SourceCharacterizationDecision;
+  note_ar?: string;
+}
+
 export interface SourceFile {
   id: string;
   sourceId: string;

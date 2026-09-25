@@ -11595,6 +11595,284 @@ a {
   }
 }
 
+.source-characterization-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid var(--rule);
+  background: linear-gradient(135deg, rgba(232, 226, 205, 0.72), rgba(248, 241, 225, 0.82));
+  box-shadow: var(--shadow-card);
+}
+
+.source-characterization-head,
+.source-characterization-status,
+.source-characterization-attribute > div,
+.source-characterization-subhead,
+.source-characterization-review > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.source-characterization-head {
+  align-items: flex-start;
+}
+
+.source-characterization-head h3 {
+  margin: 3px 0 5px;
+  font-size: 18px;
+}
+
+.source-characterization-head p,
+.source-characterization-attribute p,
+.source-characterization-limitations li,
+.source-characterization-empty p,
+.source-characterization-review,
+.source-characterization-trace small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.source-characterization-head p {
+  margin: 0;
+}
+
+.source-characterization-head button,
+.source-characterization-review button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.source-characterization-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed var(--rule);
+  color: var(--muted);
+}
+
+.source-characterization-empty p {
+  margin: 0;
+}
+
+.source-characterization-report {
+  display: grid;
+  gap: 12px;
+}
+
+.source-characterization-status {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding-bottom: 2px;
+}
+
+.source-characterization-status > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-characterization-status small,
+.source-characterization-subhead small,
+.source-characterization-attribute small,
+.source-characterization-trace small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.source-characterization-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--clay);
+  background: var(--white-warm);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.source-characterization-attributes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.source-characterization-attribute {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.source-characterization-attribute > div {
+  align-items: flex-start;
+}
+
+.source-characterization-attribute strong {
+  font-size: 11px;
+}
+
+.source-characterization-attribute > bdi {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.source-characterization-attribute p {
+  margin: 0;
+}
+
+.source-characterization-attribute-unknown {
+  border-style: dashed;
+}
+
+.source-characterization-attribute-needs_review {
+  border-color: color-mix(in srgb, var(--clay) 50%, var(--rule));
+}
+
+.source-characterization-corroboration,
+.source-characterization-limitations,
+.source-characterization-trace {
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: rgba(255, 253, 247, 0.62);
+}
+
+.source-characterization-subhead {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.source-characterization-subhead strong {
+  font-size: 11px;
+}
+
+.source-characterization-corroborator-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.source-characterization-corroborator-list > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.source-characterization-corroborator-list strong {
+  font-size: 10px;
+}
+
+.source-characterization-corroborator-list small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.source-characterization-limitations ul {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 0;
+  padding-inline-start: 18px;
+}
+
+.source-characterization-trace {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.source-characterization-trace summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.source-characterization-trace-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.source-characterization-trace-list > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border-inline-start: 2px solid var(--rule);
+  background: var(--white-warm);
+}
+
+.source-characterization-trace-list strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.source-characterization-trace-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.source-characterization-review {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px dashed var(--rule);
+}
+
+.source-characterization-review > div {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.source-characterization-review .composer-label {
+  min-width: 220px;
+}
+
+@media (max-width: 960px) {
+  .source-characterization-attributes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .source-characterization-panel {
+    padding: 14px;
+  }
+
+  .source-characterization-head,
+  .source-characterization-status,
+  .source-characterization-attribute > div,
+  .source-characterization-review > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .source-characterization-head button,
+  .source-characterization-review button {
+    justify-content: center;
+  }
+
+  .source-characterization-attributes,
+  .source-characterization-corroborator-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

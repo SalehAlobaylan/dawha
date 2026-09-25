@@ -23,6 +23,8 @@ func TestEvidenceWriteRoutesRequireAuthentication(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/sources/00000000-0000-0000-0000-000000000001/dependencies", body: `{"depends_on_source_id":"00000000-0000-0000-0000-000000000002","dependency_type":"cites"}`},
 		{method: http.MethodPost, path: "/api/v1/sources/00000000-0000-0000-0000-000000000001/dependencies/detect"},
 		{method: http.MethodPatch, path: "/api/v1/source-dependencies/00000000-0000-0000-0000-000000000003/review", body: `{"decision":"confirmed"}`},
+		{method: http.MethodPost, path: "/api/v1/source-characterization/runs", body: `{"source_id":"00000000-0000-0000-0000-000000000001"}`},
+		{method: http.MethodPatch, path: "/api/v1/source-characterization/runs/00000000-0000-0000-0000-000000000002/review", body: `{"decision":"confirm"}`},
 	}
 	for _, testCase := range cases {
 		recorder := httptest.NewRecorder()
@@ -31,6 +33,20 @@ func TestEvidenceWriteRoutesRequireAuthentication(t *testing.T) {
 		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s: expected status %d, got %d", testCase.method, testCase.path, http.StatusUnauthorized, recorder.Code)
+		}
+	}
+}
+
+func TestSourceCharacterizationReadRoutesAllowAnonymousAccess(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/source-characterization/runs/latest?source_id=00000000-0000-0000-0000-000000000001",
+		"/api/v1/source-characterization/runs/00000000-0000-0000-0000-000000000002",
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s: expected status %d without database, got %d", path, http.StatusServiceUnavailable, recorder.Code)
 		}
 	}
 }

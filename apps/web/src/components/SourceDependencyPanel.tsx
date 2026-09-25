@@ -31,6 +31,7 @@ export function SourceDependencyPanel({ source, allSources, initialGraph }: Sour
     setReviewNotes({});
     await queryClient.invalidateQueries({ queryKey: ["source", source.id] });
     await queryClient.invalidateQueries({ queryKey: ["sources"] });
+    await queryClient.invalidateQueries({ queryKey: ["source-characterization", source.id] });
   };
   const createMutation = useMutation({
     mutationFn: (input: CreateSourceDependencyInput) => createSourceDependency(source.id, input),

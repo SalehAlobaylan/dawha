@@ -56,6 +56,9 @@ import type {
   SearchResponse,
   SourceCandidate,
   SourceDetail,
+  SourceCharacterizationInput,
+  SourceCharacterizationRun,
+  ReviewSourceCharacterizationInput,
   SourceDependencyGraph,
   SourceFile,
   SourceMetadata,
@@ -1221,6 +1224,67 @@ export async function reviewSourceDependency(dependencyId: string, input: Review
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as SourceDependencyGraph;
+}
+
+export async function startSourceCharacterization(input: SourceCharacterizationInput): Promise<SourceCharacterizationRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لتوصيف المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceCharacterizationRun;
+}
+
+export async function fetchSourceCharacterizationRun(runId: string): Promise<SourceCharacterizationRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض توصيف المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceCharacterizationRun;
+}
+
+export async function fetchLatestSourceCharacterization(input: SourceCharacterizationInput): Promise<SourceCharacterizationRun | null> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لعرض آخر توصيف.", 503);
+  }
+  const params = new URLSearchParams({ source_id: input.source_id });
+  if (input.question_id) params.set("question_id", input.question_id);
+  if (input.claim_id) params.set("claim_id", input.claim_id);
+  if (input.place_id) params.set("place_id", input.place_id);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs/latest?${params.toString()}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceCharacterizationRun;
+}
+
+export async function reviewSourceCharacterization(runId: string, input: ReviewSourceCharacterizationInput): Promise<SourceCharacterizationRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API أولاً لمراجعة التوصيف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs/${encodeURIComponent(runId)}/review`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceCharacterizationRun;
 }
 
 export async function fetchSourceProcessing(sourceId: string): Promise<SourceProcessing> {
