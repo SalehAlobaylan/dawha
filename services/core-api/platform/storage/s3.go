@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,13 +28,21 @@ import (
 // IRSA/IMDS, web identity), which is the part a deployment gets right for free
 // and gets subtly wrong by hand.
 //
-// What this file deliberately does NOT do is invent an object-storage service for
-// the local stack. There is no MinIO, no LocalStack and no fake bucket in
-// docker-compose.yml, because a test double that behaves like S3 is a claim
-// nobody can check. Instead the adapter is written against the small s3API
-// interface below, and the contract suite runs against a test double - so the
-// adapter's own logic (key rules, size, content type, expiry clamping, error
-// mapping) is genuinely tested, while the wire behaviour stays the SDK's problem.
+// What this file deliberately does NOT do is put a fake bucket in the default
+// local stack. MinIO is in docker-compose.yml, but behind the `storage` profile
+// and started only by `make storage-up`, because storage is not something the
+// default developer loop should pay for. The adapter is written against the small
+// s3API interface below, so the contract suite runs against a test double with no
+// bucket and no network - and, separately and opt-in, against a real MinIO with
+// the same assertions (minio_test.go).
+//
+// The split is not tidiness. The double is fast and unconditional, and it is where
+// the adapter's own logic is tested. The MinIO case is where the wire is tested,
+// and it is the only one of the two that can catch a disagreement between this
+// adapter and S3: it already caught two, a Put that no plaintext S3 endpoint
+// accepts and a presign whose determinism no real signer has. A double that
+// behaves like S3 is a claim; the claim was wrong twice, and the double is the
+// reason nobody noticed.
 type S3Store struct {
 	bucket string
 	api    s3API
@@ -135,19 +144,17 @@ func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, contentTy
 	}
 	// The caller compares the reported size against the bytes it handed over and
 	// deletes the object if they disagree, so this adapter has to report a size
-	// rather than zero. A seekable body knows its own length; anything else is
-	// counted as it is read. (PutObjectOutput has no length, so "ask the SDK"
-	// is not on the table.)
-	counter := &countingReader{source: body}
-	if seeker, ok := body.(io.Seeker); ok {
-		if position, err := seeker.Seek(0, io.SeekCurrent); err == nil {
-			counter.declared = position
-		}
+	// rather than zero. PutObjectOutput has no length, so "ask the SDK" is not on
+	// the table: the length has to be settled before the call, which is what
+	// newPutBody does.
+	payload, err := newPutBody(body)
+	if err != nil {
+		return Object{}, fmt.Errorf("storage: put %s: %w", key, err)
 	}
 	output, err := s.api.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),
-		Body:        counter,
+		Body:        payload,
 		ContentType: aws.String(contentType),
 	})
 	if err != nil {
@@ -157,7 +164,7 @@ func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, contentTy
 	// verified is the label this reports. S3 stores the object's own metadata
 	// from the request, so a later Get agrees.
 	_ = output
-	return Object{Key: key, ContentType: contentType, Size: counter.read()}, nil
+	return Object{Key: key, ContentType: contentType, Size: payload.length()}, nil
 }
 
 func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
@@ -278,25 +285,101 @@ var _ s3API = s3APIClient{}
 var _ Store = (*S3Store)(nil)
 var _ Store = (*LocalStore)(nil)
 
-// countingReader reports how many bytes were actually consumed, and remembers the
-// length a seekable body declared before it started. The declared length wins
-// because a body the SDK reads through more than once (a retry) would otherwise
-// be reported as more bytes than were uploaded.
-type countingReader struct {
-	source   io.Reader
-	count    int64
-	declared int64
+// putBody is the body Put hands to the SDK, and the number of bytes that body
+// will send.
+//
+// The length is known before the call rather than counted during it, and the
+// reason is the SDK. The AWS SDK computes a request checksum for PutObject by
+// reading the body and then REWINDING it (service/internal/checksum's
+// compute-input-checksum middleware), and when the endpoint is plain HTTP it has
+// no trailing-checksum alternative to fall back on: over TLS it can send a
+// trailing checksum while the stream goes past, over HTTP it cannot, so the body
+// has to be seekable. An io.Pipe here therefore fails with "unseekable stream is
+// not supported without TLS and trailing checksum" - and the same middleware
+// re-reads a seekable body, so a count taken across the call is not a number the
+// adapter can report with a straight face either.
+//
+// So every body this adapter uploads is rewound, and the length is the length of
+// the part that gets sent. That is a stronger statement than a byte count: it is
+// the number the upload boundary is comparing against, computed from the same
+// stream the server will read.
+type putBody interface {
+	io.Reader
+	// length is how many bytes the SDK will read from this body.
+	length() int64
 }
 
-func (r *countingReader) Read(p []byte) (int, error) {
-	read, err := r.source.Read(p)
-	r.count += int64(read)
-	return read, err
-}
-
-func (r *countingReader) read() int64 {
-	if r.declared > 0 {
-		return r.declared
+// newPutBody settles the length and returns something the SDK can rewind.
+//
+// A seekable body is wrapped, not copied: Read and Seek are delegated, so a file
+// or a bytes.Reader is streamed and the caller pays for no extra copy. A body
+// that cannot seek is read into memory, because the alternative is an upload
+// that fails against every plaintext S3 endpoint for a reason that has nothing
+// to do with the object. That is a documented cost rather than a free one: the
+// buffered case holds the object in memory once. In this repository the only
+// production caller already has the whole object in memory before it calls
+// (upload.go hands over a *bytes.Reader), so the buffer is a copy of something
+// the caller was holding anyway - and the local adapter, which streams to a
+// temporary file, reports the same size for the same body, which is what the
+// shared contract asserts.
+func newPutBody(body io.Reader) (putBody, error) {
+	if body == nil {
+		return nil, errors.New("the body is nil")
 	}
-	return r.count
+	seeker, ok := body.(io.ReadSeeker)
+	if !ok {
+		buffered, err := io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("the body could not be buffered: %w", err)
+		}
+		return &bufferedPutBody{reader: bytes.NewReader(buffered), remaining: int64(len(buffered))}, nil
+	}
+	// The length of the REMAINDER, not of the whole thing and not the offset. The
+	// SDK records the position the body was handed over at and uploads from
+	// there (smithy-go's streamLength does this deliberately, so an application
+	// that has already read a header off a file uploads the rest), and the size
+	// this adapter reports has to be the size of the same part.
+	start, err := seeker.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, fmt.Errorf("the body's position could not be read: %w", err)
+	}
+	end, err := seeker.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("the body's length could not be read: %w", err)
+	}
+	if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("the body could not be rewound: %w", err)
+	}
+	if end < start {
+		return nil, fmt.Errorf("the body reported a length of %d from a position of %d", end, start)
+	}
+	return &seekablePutBody{seeker: seeker, remaining: end - start}, nil
 }
+
+// seekablePutBody forwards to a body that could already seek. It exists only so
+// the SDK sees an io.Seeker, which it type-checks before it will rewind.
+type seekablePutBody struct {
+	seeker    io.ReadSeeker
+	remaining int64
+}
+
+func (b *seekablePutBody) Read(p []byte) (int, error) { return b.seeker.Read(p) }
+
+func (b *seekablePutBody) Seek(offset int64, whence int) (int64, error) {
+	return b.seeker.Seek(offset, whence)
+}
+
+func (b *seekablePutBody) length() int64 { return b.remaining }
+
+// bufferedPutBody is the non-seekable case, already read into memory. bytes.Reader
+// is seekable, so the SDK can rewind it, and the length is remembered here rather
+// than asked of the reader afterwards: by the time the call returns, the reader
+// has been drained and would report zero.
+type bufferedPutBody struct {
+	reader    *bytes.Reader
+	remaining int64
+}
+
+func (b *bufferedPutBody) Read(p []byte) (int, error) { return b.reader.Read(p) }
+
+func (b *bufferedPutBody) length() int64 { return b.remaining }

@@ -153,6 +153,7 @@ that ran no test at all.
 | `make test` | web unit tests, the Go suite without a database, pytest | no |
 | `make verify` | all of the above, plus `make docs-check` | no |
 | `make db-up` / `make db-down` | the container is running or stopped | n/a |
+| `make storage-up` / `make storage-down` | a local MinIO is running, with the storage suite's bucket created, or stopped. Opt-in: nothing else in this table starts it | n/a |
 | `make db-migrate` | the schema matches the tree, atomically and checksummed | yes |
 | `make db-seed` | `db/seeds/001_demo.sql` applies cleanly | yes |
 | `make migration-check` | drift: nothing pending, every recorded checksum equals the file on disk | yes, read-only |
@@ -227,6 +228,8 @@ the file to copy to `.env`.
 | `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_USE_PATH_STYLE` | the S3 driver | the object store. Names only; a credential value belongs in the deployment, not in this repository |
 | `PUBLIC_BASE_URL` | the API | the external address used to build signed object URLs; unset means signed download is unavailable, which is different from storage being unavailable |
 | `STORAGE_SIGNING_SECRET` | the local driver | the signing secret. Unset generates one per process, which is right for development and wrong for a deployment |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET`, `MINIO_PORT`, `MINIO_CONSOLE_PORT` | the opt-in `storage` compose profile | the local MinIO's development credentials, bucket and ports. Non-secret defaults, the same convention as `POSTGRES_PASSWORD`, and the only object storage in the default stack's neighbourhood - nothing starts them but `make storage-up` |
+| `STORAGE_TEST_ENDPOINT`, `STORAGE_TEST_BUCKET`, `STORAGE_TEST_ACCESS_KEY_ID`, `STORAGE_TEST_SECRET_ACCESS_KEY` | the MinIO case of the storage contract suite | whether the storage suite runs against a real S3 endpoint or skips. No `make` target sets them, so `make verify` never needs object storage |
 | `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_AUTH_PER_MINUTE`, `RATE_LIMIT_UPLOAD_PER_MINUTE`, `RATE_LIMIT_SUGGESTION_PER_MINUTE`, `RATE_LIMIT_RESEARCH_PER_MINUTE`, `RATE_LIMIT_DEFAULT_PER_MINUTE` | the API | the abuse budgets. Per client address per minute, in-process, not shared between replicas |
 | `TELEMETRY_METRICS_ENABLED`, `TELEMETRY_METRICS_ADDR`, `TELEMETRY_SERVICE_NAME` | the API, the workers | the `/metrics` listener. Off by default, and the label set is a fixed enumeration that cannot carry a query, a name or any content |
 | `DEMO_MODE` | the API | whether the static dashboard and tree list may be served at all |
@@ -247,7 +250,8 @@ services/ai-research/     the AI service and its evaluation harness
 db/migrations/            the schema, one file per version, checksummed
 db/seeds/                 the development seed
 infra/local/              the migration runner, the link checker
-docs/                     the phase status matrix and the graph benchmark record
+docs/                     the phase status matrix, the graph benchmark record, the
+                          object storage decision and R2 cutover record
 plans/                    the remediation plans and their status
 ```
 
@@ -262,6 +266,8 @@ plans/                    the remediation plans and their status
 | `make generated-check` exits 2 | `sqlc` is not installed | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1` |
 | `make security-scan` exits 2 | `gitleaks` is not installed | `brew install gitleaks` |
 | `make verify` says a database-backed test skipped | `DATABASE_URL` is unset, which is correct for the fast gate | use `make verify-full` when you meant acceptance |
+| the MinIO storage case skips | `STORAGE_TEST_ENDPOINT` is unset, which is correct when no object store is running | `COMPOSE_PROJECT_NAME=dawha make storage-up`, then from `services/core-api`: `STORAGE_TEST_ENDPOINT=http://localhost:59000 go test ./platform/storage -count=1`. The S3 API is on 59000 and the console on 59001 |
+| `make storage-up` fails to bind 59000 or 59001 | something else on the machine already publishes that port | `MINIO_PORT=… MINIO_CONSOLE_PORT=… make storage-up`, and pass the same port to `STORAGE_TEST_ENDPOINT` |
 | `make db-verify` exits 2 | `DATABASE_URL` is unset | it refuses to run, because a suite that silently skips is what it exists to catch |
 | the browser is refused the session cookie | `WEB_ORIGIN` does not match the web origin exactly | make them the same origin, port included |
 | a Go test fails on a "fixture schema survived the run" audit | a test did not clean up | the audit is right; the test is the bug |
@@ -279,3 +285,7 @@ plans/                    the remediation plans and their status
 - The graph benchmark in [docs/graph-benchmark.md](docs/graph-benchmark.md) is one
   machine, one container, synthetic graphs and single-threaded requests. It closes
   no decision; it records what was measured.
+- The S3 adapter has been run against a local MinIO and nothing else.
+  [docs/storage-backends.md](docs/storage-backends.md) is the record, and it says in
+  its own words which R2 behaviours that run says nothing about - no R2 bucket has
+  ever been contacted. "The storage tests are green" is a sentence about MinIO.

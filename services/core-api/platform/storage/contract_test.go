@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -125,26 +127,52 @@ func storeContract(t *testing.T, name string, newStore func(t *testing.T) Store)
 		if !strings.Contains(signed, "sources/demo/signed.txt") {
 			t.Fatalf("the signed url does not name its object: %q", signed)
 		}
-		// A presigned URL is a capability. The two things that would turn it into
-		// a permanent address are an expiry that does not expire and a signature
-		// that does not bind the key, and both are asserted here rather than
-		// described in a comment.
+		// A presigned URL is a capability. The things that would turn it into a
+		// permanent address are an expiry that does not expire and a signature
+		// that does not bind what it authorises, and both are asserted here rather
+		// than described in a comment.
 		if parsed.Query().Get("X-Amz-Expires") == "" && parsed.Query().Get("expires") == "" {
 			t.Fatalf("the signed url carries no expiry: %q", signed)
 		}
-		other, err := store.SignedURL(ctx, "sources/demo/signed.txt", time.Minute)
-		if err != nil {
-			t.Fatalf("SignedURL: %v", err)
-		}
-		if other != signed {
-			t.Fatalf("two signatures over the same key and expiry differ, so the signature is not derived from them")
-		}
+		// The signature binds the key.
 		differentKey, err := store.SignedURL(ctx, "sources/demo/other.txt", time.Minute)
 		if err != nil {
 			t.Fatalf("SignedURL: %v", err)
 		}
 		if signatureFor(signed) == signatureFor(differentKey) {
 			t.Fatalf("the signature does not bind the key: %q and %q share it", signed, differentKey)
+		}
+		// The signature binds the expiry. A signature that ignored the lifetime
+		// could be replayed with a longer one and the ceiling would be a comment.
+		longer, err := store.SignedURL(ctx, "sources/demo/signed.txt", 2*time.Minute)
+		if err != nil {
+			t.Fatalf("SignedURL: %v", err)
+		}
+		if signatureFor(signed) == signatureFor(longer) {
+			t.Fatalf("the signature does not bind the expiry: a one minute and a two minute link over the same key share it")
+		}
+		// Two presigns of the same key and expiry agree, or differ only in the
+		// time value they were signed at and the signature that covers it.
+		//
+		// It is NOT the case that they must be byte-identical, and this is the
+		// second thing a live endpoint taught this suite. A signature covers a
+		// clock reading: SigV4 signs X-Amz-Date, and the local signer's deadline
+		// is a unix second, so two presigns a microsecond apart can straddle a
+		// second and MUST differ. A contract that demanded byte-identical URLs
+		// would have been a contract no real signer can satisfy - it would have
+		// passed here forever and failed on the first MinIO run that crossed a
+		// second boundary. TestMinIOPresignedURLIsCheckedByTheServer is where the
+		// second boundary is proved against a server that verifies signatures,
+		// rather than argued about here.
+		other, err := store.SignedURL(ctx, "sources/demo/signed.txt", time.Minute)
+		if err != nil {
+			t.Fatalf("SignedURL: %v", err)
+		}
+		switch difference := presignDifference(signed, other); difference {
+		case "identical":
+		case "only the signed time and its signature":
+		default:
+			t.Fatalf("two presigns of the same key and expiry %s, so the signature is not a function of the key, the expiry and the moment it was signed", difference)
 		}
 	})
 
@@ -176,6 +204,59 @@ func signatureFor(signed string) string {
 		return value
 	}
 	return query.Get("signature")
+}
+
+// signedTimeParameters are the query parameters whose values are a moment in time
+// and are covered by the signature: SigV4 signs the second it signed at and the
+// lifetime it was given, and the local signer signs the deadline it computed.
+// Every one of them is derived from the clock, so every one of them is allowed to
+// differ between two presigns of the same key and expiry.
+var signedTimeParameters = []string{"X-Amz-Date", "X-Amz-Expires", "expires"}
+
+// presignDifference reports how two presigns of the same object and expiry
+// relate, in words the caller can put in a failure message.
+//
+// It returns "identical", "only the signed time and its signature" when the two
+// URLs differ in nothing but a signed clock reading and the signature covering
+// it, and otherwise a description of the parameters that differ. Anything in that
+// third group is a signer that is putting something into the URL that the
+// signature does not account for.
+func presignDifference(first, second string) string {
+	if first == second {
+		return "identical"
+	}
+	firstURL, err := url.Parse(first)
+	if err != nil {
+		return fmt.Sprintf("do not parse (%v)", err)
+	}
+	secondURL, err := url.Parse(second)
+	if err != nil {
+		return fmt.Sprintf("do not parse (%v)", err)
+	}
+	firstQuery, secondQuery := firstURL.Query(), secondURL.Query()
+	allowed := map[string]bool{"X-Amz-Signature": true, "signature": true}
+	for _, name := range signedTimeParameters {
+		allowed[name] = true
+	}
+	var unexpected []string
+	for name := range firstQuery {
+		if firstQuery.Get(name) == secondQuery.Get(name) {
+			continue
+		}
+		if !allowed[name] {
+			unexpected = append(unexpected, name)
+		}
+	}
+	for name := range secondQuery {
+		if _, inFirst := firstQuery[name]; !inFirst && !allowed[name] {
+			unexpected = append(unexpected, name)
+		}
+	}
+	if len(unexpected) > 0 {
+		sort.Strings(unexpected)
+		return "differ in " + strings.Join(unexpected, ", ")
+	}
+	return "only the signed time and its signature"
 }
 
 func TestLocalStoreContract(t *testing.T) {

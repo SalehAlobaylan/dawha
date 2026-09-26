@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark e2e e2e-clean
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark e2e e2e-clean storage-up storage-down
 
 install:
 	npm install
@@ -53,6 +53,49 @@ db-up:
 
 db-down:
 	docker compose down
+
+# storage-up starts MinIO, and only MinIO. It is NOT in `verify`, `verify-full`,
+# `dev` or `e2e`, and the service it starts is behind the compose `storage`
+# profile so `docker compose up db` cannot see it. The reason it exists is
+# services/core-api/platform/storage/s3.go: that adapter has never spoken to a
+# real S3 implementation, and a test double cannot prove that a SigV4 presigned
+# URL is accepted by a server. One command, then run the storage suite with the
+# endpoint set:
+#
+#   COMPOSE_PROJECT_NAME=dawha make storage-up
+#   cd services/core-api && \
+#     STORAGE_TEST_ENDPOINT=http://localhost:59000 go test ./platform/storage -count=1
+#
+# STORAGE_TEST_ENDPOINT is the switch the MinIO case keys on, in the
+# AI_RESEARCH_URL pattern plan 006 established: unset, the case skips and says
+# which variable is missing; set, it runs. That is what keeps the same contract
+# suite meaningful in both worlds instead of running twice with two sets of rules.
+#
+# The credentials are non-secret development defaults, overridable with
+# MINIO_ROOT_USER/MINIO_ROOT_PASSWORD and documented in .env.example. The bucket
+# name is MINIO_BUCKET and defaults to dawha-storage-test.
+#
+# COMPOSE_PROJECT_NAME=dawha for the same reason every other Docker target in
+# this file wants it: without it compose derives a second project name from the
+# working directory and starts a second stack.
+STORAGE_BUCKET ?= dawha-storage-test
+storage-up:
+	docker compose --profile storage up -d --wait minio
+	docker compose --profile storage run --rm minio-init
+	@printf 'MinIO is on http://localhost:%s (S3) and http://localhost:%s (console), bucket %s.\n' "$${MINIO_PORT:-59000}" "$${MINIO_CONSOLE_PORT:-59001}" "$(STORAGE_BUCKET)"
+	@printf 'Run the storage suite with STORAGE_TEST_ENDPOINT set; see docs/storage-backends.md.\n'
+	@printf '  cd services/core-api && STORAGE_TEST_ENDPOINT=http://localhost:%s go test ./platform/storage -count=1\n' "$${MINIO_PORT:-59000}"
+
+# storage-down stops MinIO and removes its containers. It deliberately leaves the
+# dawha_minio volume, exactly as `db-down` leaves dawha_postgres: a `down` that
+# deleted a developer's uploaded files would be a different target. `docker
+# compose --profile storage down -v` removes the volume too, and so does
+# `docker volume rm dawha_dawha_minio`.
+#
+# It also touches nothing else in the project: `rm -sf` on the two service names
+# rather than `compose down`, which would also stop the database.
+storage-down:
+	docker compose --profile storage rm -sf minio minio-init
 
 db-migrate: db-up
 	@infra/local/migrate.sh

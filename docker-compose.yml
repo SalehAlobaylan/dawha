@@ -18,5 +18,61 @@ services:
       timeout: 5s
       retries: 10
 
+  # Object storage, OPT IN. This service is behind the `storage` profile, so
+  # `docker compose up db`, `make db-up` and `docker compose down` never see it
+  # and the default local stack is unchanged by it. It exists for one reason:
+  # to prove services/core-api/platform/storage/s3.go against a real S3
+  # implementation. See docs/storage-backends.md and `make storage-up`.
+  #
+  # The credentials are non-secret development defaults, the same way
+  # POSTGRES_PASSWORD is a documented `dawha_local`. They are overridable by
+  # environment variable and no real credential belongs in this file.
+  minio:
+    profiles: ["storage"]
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dawha_local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dawha_local}
+    ports:
+      - "${MINIO_PORT:-59000}:9000"
+      - "${MINIO_CONSOLE_PORT:-59001}:9001"
+    volumes:
+      - dawha_minio:/data
+    healthcheck:
+      # `mc ready local` is the check MinIO documents for itself: the server
+      # image bundles mc, and "ready" is a successful authenticated call rather
+      # than a listening socket, which is what a started-but-not-initialised
+      # server looks like from the host.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Bucket creation, once, on demand. The bucket the MinIO contract suite writes
+  # to is created here rather than by the suite, so a bucket that is missing is a
+  # compose problem with one log line rather than a test failure. `mc mb
+  # --ignore-existing` is idempotent, so `make storage-up` on an existing volume
+  # is a no-op here.
+  minio-init:
+    profiles: ["storage"]
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "local/$$MINIO_BUCKET" &&
+        mc anonymous set none "local/$$MINIO_BUCKET" &&
+        echo "bucket ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dawha_local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dawha_local}
+      MINIO_BUCKET: ${MINIO_BUCKET:-dawha-storage-test}
+
 volumes:
   dawha_postgres:
+  dawha_minio:

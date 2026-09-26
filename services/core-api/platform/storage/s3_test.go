@@ -37,6 +37,14 @@ import (
 // a presigned URL carries the object key and a signature and an expiry, the
 // signature is derived from the key and the expiry, and a missing key comes back
 // as a typed NoSuchKey rather than a string.
+//
+// It also has a clock, which it did not have until a real MinIO said so. A SigV4
+// presigned URL carries the second it was signed at and the signature covers it,
+// so two presigns of one key and expiry a microsecond apart can straddle a second
+// and must differ. A stub with no clock cannot reproduce that, and a stub that
+// cannot reproduce it lets the contract suite assert something no real signer
+// satisfies - which is exactly what the byte-identical assertion in
+// contract_test.go used to do.
 type stub struct {
 	mu      sync.Mutex
 	objects map[string][]byte
@@ -46,6 +54,9 @@ type stub struct {
 	presignExpiry map[string]time.Duration
 	putKeys       []string
 	deleted       []string
+	// now is the signing clock, injectable so a test can walk it across a second
+	// boundary without sleeping.
+	now func() time.Time
 }
 
 func newStub() *stub {
@@ -53,6 +64,7 @@ func newStub() *stub {
 		objects:       map[string][]byte{},
 		types:         map[string]string{},
 		presignExpiry: map[string]time.Duration{},
+		now:           time.Now,
 	}
 }
 
@@ -111,12 +123,15 @@ func (s *stub) PresignGetObject(_ context.Context, in *s3.GetObjectInput, optFns
 	s.mu.Lock()
 	s.presignExpiry[key] = options.Expires
 	s.mu.Unlock()
-	// S3's presigned GET shape: the key in the path, a signature over the key and
-	// the expiry, and the expiry itself in the query.
-	signature := hmacHex([]byte("stub-secret"), key+"\n"+strconv.FormatInt(int64(options.Expires/time.Second), 10))
+	// S3's presigned GET shape: the key in the path, a signature over the key, the
+	// expiry and the second it was signed at, and both time values in the query.
+	signedAt := s.now().UTC().Format("20060102T150405Z")
+	seconds := strconv.FormatInt(int64(options.Expires/time.Second), 10)
+	signature := hmacHex([]byte("stub-secret"), key+"\n"+seconds+"\n"+signedAt)
 	query := url.Values{}
 	query.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	query.Set("X-Amz-Expires", strconv.FormatInt(int64(options.Expires/time.Second), 10))
+	query.Set("X-Amz-Date", signedAt)
+	query.Set("X-Amz-Expires", seconds)
 	query.Set("X-Amz-Signature", signature)
 	return &v4.PresignedHTTPRequest{
 		Method:       "GET",
@@ -132,8 +147,8 @@ func hmacHex(key []byte, message string) string {
 }
 
 // encodeInOrder keeps the query in a stable order so two presigns of the same key
-// and expiry produce byte-identical URLs, which is what the contract's
-// determinism assertion depends on.
+// and expiry produce byte-identical URLs whenever they were signed in the same
+// second, which is what the contract's determinism assertion depends on.
 func encodeInOrder(query url.Values) string {
 	keys := make([]string, 0, len(query))
 	for key := range query {
@@ -204,8 +219,47 @@ func TestS3StoreMapsAMissingKeyToErrNotFound(t *testing.T) {
 	}
 }
 
-func TestS3StoreAsksTheSdkForExactlyTheSharedCeiling(t *testing.T) {
-	// MaxSignedURLExpiry is 15 minutes. The SDK would sign for up to a day; the
+// TestS3StorePresignsDifferOnlyAcrossASigningSecond covers the branch the live
+// endpoint forced, without a live endpoint.
+//
+// The contract asserts that two presigns of one key and expiry are either
+// identical or differ in nothing but a signed clock reading and the signature
+// covering it. Against the double, only the first branch is ever reached, so
+// without this the "differs, and only there" case would be an assertion nothing
+// could ever fail. Walking the double's clock is what makes it reachable; the
+// MinIO case is what proved it was needed.
+func TestS3StorePresignsDifferOnlyAcrossASigningSecond(t *testing.T) {
+	double := newStub()
+	store := newS3WithAPI("bucket", double)
+	signedAt := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	double.now = func() time.Time { return signedAt }
+
+	first, err := store.SignedURL(context.Background(), "sources/demo/file.txt", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.SignedURL(context.Background(), "sources/demo/file.txt", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if difference := presignDifference(first, again); difference != "identical" {
+		t.Fatalf("two presigns in the same signing second are %s, want byte-identical", difference)
+	}
+
+	double.now = func() time.Time { return signedAt.Add(time.Second) }
+	later, err := store.SignedURL(context.Background(), "sources/demo/file.txt", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if difference := presignDifference(first, later); difference != "only the signed time and its signature" {
+		t.Fatalf("presigns one second apart are %s, want a difference confined to the signing second and its signature", difference)
+	}
+	if signatureFor(first) == signatureFor(later) {
+		t.Fatal("the signature is the same in two different signing seconds, so it does not cover the moment it was signed")
+	}
+}
+
+func TestS3StoreAsksTheSdkForExactlyTheSharedCeiling(t *testing.T) { // MaxSignedURLExpiry is 15 minutes. The SDK would sign for up to a day; the
 	// adapter asks for 15, so the ceiling is a property of this repository and
 	// not of whichever cloud provider somebody deploys onto. Asserted on what the
 	// adapter asks for, because the returned URL is the SDK's business.
