@@ -9,19 +9,39 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// JobType is the queue type an entity resolution run waits as.
+//
+// It is the queue's own name for the work, not the run's: one job drives one run
+// to a terminal state, and a client that wants to know how that is going reads
+// the run, which is where the stages are.
+const JobType = "entity_resolution_run"
+
 type Service struct {
 	Pool *pgxpool.Pool
 	AI   ai.Provider
+	// Jobs is what turns a run into queued work. A service without it can still
+	// score, but it cannot accept a run, and refusing to accept one is better
+	// than accepting a run nobody has agreed to finish.
+	Jobs *jobs.Service
 }
 
 func NewService(pool *pgxpool.Pool, provider ai.Provider) *Service {
 	return &Service{Pool: pool, AI: provider}
+}
+
+// WithQueue is the constructor the API uses. The queue is a separate call rather
+// than a constructor argument so a caller that genuinely only wants the scoring
+// has to say so, instead of passing nil and finding out later.
+func (s *Service) WithQueue(queue *jobs.Service) *Service {
+	s.Jobs = queue
+	return s
 }
 
 var runRoles = []string{"researcher", "moderator", "admin"}
@@ -34,14 +54,35 @@ func (s *Service) ready() error {
 	return nil
 }
 
-func (s *Service) Run(ctx context.Context, actorID string, input RunInput) (Run, error) {
+func (s *Service) readyToQueue() error {
 	if err := s.ready(); err != nil {
+		return err
+	}
+	if s.Jobs == nil {
+		return ErrQueueUnavailable
+	}
+	return nil
+}
+
+// Run accepts a run and hands it to the queue.
+//
+// This is the whole of the request thread now: decide whether the caller may ask
+// for this at all, write the run, write the job, commit both. Everything slow
+// happens in a worker, which is the point - a person pressing a button to scan
+// for duplicates should get an answer in milliseconds and a run they can watch,
+// not a request that either times out or succeeds after holding a connection for
+// as long as the scoring takes.
+//
+// The authorization check is inside the transaction, before the first write, so a
+// run row cannot exist for an actor who was not allowed to create it even for the
+// length of one statement. The run and the job are written together, so a run can
+// never be accepted with nothing queued behind it or queued with no run to point
+// at.
+func (s *Service) Run(ctx context.Context, actorID string, input RunInput) (Run, error) {
+	if err := s.readyToQueue(); err != nil {
 		return Run{}, err
 	}
 	actorID = strings.TrimSpace(actorID)
-	if err := requireRole(ctx, s.Pool, actorID, runRoles...); err != nil {
-		return Run{}, err
-	}
 	entityType := EntityType(strings.ToLower(strings.TrimSpace(string(input.EntityType))))
 	if entityType == "" {
 		entityType = EntityAll
@@ -49,58 +90,316 @@ func (s *Service) Run(ctx context.Context, actorID string, input RunInput) (Run,
 	if entityType != EntityPerson && entityType != EntityFamily && entityType != EntityAll {
 		return Run{}, ErrValidation
 	}
-	runID := uuid.New()
-	var createdAt, updatedAt time.Time
-	if err := s.Pool.QueryRow(ctx, `
-		INSERT INTO entity_resolution_runs (id, requested_by, entity_type, status, algorithm_version, normalization_version)
-		VALUES ($1, $2, $3, 'running', $4, $5)
-		RETURNING created_at, updated_at
-	`, runID, actorID, entityType, AlgorithmVersion, NormalizationVersion).Scan(&createdAt, &updatedAt); err != nil {
-		return Run{}, err
-	}
-	snapshots, err := s.loadSnapshots(ctx, entityType)
-	if err != nil {
-		_ = s.markRunFailed(ctx, runID, err)
-		return Run{}, err
-	}
-	candidates, blocks, modelVersion := s.generateCandidates(ctx, snapshots)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
-		_ = s.markRunFailed(ctx, runID, err)
 		return Run{}, err
 	}
 	defer tx.Rollback(ctx)
-	for _, block := range blocks {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO entity_resolution_blocks (run_id, entity_type, entity_id, block_type, block_key)
-			VALUES ($1, $2, $3, $4, $5)
-		`, runID, block.EntityType, block.EntityID, block.Kind, block.Key); err != nil {
-			_ = s.markRunFailed(ctx, runID, err)
-			return Run{}, err
-		}
+	if err := requireRole(ctx, tx, actorID, runRoles...); err != nil {
+		return Run{}, err
 	}
-	for _, candidate := range candidates {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO entity_resolution_candidates (run_id, entity_type, left_entity_id, right_entity_id, left_name_ar, right_name_ar, match_class, score, score_components, matching_signals, conflicting_signals, explanation_ar)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		`, runID, candidate.Left.EntityType, candidate.Left.ID, candidate.Right.ID, candidate.Left.Name, candidate.Right.Name, candidate.MatchClass, candidate.Score, mustJSON(candidate.ScoreComponents), mustJSON(candidate.MatchingSignals), mustJSON(candidate.ConflictingSignals), candidate.ExplanationAR); err != nil {
-			_ = s.markRunFailed(ctx, runID, err)
-			return Run{}, err
-		}
+	runID := uuid.New()
+	var result Run
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO entity_resolution_runs (id, requested_by, entity_type, status, stage, algorithm_version, normalization_version)
+		VALUES ($1, $2, $3, 'queued', 'queued', $4, $5)
+		RETURNING created_at, updated_at
+	`, runID, actorID, entityType, AlgorithmVersion, NormalizationVersion).Scan(&result.CreatedAt, &result.UpdatedAt); err != nil {
+		return Run{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE entity_resolution_runs
-		SET status = 'succeeded', model_version = NULLIF($1, ''), candidate_count = $2, updated_at = now()
-		WHERE id = $3
-	`, modelVersion, len(candidates), runID); err != nil {
-		_ = s.markRunFailed(ctx, runID, err)
+	// The idempotency key is the run, so a client that retries its POST - or a
+	// proxy that sends it twice - gets the same run back rather than a second scan
+	// competing with the first over the same candidate pairs.
+	enqueued, err := s.Jobs.EnqueueTx(ctx, tx, jobs.EnqueueInput{
+		Type:           JobType,
+		Payload:        encodeJobPayload(runID),
+		Priority:       5,
+		IdempotencyKey: "entity-resolution-run:" + runID.String(),
+		MaxAttempts:    3,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE entity_resolution_runs SET job_id = $1, updated_at = now() WHERE id = $2`, enqueued.Job.ID, runID); err != nil {
 		return Run{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		_ = s.markRunFailed(ctx, runID, err)
 		return Run{}, err
 	}
-	return Run{ID: runID.String(), RequestedBy: actorID, EntityType: entityType, Status: "succeeded", AlgorithmVersion: AlgorithmVersion, NormalizationVersion: NormalizationVersion, ModelVersion: modelVersion, CandidateCount: len(candidates), CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
+	return Run{
+		ID:                   runID.String(),
+		RequestedBy:          actorID,
+		EntityType:           entityType,
+		Status:               RunQueued,
+		Stage:                StageQueued,
+		AlgorithmVersion:     AlgorithmVersion,
+		NormalizationVersion: NormalizationVersion,
+		JobID:                enqueued.Job.ID,
+		CreatedAt:            result.CreatedAt,
+		UpdatedAt:            result.UpdatedAt,
+	}, nil
+}
+
+// ProcessRun performs the scoring a queued run is waiting for.
+//
+// It is the worker half of Run, and it holds the same lease the job row does, so
+// the same rules apply as everywhere else: nothing is written unless the lease
+// says this attempt still owns the run, and the run only reaches succeeded once
+// every stage has been written.
+//
+// The work is split into two committed checkpoints - the blocking keys first,
+// then the candidates - so a failure halfway leaves a run that says how far it
+// got instead of a run that looks finished. Both checkpoints are idempotent:
+// blocks are keyed by run and key, candidates by run and pair, and both are
+// written with ON CONFLICT DO NOTHING, so a retry that does reach them again adds
+// nothing to what is already there.
+func (s *Service) ProcessRun(ctx context.Context, claim jobs.Lease, runID string) error {
+	if err := s.readyToQueue(); err != nil {
+		return err
+	}
+	id, err := uuid.Parse(strings.TrimSpace(runID))
+	if err != nil {
+		return ErrNotFound
+	}
+	heartbeat, workCtx, err := s.Jobs.StartHeartbeat(ctx, claim)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = heartbeat.Stop() }()
+	ctx = workCtx
+
+	entityType, requestedBy, err := s.claimRun(ctx, id, claim)
+	if errors.Is(err, errRunSuperseded) {
+		// Another attempt already owns this run, or it is already finished. There
+		// is nothing to do and nothing to report as a failure.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	snapshots, err := s.loadSnapshots(ctx, entityType)
+	if err != nil {
+		return s.refuseIfLost(heartbeat, s.markRunFailed(ctx, claim, id, err))
+	}
+	if err := heartbeat.Check(); err != nil {
+		return err
+	}
+	candidates, blocks, modelVersion := s.generateCandidates(ctx, snapshots)
+	if err := s.persistBlocks(ctx, claim, id, blocks); err != nil {
+		return s.refuseIfLost(heartbeat, s.markRunFailed(ctx, claim, id, err))
+	}
+	if err := heartbeat.Check(); err != nil {
+		return err
+	}
+	if err := s.persistCandidates(ctx, claim, id, requestedBy, candidates, modelVersion); err != nil {
+		return s.refuseIfLost(heartbeat, s.markRunFailed(ctx, claim, id, err))
+	}
+	return nil
+}
+
+// errRunSuperseded says the run is not this attempt's to work on.
+var errRunSuperseded = errors.New("entity resolution run is owned by another attempt")
+
+// claimRun moves the run to running and proves the lease in the same statement.
+//
+// The condition is `status <> 'succeeded' AND job_id = $1`, and the two states it
+// admits beyond queued are deliberate rather than oversights.
+//
+// A run left reading as running belongs to a previous attempt at *this same job*:
+// the job id is the only thing that drives a run, and this attempt holds a claim on
+// that job, so the attempt that held the previous claim no longer has one. A run
+// that failed for the same reason is a retry's job to pick up, which is the whole
+// point of a failure being recorded rather than the run being deleted. Leaving
+// either unclaimable would strand the run: every attempt would decline to touch it,
+// the job would finish having done nothing, and the run would sit on a status
+// nothing would ever move.
+//
+// A run under a different job, or one already succeeded, is somebody else's and is
+// left alone.
+func (s *Service) claimRun(ctx context.Context, runID uuid.UUID, claim jobs.Lease) (EntityType, string, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE entity_resolution_runs
+		SET status = 'running', stage = 'scoring', job_id = $1, started_at = COALESCE(started_at, now()), error = NULL, updated_at = now()
+		WHERE id = $2 AND job_id = $1 AND status <> 'succeeded'
+	`, claim.JobID, runID)
+	if err != nil {
+		return "", "", err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", "", errRunSuperseded
+	}
+	if err := s.Jobs.HoldLease(ctx, tx, claim); err != nil {
+		return "", "", err
+	}
+	var entityType, requestedBy string
+	if err := tx.QueryRow(ctx, `SELECT entity_type, requested_by::text FROM entity_resolution_runs WHERE id = $1`, runID).Scan(&entityType, &requestedBy); err != nil {
+		return "", "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", err
+	}
+	return EntityType(entityType), requestedBy, nil
+}
+
+// persistBlocks is the first checkpoint: the keys the scoring will compare, and
+// nothing else. It is committed on its own so a run that dies while scoring says
+// "scoring" rather than having left the run looking untouched.
+func (s *Service) persistBlocks(ctx context.Context, claim jobs.Lease, runID uuid.UUID, blocks []blockKey) error {
+	return s.writeCheckpoint(ctx, claim, runID, "scoring", func(tx pgx.Tx) error {
+		for _, item := range blocks {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO entity_resolution_blocks (run_id, entity_type, entity_id, block_type, block_key)
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT DO NOTHING
+			`, runID, item.EntityType, item.EntityID, item.Kind, item.Key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// persistCandidates is the last checkpoint, and the only one that makes the run
+// succeeded. It is in the same transaction as the status change, so a run can
+// never read as succeeded with a candidate count that was not written.
+func (s *Service) persistCandidates(ctx context.Context, claim jobs.Lease, runID uuid.UUID, requestedBy string, candidates []generatedCandidate, modelVersion string) error {
+	return s.writeCheckpoint(ctx, claim, runID, "complete", func(tx pgx.Tx) error {
+		for _, candidate := range candidates {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO entity_resolution_candidates (run_id, entity_type, left_entity_id, right_entity_id, left_name_ar, right_name_ar, match_class, score, score_components, matching_signals, conflicting_signals, explanation_ar)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				ON CONFLICT (run_id, entity_type, left_entity_id, right_entity_id) DO NOTHING
+			`, runID, candidate.Left.EntityType, candidate.Left.ID, candidate.Right.ID, candidate.Left.Name, candidate.Right.Name, candidate.MatchClass, candidate.Score, mustJSON(candidate.ScoreComponents), mustJSON(candidate.MatchingSignals), mustJSON(candidate.ConflictingSignals), candidate.ExplanationAR); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE entity_resolution_runs
+			SET status = 'succeeded', stage = 'complete', model_version = NULLIF($1, ''), candidate_count = $2,
+			    completed_at = now(), error = NULL, updated_at = now()
+			WHERE id = $3
+		`, modelVersion, len(candidates), runID); err != nil {
+			return err
+		}
+		// The audit names the person who asked for the scan rather than the worker
+		// that ran it. The worker changed nothing a person did not already ask to be
+		// compared, and an audit row that named the worker would hide the requester -
+		// or, with no actor at all, would not be a row the schema can hold.
+		return writeAudit(ctx, tx, requestedBy, "entity_resolution_run_completed", "entity_resolution_run", runID, nil, map[string]any{
+			"status":         RunSucceeded,
+			"algorithm":      AlgorithmVersion,
+			"candidateCount": len(candidates),
+			"modelVersion":   modelVersion,
+		}, "")
+	})
+}
+
+// writeCheckpoint runs one stage of the run inside a transaction that begins by
+// proving the lease, so every stage is fenced the same way and no stage can
+// commit without the run's own progress being committed with it.
+func (s *Service) writeCheckpoint(ctx context.Context, claim jobs.Lease, runID uuid.UUID, stage string, write func(pgx.Tx) error) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.Jobs.HoldLease(ctx, tx, claim); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE entity_resolution_runs SET stage = $1, updated_at = now() WHERE id = $2 AND job_id = $3`, stage, runID, claim.JobID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// The run is no longer the one this job is driving, so this attempt has
+		// nothing to add to it.
+		return errRunSuperseded
+	}
+	if err := write(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RequeueRecovered puts the run of a job that stale recovery handed back where a
+// worker can pick it up.
+//
+// Without this a recovered job would find its run still reading as running, decide
+// it was somebody else's, and finish without doing anything - leaving the job
+// succeeded and the run claiming to be in progress forever. The window matches the
+// processor's own: a run whose start is older than this is a run whose worker is
+// gone, not a run that is merely slow.
+func (s *Service) RequeueRecovered(ctx context.Context, recovered []jobs.JobView) error {
+	for _, job := range recovered {
+		if job.Type != JobType {
+			continue
+		}
+		if _, err := s.Pool.Exec(ctx, `
+			UPDATE entity_resolution_runs
+			SET status = 'queued', stage = 'queued', started_at = NULL, error = NULL, updated_at = now()
+			WHERE id = $1 AND status = 'running' AND started_at < now() - interval '20 minutes'
+		`, job.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markRunFailed records a failure with the reason the worker actually hit.
+//
+// The run is only marked while it is still this job's run and has not succeeded,
+// because a displaced worker reporting a failure over the attempt that is now
+// making progress would be exactly the partial-work-as-done outcome this change
+// exists to prevent.
+func (s *Service) markRunFailed(ctx context.Context, claim jobs.Lease, runID uuid.UUID, cause error) error {
+	message := "entity resolution run failed"
+	if cause != nil {
+		message = "entity resolution run failed: " + cause.Error()
+	}
+	if len([]rune(message)) > 4000 {
+		message = "entity resolution run failed"
+	}
+	if err := s.holdLease(ctx, claim); err != nil {
+		return err
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		UPDATE entity_resolution_runs
+		SET status = 'failed', stage = 'failed', error = $1, completed_at = now(), updated_at = now()
+		WHERE id = $2 AND job_id = $3 AND status <> 'succeeded'
+	`, message, runID, claim.JobID); err != nil {
+		return err
+	}
+	return cause
+}
+
+func (s *Service) holdLease(ctx context.Context, claim jobs.Lease) error {
+	if !claim.Valid() {
+		return ErrQueueUnavailable
+	}
+	return s.Jobs.HoldLease(ctx, s.Pool, claim)
+}
+
+// refuseIfLost replaces a work error with the lease loss when the lease was the
+// reason. A displaced worker sees its context cancelled and would otherwise
+// report a database failure, which is a symptom; the fact that matters is that
+// the run is somebody else's now.
+func (s *Service) refuseIfLost(heartbeat *jobs.Heartbeat, err error) error {
+	if err == nil {
+		return nil
+	}
+	if lost := heartbeat.Check(); lost != nil {
+		return lost
+	}
+	return err
+}
+
+func encodeJobPayload(runID uuid.UUID) []byte {
+	return mustJSON(map[string]string{"run_id": runID.String()})
 }
 
 func (s *Service) GetRun(ctx context.Context, actorID, runID string) (Run, error) {
@@ -119,13 +418,14 @@ func (s *Service) GetRun(ctx context.Context, actorID, runID string) (Run, error
 
 func (s *Service) getRun(ctx context.Context, q queryer, id uuid.UUID) (Run, error) {
 	var result Run
-	var requestedBy string
-	var entityType, status, algorithmVersion, normalizationVersion string
+	var requestedBy, jobID string
+	var entityType, status, stage, algorithmVersion, normalizationVersion string
 	var modelVersion, runError pgtype.Text
+	var startedAt, completedAt pgtype.Timestamptz
 	if err := q.QueryRow(ctx, `
-		SELECT id::text, requested_by::text, entity_type, status, algorithm_version, normalization_version, model_version, candidate_count, error, created_at, updated_at
+		SELECT id::text, requested_by::text, COALESCE(job_id::text, ''), entity_type, status, stage, algorithm_version, normalization_version, model_version, candidate_count, error, created_at, started_at, completed_at, updated_at
 		FROM entity_resolution_runs WHERE id = $1
-	`, id).Scan(&result.ID, &requestedBy, &entityType, &status, &algorithmVersion, &normalizationVersion, &modelVersion, &result.CandidateCount, &runError, &result.CreatedAt, &result.UpdatedAt); err != nil {
+	`, id).Scan(&result.ID, &requestedBy, &jobID, &entityType, &status, &stage, &algorithmVersion, &normalizationVersion, &modelVersion, &result.CandidateCount, &runError, &result.CreatedAt, &startedAt, &completedAt, &result.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Run{}, ErrNotFound
 		}
@@ -138,6 +438,16 @@ func (s *Service) getRun(ctx context.Context, q queryer, id uuid.UUID) (Run, err
 	result.NormalizationVersion = normalizationVersion
 	result.ModelVersion = textValue(modelVersion)
 	result.Error = textValue(runError)
+	result.JobID = jobID
+	result.Stage = stage
+	if startedAt.Valid {
+		value := startedAt.Time
+		result.StartedAt = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time
+		result.CompletedAt = &value
+	}
 	return result, nil
 }
 
@@ -478,11 +788,6 @@ func (s *Service) ReverseMerge(ctx context.Context, actorID, mergeID, reason str
 		return Merge{}, err
 	}
 	return Merge{ID: mergeUUID.String(), CandidateID: candidateID.String(), EntityType: EntityType(entityType), SurvivorID: survivorID.String(), MergedID: mergedID.String(), State: "reversed", RequestedBy: requestedBy, ReasonAR: mergeReason, AppliedAt: appliedAt, ReversedBy: actorID, ReversedAt: &reversedAt, ReversalReasonAR: reason}, nil
-}
-
-func (s *Service) markRunFailed(ctx context.Context, runID uuid.UUID, cause error) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE entity_resolution_runs SET status = 'failed', error = $1, updated_at = now() WHERE id = $2`, "entity resolution run failed", runID)
-	return err
 }
 
 func reviewDecision(value string) (string, ReviewStatus, error) {

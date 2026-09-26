@@ -3,6 +3,7 @@ package testsupport
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -234,6 +235,27 @@ func (f *Fixture) Ctx() context.Context { return f.ctx }
 
 // Schema is the isolated schema name, for assertions and diagnostics.
 func (f *Fixture) Schema() string { return f.schema }
+
+// DatabaseURL is a connection string that lands in this fixture's schema.
+//
+// It exists for the one thing a pool cannot do: hand the same isolated schema to
+// another process. A test that starts the real consumer binary needs a child
+// process to see the rows the test wrote, and a child process reads a URL rather
+// than a pool. The search_path travels in the URL for the same reason the pool
+// sets it as a runtime parameter - the schema is where the tables are, and
+// everything else, including the shared extensions, is on public.
+func (f *Fixture) DatabaseURL() string {
+	f.t.Helper()
+	base := strings.TrimSpace(os.Getenv(DatabaseURLEnv))
+	if base == "" {
+		f.t.Fatal("DatabaseURL was called with " + DatabaseURLEnv + " unset")
+	}
+	searchPath := url.QueryEscape(f.schema + ",public")
+	if strings.Contains(base, "?") {
+		return base + "&search_path=" + searchPath
+	}
+	return base + "?search_path=" + searchPath
+}
 
 // Tag is this fixture's unique marker.
 func (f *Fixture) Tag() string { return f.tag }

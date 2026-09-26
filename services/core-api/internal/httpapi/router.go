@@ -57,6 +57,14 @@ type normalizeNameResponse struct {
 func NewRouter(dependencies Dependencies) http.Handler {
 	mux := http.NewServeMux()
 	healthHandler := health.Handler{Pool: dependencies.DB}
+	// The queue is resolved first because three of the services below hand work to
+	// it rather than doing it themselves, and a service that accepts work needs a
+	// queue at construction time rather than discovering at request time that
+	// nobody has agreed to finish what it accepted.
+	jobsService := dependencies.Jobs
+	if jobsService == nil {
+		jobsService = jobs.NewService(dependencies.DB)
+	}
 	authService := auth.NewService(dependencies.DB)
 	authHandler := auth.Handler{Service: authService, SecureCookies: dependencies.SecureCookies}
 	treeService := trees.NewService(dependencies.DB)
@@ -69,7 +77,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	questionHandler := questionHandler{Service: questionService, Auth: authService}
 	dictionaryService := dictionary.NewService(dependencies.DB)
 	dictionaryHandler := dictionaryHandler{Service: dictionaryService, Auth: authService}
-	entityResolutionService := entityresolution.NewService(dependencies.DB, dependencies.AI)
+	entityResolutionService := entityresolution.NewService(dependencies.DB, dependencies.AI).WithQueue(jobsService)
 	entityResolutionHandler := entityResolutionHandler{Service: entityResolutionService, Auth: authService}
 	geographyService := geography.NewService(dependencies.DB)
 	geographyHandler := geographyHandler{Service: geographyService, Auth: authService}
@@ -77,12 +85,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	searchHandler := searchHandler{Service: searchService, Auth: authService}
 	researchService := research.NewService(dependencies.DB, dependencies.AI)
 	researchHandler := researchHandler{Service: researchService, Auth: authService, Logger: dependencies.Logger}
-	researchAgentService := researchagent.NewService(dependencies.DB)
+	researchAgentService := researchagent.NewService(dependencies.DB).WithQueue(jobsService)
 	researchAgentHandler := researchAgentHandler{Service: researchAgentService, Auth: authService}
-	jobsService := dependencies.Jobs
-	if jobsService == nil {
-		jobsService = jobs.NewService(dependencies.DB)
-	}
 	contradictionService := contradiction.NewService(dependencies.DB, jobsService)
 	contradictionHandler := contradictionHandler{Service: contradictionService, Auth: authService}
 	temporalAnalysisService := temporalanalysis.NewService(dependencies.DB)

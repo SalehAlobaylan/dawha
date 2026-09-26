@@ -8,7 +8,30 @@ import (
 const (
 	AlgorithmVersion     = "entity-resolution-v1"
 	NormalizationVersion = "arabic-normalization-v1"
+
+	// The run states, spelled once. RunQueued is the state a run is in from the
+	// moment it is accepted until a worker has finished every stage of it; it is
+	// the whole point of moving the work behind the queue, and it is a state a
+	// client can safely render as "accepted, not finished".
+	RunQueued    = "queued"
+	RunRunning   = "running"
+	RunSucceeded = "succeeded"
+	RunFailed    = "failed"
+
+	// The stages a run passes through, in the order it passes through them. The
+	// first checkpoint is committed before scoring starts so a stalled run says
+	// which part it stalled in.
+	StageQueued    = "queued"
+	StageScoring   = "scoring"
+	StageComplete  = "complete"
+	StageRunFailed = "failed"
 )
+
+// Terminal reports whether a run state is one no worker will move again. A client
+// polling a run stops on these, and a run that is not terminal is not a result.
+func Terminal(status string) bool {
+	return status == RunSucceeded || status == RunFailed
+}
 
 type EntityType string
 
@@ -43,6 +66,11 @@ var (
 	ErrForbidden           = errors.New("entity resolution access is forbidden")
 	ErrNotFound            = errors.New("entity resolution resource not found")
 	ErrConflict            = errors.New("entity resolution resource changed")
+	// ErrQueueUnavailable is what a service with no queue says. It is separate
+	// from ErrDatabaseUnavailable because the two need different answers: one
+	// means nothing is configured, the other means a run was asked for and there
+	// is nobody who has agreed to finish it.
+	ErrQueueUnavailable = errors.New("entity resolution queue is unavailable")
 )
 
 type RunInput struct {
@@ -59,8 +87,16 @@ type Run struct {
 	ModelVersion         string     `json:"modelVersion,omitempty"`
 	CandidateCount       int        `json:"candidateCount"`
 	Error                string     `json:"error,omitempty"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	// JobID, Stage and the two timestamps are additive. Every key a client was
+	// already reading is still there with the same meaning, and a run that is
+	// queued reads as queued through the existing "status" rather than through a
+	// new field.
+	JobID       string     `json:"jobId,omitempty"`
+	Stage       string     `json:"stage,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 type Signal struct {
