@@ -143,3 +143,40 @@ func TestDemoModeIsReadFromTheEnvironmentAndIsOffUnlessItSaysOtherwise(t *testin
 		t.Fatal("demoModeEnabled and demoModeFromEnvironment disagree about the same words")
 	}
 }
+
+// TestNoStaticResponseIsServedWithoutDemoMode is the rule rather than a case.
+//
+// There are three routes in this service that answer from a static payload
+// instead of from the database - the dashboard, the layer catalogue and the tree
+// list's no-database fallback. Each one was written at a different time by
+// different hands, and each of them is exactly the shape that lets a deployment
+// show a reader something nobody created. So the rule is asserted over the set
+// rather than per route: with DEMO_MODE off, none of them answers 200, and none of
+// them leaks a scrap of the payload it is withholding.
+func TestNoStaticResponseIsServedWithoutDemoMode(t *testing.T) {
+	routes := map[string][]string{
+		"/api/v1/dashboard":       {"مساحة نجم", "1,248", "من كان والد عبدالله"},
+		"/api/v1/research/layers": {"label_ar", "طبقات المعرفة"},
+		"/api/v1/trees":           {"بيت العنبر", "tree-demo"},
+	}
+	for path, forbidden := range routes {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewRouter(Dependencies{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+			if recorder.Code == http.StatusOK {
+				t.Fatalf("a static route answered 200 with demo mode off: %s", recorder.Body.String())
+			}
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d: a withheld capability is a dependency error, not a 404 and not a 500", recorder.Code, http.StatusServiceUnavailable)
+			}
+			for _, needle := range forbidden {
+				if strings.Contains(recorder.Body.String(), needle) {
+					t.Fatalf("the refused response carries %q", needle)
+				}
+			}
+			if got := recorder.Header().Get("X-Data-Source"); got != "" {
+				t.Fatalf("the refused response names a data source: %q", got)
+			}
+		})
+	}
+}

@@ -125,11 +125,13 @@ func TestTheRouterRecordsNoMetricsWhenNoneAreConfigured(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/trees", nil))
 	}
-	// A nil registry in the middleware is a no-op; the request still works.
+	// A nil registry in the middleware is a no-op; the request still works. The
+	// layer catalogue is used here because it answers from nothing at all, so a
+	// failure can only be about the metrics.
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("a router with no metrics broke a request: %d", recorder.Code)
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/research/layers", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a router with no metrics changed a response: %d", recorder.Code)
 	}
 	if recorder.Header().Get(telemetry.RequestIDHeader) == "" {
 		t.Fatal("a router with no metrics stopped publishing the request id")

@@ -53,14 +53,28 @@ func TestNormalizeNameEndpoint(t *testing.T) {
 	}
 }
 
-func TestResearchLayersEndpoint(t *testing.T) {
+// The layer catalogue is a static response carrying the same demo label the
+// dashboard carried, so it is behind the same setting: off is a dependency error.
+func TestResearchLayersEndpointRespectsDemoMode(t *testing.T) {
+	off := httptest.NewRecorder()
+	NewRouter(Dependencies{}).ServeHTTP(off, httptest.NewRequest(http.MethodGet, "/api/v1/research/layers", nil))
+	if off.Code != http.StatusServiceUnavailable {
+		t.Fatalf("with demo mode off the status is %d, want %d", off.Code, http.StatusServiceUnavailable)
+	}
+	if strings.Contains(off.Body.String(), "label_ar") {
+		t.Fatalf("a refused layer catalogue still carried the layers: %s", off.Body.String())
+	}
+
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/research/layers", nil)
 
-	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	NewRouter(Dependencies{DemoMode: true}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	if got := recorder.Header().Get("X-Data-Source"); got != "demo" {
+		t.Fatalf("X-Data-Source = %q, want demo", got)
 	}
 	for _, layer := range []string{"source_statement", "research_claim", "tree_interpretation", "platform_finding", "open_question"} {
 		if !strings.Contains(recorder.Body.String(), layer) {

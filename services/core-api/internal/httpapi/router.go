@@ -162,9 +162,24 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings", temporalAnalysisHandler.listFindings)
 	mux.HandleFunc("GET /api/v1/temporal-analysis/findings/{findingID}", temporalAnalysisHandler.getFinding)
 	mux.HandleFunc("POST /api/v1/temporal-analysis/findings/{findingID}/review", temporalAnalysisHandler.review)
-	mux.HandleFunc("GET /api/v1/research/layers", func(w http.ResponseWriter, r *http.Request) {
+	// The layer catalogue is a static response too, and it carries the same
+	// `mode: "demo"` label the dashboard did, so it is behind the same setting. A
+	// rule with one exception is a rule nobody can check.
+	researchLayersHandler := func(w http.ResponseWriter, _ *http.Request) {
+		if !dependencies.DemoMode {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "the layer catalogue is served only in demo mode; set DEMO_MODE=true to serve it",
+				"code":  "layers_unavailable",
+				"demo":  false,
+			})
+			return
+		}
+		w.Header().Set("X-Data-Source", "demo")
+		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode": "demo",
+			"demo": true,
 			"layers": []map[string]string{
 				{"id": string(research.SourceStatement), "label_ar": "عبارة المصدر", "role": "source_text"},
 				{"id": string(research.ResearchClaim), "label_ar": "ادعاء الباحث", "role": "research_proposition"},
@@ -173,7 +188,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 				{"id": string(research.OpenQuestion), "label_ar": "سؤال مفتوح", "role": "unresolved_research"},
 			},
 		})
-	})
+	}
+	mux.HandleFunc("GET /api/v1/research/layers", researchLayersHandler)
 	mux.HandleFunc("POST /api/v1/source-characterization/runs", evidenceHandler.startSourceCharacterization)
 	mux.HandleFunc("GET /api/v1/source-characterization/runs/latest", evidenceHandler.getLatestSourceCharacterization)
 	mux.HandleFunc("GET /api/v1/source-characterization/runs/{runID}", evidenceHandler.getSourceCharacterizationRun)
