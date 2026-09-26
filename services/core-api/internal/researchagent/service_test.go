@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
@@ -97,17 +99,27 @@ func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, source_id, created_by) VALUES ($1, $2, $3, $4, 'parent_of', 'interpreted', $5, $6)`, relationshipID, versionID, subjectNodeID, objectNodeID, sourceID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(pool)
-	run, err := service.StartRun(ctx, actorID.String(), RunInput{Question: "ما موضع هجرة عبد الله؟", QuestionID: questionID.String(), EntityType: "person", EntityID: personID.String(), TreeID: treeID.String(), TreeVersionID: versionID.String()})
+	queue := jobs.NewService(pool)
+	service := NewService(pool).WithQueue(queue)
+	accepted, err := service.StartRun(ctx, actorID.String(), RunInput{Question: "ما موضع هجرة عبد الله؟", QuestionID: questionID.String(), EntityType: "person", EntityID: personID.String(), TreeID: treeID.String(), TreeVersionID: versionID.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != "succeeded" || run.Resolution != ResolutionUnresolved || run.StepCount != 11 || run.EvidenceCount == 0 || run.GapCount == 0 {
-		t.Fatalf("unexpected agent run: %+v", run)
+	// Accepting an investigation must not pretend it is finished. The run is
+	// queued, the stages have not run, and there is nothing to read yet.
+	if accepted.Status != RunQueued || accepted.Stage != StageQueued || accepted.JobID == "" {
+		t.Fatalf("accepted run = %+v, want queued with a job behind it", accepted)
 	}
-	if len(run.Steps) != 11 || run.Steps[0].Stage != StageDecompose || run.Steps[10].Stage != StageRecommendation {
-		t.Fatalf("unexpected agent steps: %+v", run.Steps)
+	if len(accepted.Steps) != 0 || accepted.EvidenceCount != 0 || accepted.Report.AnswerAR != "" {
+		t.Fatalf("a queued run reported work: %+v", accepted)
 	}
+	if got := countRunRows(t, pool, `SELECT count(*) FROM research_agent_steps WHERE run_id = $1`, accepted.ID); got != 0 {
+		t.Fatalf("steps on an accepted run = %d, want 0", got)
+	}
+
+	// The queue is what turns an accepted run into an answer, so the test drives
+	// it the way a worker would: claim, process, complete.
+	run := driveAgentRun(t, pool, queue, service, accepted.ID)
 	if !hasLayer(run.Evidence, "source_statement") || !hasLayer(run.Evidence, "tree_interpretation") || !hasLayer(run.Evidence, "geographic_signal") || !hasLayer(run.Evidence, "source_dependency") || !hasCounterEvidence(run.Evidence) {
 		t.Fatalf("missing bounded evidence layers: %+v", run.Evidence)
 	}
@@ -145,10 +157,11 @@ func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
 	if strings.Contains(string(encoded), privateSourceID.String()) {
 		t.Fatalf("private source id leaked from stored run: %s", encoded)
 	}
-	sourceRun, err := service.StartRun(ctx, actorID.String(), RunInput{Question: "ما موضع الهجرة؟", QuestionID: questionID.String(), EntityType: "source", EntityID: sourceID.String()})
+	acceptedSource, err := service.StartRun(ctx, actorID.String(), RunInput{Question: "ما موضع الهجرة؟", QuestionID: questionID.String(), EntityType: "source", EntityID: sourceID.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceRun := driveAgentRun(t, pool, queue, service, acceptedSource.ID)
 	if !hasLayer(sourceRun.Evidence, "source_statement") || !hasLayer(sourceRun.Evidence, "geographic_signal") {
 		t.Fatalf("source agent scope lost qualified evidence: %+v", sourceRun.Evidence)
 	}
@@ -185,7 +198,7 @@ func TestResearchAgentRejectsInvalidAndUnauthorizedRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actorID)
-	service := NewService(pool)
+	service := NewService(pool).WithQueue(jobs.NewService(pool))
 	entityID := uuid.NewString()
 	if _, err := service.StartRun(context.Background(), actorID.String(), RunInput{Question: "سؤال", EntityID: entityID, EntityType: "person"}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected unauthorized run to be forbidden, got %v", err)
@@ -232,4 +245,68 @@ func hasSourceID(evidence []EvidenceRef, sourceID string) bool {
 
 func researchAgentTestEmail(id uuid.UUID, suffix string) string {
 	return "research-agent-" + suffix + "-" + id.String() + "@example.test"
+}
+
+// driveAgentRun does what the worker process does for one accepted
+// investigation, and returns the finished run.
+//
+// It is here so the existing assertions about the eleven stages, the evidence
+// layers, the gaps and the audit keep testing what they were written to test. The
+// claim/renew/complete cycle is the worker's, not this helper's - which is why
+// the claim carries a real lease and the completion presents its token, and why
+// the returned run is read back from the database rather than assembled in memory:
+// a run that reported results it did not persist would pass an in-memory
+// assertion and fail a reader.
+func driveAgentRun(t *testing.T, pool *pgxpool.Pool, queue *jobs.Service, service *Service, runID string) Run {
+	t.Helper()
+	ctx := context.Background()
+	job, err := queue.Claim(ctx, jobs.ClaimInput{WorkerID: "p006-agent-worker", Type: JobType})
+	if err != nil {
+		t.Fatalf("claim the investigation job: %v", err)
+	}
+	if job.LeaseToken == "" {
+		t.Fatal("the claim came with no lease, so nothing downstream can be fenced")
+	}
+	lease := job.Lease("p006-agent-worker")
+	if err := service.ProcessRun(ctx, lease, runID); err != nil {
+		t.Fatalf("process the investigation: %v", err)
+	}
+	if _, err := queue.Complete(ctx, job.ID, jobs.CompleteInput{WorkerID: "p006-agent-worker", LeaseToken: lease.Token}); err != nil {
+		t.Fatalf("complete the investigation job: %v", err)
+	}
+	run, err := service.GetRun(ctx, jobOwner(t, pool, runID), runID)
+	if err != nil {
+		t.Fatalf("read the finished run: %v", err)
+	}
+	if run.Status != RunSucceeded {
+		t.Fatalf("run status = %s (%s), want succeeded", run.Status, run.Error)
+	}
+	if run.ExecutionMode != ExecutionModeAsynchronous {
+		t.Fatalf("execution mode = %s, want %s", run.ExecutionMode, ExecutionModeAsynchronous)
+	}
+	if run.Resolution != ResolutionUnresolved || run.StepCount != 11 || run.EvidenceCount == 0 || run.GapCount == 0 {
+		t.Fatalf("unexpected agent run: %+v", run)
+	}
+	if len(run.Steps) != 11 || run.Steps[0].Stage != StageDecompose || run.Steps[10].Stage != StageRecommendation {
+		t.Fatalf("unexpected agent steps: %+v", run.Steps)
+	}
+	return run
+}
+
+func jobOwner(t *testing.T, pool *pgxpool.Pool, runID string) string {
+	t.Helper()
+	var owner string
+	if err := pool.QueryRow(context.Background(), `SELECT requested_by::text FROM research_agent_runs WHERE id = $1`, runID).Scan(&owner); err != nil {
+		t.Fatalf("read the run requester: %v", err)
+	}
+	return owner
+}
+
+func countRunRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), query, args...).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	return count
 }

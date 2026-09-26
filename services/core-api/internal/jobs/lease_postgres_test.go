@@ -151,20 +151,30 @@ func TestRecoveredJobRejectsTheWorkerThatLostIt(t *testing.T) {
 // TestExpiredLeaseIsFencedEvenForTheMatchingWorker is the case a worker-string
 // comparison cannot reach. Nothing has reclaimed the job, the worker id matches,
 // and the owner itself is out of time: the lease ran out while the worker was
-// busy. Completing then would be a bet that nobody arrived in the meantime, and
-// a bet is not a guarantee.
+// busy. Completing then would be a bet that nobody arrived in the meantime, and a
+// bet is not a guarantee.
+//
+// The expiry is written rather than waited for. A one-second lease and a sleep is
+// a test whose outcome depends on how loaded the machine is, and a test that fails
+// on a busy runner teaches a reviewer to re-run it instead of reading it. That a
+// lease really does run out on its own is the heartbeat tests' job, and they
+// observe it rather than assume it.
 func TestExpiredLeaseIsFencedEvenForTheMatchingWorker(t *testing.T) {
 	fixture := testsupport.New(t)
-	// A one-second lease makes the expiry observable inside a test without
-	// pretending the production deadline is short.
 	service := NewService(fixture.Pool())
 	service.LeaseDuration = time.Second
 	jobType := "p006_expired_" + fixture.Tag()
-	enqueueLeaseJob(t, fixture, service, jobType)
+	enqueued := enqueueLeaseJob(t, fixture, service, jobType)
 	claimed := claimLeaseJob(t, fixture, service, jobType, "p006-slow-worker")
 	lease := claimed.Lease("p006-slow-worker")
-
-	waitFor(t, fixture, `SELECT lease_expires_at <= now() FROM jobs WHERE id = $1`, lease.JobID)
+	if claimed.LeaseExpiresAt == nil {
+		t.Fatal("the claim came with no lease deadline")
+	}
+	// The claim was minted with a one-second lease, and the clock is then moved past
+	// it. Nothing else about the row changes: same worker, same token, same status.
+	if _, err := fixture.Pool().Exec(fixture.Ctx(), `UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1 AND lease_token = $2`, lease.JobID, lease.Token); err != nil {
+		t.Fatalf("expire the lease: %v", err)
+	}
 
 	if _, err := service.Renew(fixture.Ctx(), lease); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("renew of an expired lease = %v, want ErrLeaseLost", err)
@@ -181,8 +191,11 @@ func TestExpiredLeaseIsFencedEvenForTheMatchingWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the job: %v", err)
 	}
-	if current.Status != "running" {
-		t.Fatalf("job status = %s, want the expired worker to have changed nothing", current.Status)
+	if current.Status != "running" || current.LockedBy != "p006-slow-worker" || current.LeaseToken != lease.Token {
+		t.Fatalf("job = %s/%s/%s, want the expired worker to have changed nothing", current.Status, current.LockedBy, current.LeaseToken)
+	}
+	if got := fixture.Count(`SELECT count(*) FROM jobs WHERE id = $1 AND lease_expires_at <= now() AND lease_token = $2`, enqueued.Job.ID, lease.Token); got != 1 {
+		t.Fatal("the row no longer reads as an expired claim held by this worker")
 	}
 }
 
@@ -364,23 +377,4 @@ func claimLeaseJob(t *testing.T, fixture *testsupport.Fixture, service *Service,
 		t.Fatal("the claim came with no lease token, so nothing downstream can be fenced")
 	}
 	return claimed
-}
-
-// waitFor polls a boolean query until it holds. Everything that can make a lease
-// observable here is the database's own clock, so the test waits on the
-// database rather than on a sleep it hopes is long enough.
-func waitFor(t *testing.T, fixture *testsupport.Fixture, query string, args ...any) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		var holds bool
-		if err := fixture.QueryRow(query, args...).Scan(&holds); err != nil {
-			t.Fatalf("poll %s: %v", query, err)
-		}
-		if holds {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", query)
 }

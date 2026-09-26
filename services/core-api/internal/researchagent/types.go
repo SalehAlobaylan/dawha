@@ -5,15 +5,34 @@ import (
 	"time"
 )
 
+// JobType is the queue type an investigation waits as.
+const JobType = "research_agent_run"
+
 const (
-	PlannerVersion         = "research-agent-v1"
-	AlgorithmVersion       = "research-agent-evidence-v1"
-	QualificationPolicy    = "read-only-qualified-evidence-v1"
-	MaximumEvidence        = 100
-	MaximumSteps           = 11
-	MaximumTerms           = 12
-	ResolutionSucceeded    = "succeeded"
-	ResolutionUnresolved   = "unresolved"
+	PlannerVersion       = "research-agent-v1"
+	AlgorithmVersion     = "research-agent-evidence-v1"
+	QualificationPolicy  = "read-only-qualified-evidence-v1"
+	MaximumEvidence      = 100
+	MaximumSteps         = 11
+	MaximumTerms         = 12
+	ResolutionSucceeded  = "succeeded"
+	ResolutionUnresolved = "unresolved"
+	// ExecutionModeAsynchronous is what a run says about itself now that the work
+	// happens in a worker. The old value is kept because the column still records
+	// it, and a row written before this change still says what it was.
+	ExecutionModeSynchronous  = "synchronous"
+	ExecutionModeAsynchronous = "asynchronous"
+	// The run states. RunQueued is where an investigation is from the moment it is
+	// accepted until a worker has committed every stage of it.
+	RunQueued    = "queued"
+	RunRunning   = "running"
+	RunSucceeded = "succeeded"
+	RunFailed    = "failed"
+	// The stages, which are also the stages the run reports as it passes through
+	// them.
+	StageQueued            = "queued"
+	StageReport            = "report"
+	StageDone              = "complete"
 	StageDecompose         = "decompose_question"
 	StageSearchSources     = "search_sources"
 	StageSearchGraph       = "search_graph"
@@ -33,7 +52,18 @@ var (
 	ErrForbidden           = errors.New("research agent access is forbidden")
 	ErrNotFound            = errors.New("research agent resource was not found")
 	ErrConflict            = errors.New("research agent resource changed")
+	// ErrQueueUnavailable is what a service with no queue says. It is separate
+	// from ErrDatabaseUnavailable because the two need different answers: one
+	// means nothing is configured, the other means an investigation was asked for
+	// and there is nobody who has agreed to finish it.
+	ErrQueueUnavailable = errors.New("research agent queue is unavailable")
 )
+
+// Terminal reports whether a run state is one no worker will move again. A client
+// polling a run stops on these, and a run that is not terminal is not a result.
+func Terminal(status string) bool {
+	return status == RunSucceeded || status == RunFailed
+}
 
 type RunInput struct {
 	Question      string `json:"question"`
@@ -50,35 +80,40 @@ type RunInput struct {
 }
 
 type Run struct {
-	ID                         string           `json:"id"`
-	RequestedBy                string           `json:"requestedBy"`
-	QuestionID                 string           `json:"questionId,omitempty"`
-	Query                      string           `json:"query"`
-	NormalizedQuery            string           `json:"normalizedQuery"`
-	EntityType                 string           `json:"entityType"`
-	EntityID                   string           `json:"entityId"`
-	TreeID                     string           `json:"treeId,omitempty"`
-	TreeVersionID              string           `json:"treeVersionId,omitempty"`
-	Status                     string           `json:"status"`
-	Resolution                 string           `json:"resolution"`
-	ExecutionMode              string           `json:"executionMode"`
-	PlannerVersion             string           `json:"plannerVersion"`
-	AlgorithmVersion           string           `json:"algorithmVersion"`
-	QualificationPolicyVersion string           `json:"qualificationPolicyVersion"`
-	Report                     Report           `json:"report"`
-	StepCount                  int              `json:"stepCount"`
-	EvidenceCount              int              `json:"evidenceCount"`
-	GapCount                   int              `json:"gapCount"`
-	RecommendationCount        int              `json:"recommendationCount"`
-	Error                      string           `json:"error,omitempty"`
-	CreatedAt                  time.Time        `json:"createdAt"`
-	StartedAt                  *time.Time       `json:"startedAt,omitempty"`
-	CompletedAt                *time.Time       `json:"completedAt,omitempty"`
-	UpdatedAt                  time.Time        `json:"updatedAt"`
-	Steps                      []Step           `json:"steps"`
-	Evidence                   []EvidenceRef    `json:"evidence"`
-	Gaps                       []Gap            `json:"gaps"`
-	Recommendations            []Recommendation `json:"recommendations"`
+	ID                         string `json:"id"`
+	RequestedBy                string `json:"requestedBy"`
+	QuestionID                 string `json:"questionId,omitempty"`
+	Query                      string `json:"query"`
+	NormalizedQuery            string `json:"normalizedQuery"`
+	EntityType                 string `json:"entityType"`
+	EntityID                   string `json:"entityId"`
+	TreeID                     string `json:"treeId,omitempty"`
+	TreeVersionID              string `json:"treeVersionId,omitempty"`
+	Status                     string `json:"status"`
+	Resolution                 string `json:"resolution"`
+	ExecutionMode              string `json:"executionMode"`
+	PlannerVersion             string `json:"plannerVersion"`
+	AlgorithmVersion           string `json:"algorithmVersion"`
+	QualificationPolicyVersion string `json:"qualificationPolicyVersion"`
+	Report                     Report `json:"report"`
+	StepCount                  int    `json:"stepCount"`
+	EvidenceCount              int    `json:"evidenceCount"`
+	GapCount                   int    `json:"gapCount"`
+	RecommendationCount        int    `json:"recommendationCount"`
+	Error                      string `json:"error,omitempty"`
+	// JobID and Stage are additive: every key a client was already reading is
+	// still there with the same meaning, and a queued run reads as queued through
+	// the existing "status" rather than through a new field.
+	JobID           string           `json:"jobId,omitempty"`
+	Stage           string           `json:"stage,omitempty"`
+	CreatedAt       time.Time        `json:"createdAt"`
+	StartedAt       *time.Time       `json:"startedAt,omitempty"`
+	CompletedAt     *time.Time       `json:"completedAt,omitempty"`
+	UpdatedAt       time.Time        `json:"updatedAt"`
+	Steps           []Step           `json:"steps"`
+	Evidence        []EvidenceRef    `json:"evidence"`
+	Gaps            []Gap            `json:"gaps"`
+	Recommendations []Recommendation `json:"recommendations"`
 }
 
 type Report struct {
