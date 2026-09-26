@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify ai-eval e2e e2e-clean
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan ai-eval e2e e2e-clean
 
 install:
 	npm install
@@ -39,6 +39,32 @@ db-seed:
 
 sqlc:
 	cd services/core-api && sqlc generate
+
+# migration-check reads the tree and the database and writes to neither. It is
+# the drift gate: every applied migration has a file, every file is applied, and
+# every recorded checksum is the checksum of the file on disk. It exists because
+# a green `make db-migrate` cannot tell the difference between "the database
+# matches this tree" and "the runner had nothing left to do because somebody
+# edited a migration after it had been applied somewhere else".
+#
+# A database migrated before the checksum existed has NULL checksums; `check`
+# reports those as `no checksum recorded` rather than passing, and
+# `make db-migrate` is what turns them into recorded backfills. Run db-migrate
+# before migration-check, which is what verify-full and the CI database job do.
+#
+#   COMPOSE_PROJECT_NAME=dawha make migration-check
+migration-check:
+	@infra/local/migrate.sh check
+
+# migration-test proves the five things the runner promises - success, failure,
+# rerun, checksum and concurrent-run behaviour - against a scratch database it
+# creates and drops. It is not part of `verify` because it needs PostgreSQL; it
+# is part of `verify-full` and of the CI database job because the properties it
+# checks are the ones no Go test can fake.
+#
+#   COMPOSE_PROJECT_NAME=dawha make migration-test
+migration-test:
+	@infra/local/migration_test.sh
 
 # verify is the FAST gate and stays that way: lint, typecheck, unit tests and a
 # build. It needs no database, no browser and no service startup, so the default

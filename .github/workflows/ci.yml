@@ -89,6 +89,16 @@ jobs:
           cache-dependency-path: services/ai-research/pyproject.toml
       - run: docker compose build db
       - run: make db-migrate
+      # The runner's own five cases, against a scratch database this step
+      # creates and drops. A deliberately failing migration, a resumed partial
+      # set, a refused edit, a backfill of a database that predates the
+      # checksum, and two runners started at once: the runner is the only place
+      # those can be proved, and they are the properties a deployment depends on
+      # before it depends on anything else in this job.
+      - name: The migration runner's five cases
+        run: make migration-test
+      - name: The tree and the database agree about the migrations
+        run: make migration-check
       - run: make db-seed
       - name: The required extensions are installed
         run: docker compose exec -T db psql -U dawha -d dawha -c "SELECT extname FROM pg_extension WHERE extname IN ('postgis', 'vector') ORDER BY extname;"
