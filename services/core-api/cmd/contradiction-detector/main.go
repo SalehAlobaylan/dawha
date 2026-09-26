@@ -12,13 +12,26 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/contradiction"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/google/uuid"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL")})
+	telemetryConfig := telemetry.ConfigFromEnvironment(os.Getenv)
+	telemetryConfig.ServiceName = "dawha-contradiction-worker"
+	_, metrics := telemetry.New(telemetryConfig)
+	stopMetrics, err := metrics.StartExporter(ctx, telemetry.ExporterConfig{
+		Enabled: telemetryConfig.Metrics,
+		Addr:    telemetryConfig.MetricsAddr,
+	})
+	if err != nil {
+		log.Fatalf("the metrics exporter could not start: %v", err)
+	}
+	defer func() { _ = stopMetrics() }()
+
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL"), Tracer: telemetry.NewQueryTracer(metrics)})
 	if err != nil || pool == nil {
 		log.Fatal("contradiction worker requires DATABASE_URL")
 	}
@@ -38,6 +51,11 @@ func main() {
 				log.Printf("reset recovered contradiction runs: %v", err)
 			}
 			lastRecovery = time.Now()
+		}
+		if metrics.Enabled() {
+			if depth, depthErr := jobService.Depth(ctx, contradiction.JobType); depthErr == nil {
+				metrics.QueueDepth(telemetry.JobTypeFor(contradiction.JobType), depth)
+			}
 		}
 		job, err := jobService.Claim(ctx, jobs.ClaimInput{WorkerID: workerID, Type: contradiction.JobType})
 		if errors.Is(err, jobs.ErrNotFound) {

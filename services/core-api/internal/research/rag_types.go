@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -208,10 +209,49 @@ type QueryResult struct {
 type Service struct {
 	Pool *pgxpool.Pool
 	AI   ai.Provider
+	// Metrics records one sample per finished research run. Nil means no metrics,
+	// which is the default in every existing caller. The outcome is an
+	// enumeration and the duration is a number: a research run is a question and an
+	// answer about people, and neither belongs in a time series.
+	Metrics *telemetry.Metrics
 }
 
 func NewService(pool *pgxpool.Pool, provider ai.Provider) *Service {
 	return &Service{Pool: pool, AI: provider}
+}
+
+// WithMetrics returns the same service, recording research outcomes. A method
+// rather than a constructor argument because the queue of concerns around this
+// service has grown and each one is optional; a caller that wants none of them
+// should not have to pass nils.
+func (s *Service) WithMetrics(metrics *telemetry.Metrics) *Service {
+	if s == nil {
+		return nil
+	}
+	s.Metrics = metrics
+	return s
+}
+
+// recordRun records a finished run.
+//
+// The elapsed seconds are measured by PostgreSQL, between the run row's
+// created_at and the moment its status was written, and handed in rather than
+// timed here. That is deliberate: the run spans a queue, a worker and a graph
+// traversal, so the only clock that saw the whole of it is the one that created
+// the row.
+//
+// The truncated flag is folded into the outcome rather than added as a label of
+// its own, because a run that hit its depth limit and one that exhausted the
+// graph are the same thing to whoever is reading the number: the answer is
+// partial.
+func (s *Service) recordRun(outcome telemetry.ResearchOutcome, truncated bool, elapsedSeconds float64) {
+	if s == nil || !s.Metrics.Enabled() {
+		return
+	}
+	if truncated {
+		outcome = telemetry.ResearchTruncated
+	}
+	s.Metrics.ResearchRun(outcome, time.Duration(elapsedSeconds*float64(time.Second)))
 }
 
 func (s *Service) ready() error {

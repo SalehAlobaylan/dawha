@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
@@ -31,6 +30,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/ratelimit"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,6 +47,10 @@ type Dependencies struct {
 	// caller that forgets is protected, and a caller that wants them off says so
 	// through ratelimit.Disabled.
 	RateLimits ratelimit.Config
+	// Metrics is the telemetry registry. Nil means no metrics, and no metrics is
+	// the default everywhere in this repository: `make verify` and `make e2e` must
+	// not be changed by the existence of this field.
+	Metrics *telemetry.Metrics
 }
 
 type normalizeNameRequest struct {
@@ -89,7 +93,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	geographyHandler := geographyHandler{Service: geographyService, Auth: authService}
 	searchService := search.NewService(dependencies.DB, dependencies.AI)
 	searchHandler := searchHandler{Service: searchService, Auth: authService}
-	researchService := research.NewService(dependencies.DB, dependencies.AI)
+	researchService := research.NewService(dependencies.DB, dependencies.AI).WithMetrics(dependencies.Metrics)
 	researchHandler := researchHandler{Service: researchService, Auth: authService, Logger: dependencies.Logger}
 	researchAgentService := researchagent.NewService(dependencies.DB).WithQueue(jobsService)
 	researchAgentHandler := researchAgentHandler{Service: researchAgentService, Auth: authService}
@@ -293,7 +297,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	//              query. Inside CORS, so a 429 still carries the CORS headers the
 	//              browser needs to read the error at all.
 	//   request id gives every log line the limiter writes - and any handler that
-	//              runs - the same id.
+	//              runs - the same id. It is outermost so that a request rejected
+	//              by CORS or by a rate limit still has one, which is the case
+	//              somebody debugging a throttled request needs most, and it is
+	//              what puts the id in the context every handler, AI call and job
+	//              enqueue downstream reads it from.
 	rateLimits := dependencies.RateLimits
 	if len(rateLimits.PerMinute) == 0 {
 		rateLimits = ratelimit.DefaultConfig()
@@ -305,7 +313,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 		// admits everything with a log line somebody reads once.
 		panic("httpapi: the rate limit configuration is invalid: " + err.Error())
 	}
-	return withRequestID(ratelimit.Middleware(limiter, withCORS(mux, dependencies.WebOrigin)))
+	// metrics is nil in every existing caller, and a nil registry records nothing
+	// and exports nothing, so this is the same code path whether or not anybody
+	// enabled telemetry.
+	var metrics *telemetry.Metrics = dependencies.Metrics
+	return telemetry.Middleware(metrics, ratelimit.Middleware(limiter, withCORS(mux, dependencies.WebOrigin)))
 }
 
 func normalizeName(w http.ResponseWriter, r *http.Request) {
@@ -349,17 +361,6 @@ func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func withRequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get("X-Request-ID")
-		if requestID == "" {
-			requestID = time.Now().UTC().Format("20060102150405.000000000")
-		}
-		w.Header().Set("X-Request-ID", requestID)
 		next.ServeHTTP(w, r)
 	})
 }

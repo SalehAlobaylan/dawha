@@ -19,11 +19,27 @@ import (
 )
 
 func main() {
-	logger := telemetry.NewLogger(telemetry.Config{ServiceName: "dawha-core-api", Environment: environment()})
+	telemetryConfig := telemetry.ConfigFromEnvironment(os.Getenv)
+	telemetryConfig.ServiceName = "dawha-core-api"
+	logger, metrics := telemetry.New(telemetryConfig)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	logger.Info("telemetry configured", "configuration", telemetryConfig.Describe())
 
-	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL")})
+	stopMetrics, err := metrics.StartExporter(ctx, telemetry.ExporterConfig{
+		Enabled: telemetryConfig.Metrics,
+		Addr:    telemetryConfig.MetricsAddr,
+	})
+	if err != nil {
+		// A deployment that asked for an exporter and did not get one says so and
+		// stops. A service quietly running with no exporter is a service whose
+		// dashboards are empty for reasons nobody was told about.
+		logger.Error("the metrics exporter could not start", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = stopMetrics() }()
+
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL"), Tracer: telemetry.NewQueryTracer(metrics)})
 	if err != nil {
 		logger.Error("database initialization failed", "error", err)
 		os.Exit(1)
@@ -50,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("source storage configured", "driver", storageDriverName(sourceStore))
-	aiClient := ai.NewHTTPClient(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
+	aiClient := ai.NewClient(ai.NewHTTPProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")).WithMetrics(metrics))
 
 	// The abuse-control configuration. An unparseable value stops the process
 	// rather than falling back to a default, because a limit that silently became
@@ -77,6 +93,7 @@ func main() {
 			AI:            aiClient,
 			SourceStorage: sourceStore,
 			RateLimits:    rateLimits,
+			Metrics:       metrics,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

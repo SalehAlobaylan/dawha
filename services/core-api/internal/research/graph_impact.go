@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"strings"
 	"time"
 
@@ -270,9 +271,16 @@ func (s *Service) persistGraphRelationshipImpactRun(ctx context.Context, runID s
 	if err := persistGraphRun(ctx, tx, runID, QueryResult{GraphPaths: []GraphPath{path}, GraphStats: stats}); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE research_runs SET status = 'succeeded', graph_truncated = $1, updated_at = now() WHERE id = $2`, stats.Truncated, runID); err != nil {
+	// The run is finished, so it is counted here and not where it was created: a
+	// run that never finished is a run that failed, and counting successes at
+	// the start would count questions nobody answered. RETURNING gives back the
+	// elapsed time as the database measured it, which is the only clock that
+	// saw the whole run.
+	var elapsed float64
+	if err := tx.QueryRow(ctx, `UPDATE research_runs SET status = 'succeeded', graph_truncated = $1, updated_at = now() WHERE id = $2 RETURNING extract(epoch from (now() - created_at))`, stats.Truncated, runID).Scan(&elapsed); err != nil {
 		return err
 	}
+	s.recordRun(telemetry.ResearchCompleted, stats.Truncated, elapsed)
 	return tx.Commit(ctx)
 }
 

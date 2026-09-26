@@ -2,6 +2,7 @@ package sourceprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"time"
@@ -50,6 +51,24 @@ var (
 type JobPayload struct {
 	SourceID     string `json:"source_id"`
 	SourceFileID string `json:"source_file_id"`
+}
+
+// JobRequestIDFields reads the request id the enqueueing upload stamped into this
+// job's payload.
+//
+// It is exported because the worker that claims the job is a different package,
+// and the correlation between an upload and the extraction that failed on it is
+// worth one exported function. It answers "" for a job enqueued before request
+// ids existed, which is every job already sitting in the queue.
+func JobRequestIDFields(payload []byte) map[string]any {
+	if len(payload) == 0 {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil
+	}
+	return decoded
 }
 
 type UploadInput struct {

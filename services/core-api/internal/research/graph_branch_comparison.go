@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"sort"
 	"strings"
 	"time"
@@ -448,9 +449,16 @@ func (s *Service) persistGraphBranchStructureComparisonRun(ctx context.Context, 
 	`, runID, fromPathID, toPathID, result.From.TreeScope.TreeID, result.From.TreeScope.TreeVersionID, result.From.RootNodeID, result.To.TreeScope.TreeID, result.To.TreeScope.TreeVersionID, result.To.RootNodeID, result.AlgorithmVersion, result.InputFingerprint, mustJSON(result.Limits), mustJSON(result.From), mustJSON(result.To), mustJSON(result.Delta), result.Status, result.Truncated.From || result.Truncated.To, mustJSON(result.TruncationReasons)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE research_runs SET status = 'succeeded', graph_truncated = $1, updated_at = now() WHERE id = $2`, result.Truncated.From || result.Truncated.To, runID); err != nil {
+	// The run is finished, so it is counted here and not where it was created: a
+	// run that never finished is a run that failed, and counting successes at
+	// the start would count questions nobody answered. RETURNING gives back the
+	// elapsed time as the database measured it, which is the only clock that
+	// saw the whole run.
+	var elapsed float64
+	if err := tx.QueryRow(ctx, `UPDATE research_runs SET status = 'succeeded', graph_truncated = $1, updated_at = now() WHERE id = $2 RETURNING extract(epoch from (now() - created_at))`, result.Truncated.From || result.Truncated.To, runID).Scan(&elapsed); err != nil {
 		return err
 	}
+	s.recordRun(telemetry.ResearchCompleted, result.Truncated.From || result.Truncated.To, elapsed)
 	return tx.Commit(ctx)
 }
 

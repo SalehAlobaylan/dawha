@@ -16,6 +16,7 @@ package jobworker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 )
 
 // Handler processes one claimed job under one lease.
@@ -70,6 +72,10 @@ type Config struct {
 	RecoveryInterval time.Duration
 	// Logger is where the loop reports. Nil means the standard logger.
 	Logger *log.Logger
+	// Metrics records queue depth, outcomes and durations. Nil means no metrics,
+	// which is the default in every existing consumer, so a deployment that has
+	// not asked for telemetry behaves exactly as it did before.
+	Metrics *telemetry.Metrics
 }
 
 // Defaults for the loop's own timing. They are constants rather than fields so
@@ -105,6 +111,7 @@ type Worker struct {
 	staleAfter       time.Duration
 	recoveryInterval time.Duration
 	logger           *log.Logger
+	metricsRegistry  *telemetry.Metrics
 }
 
 func New(config Config) (*Worker, error) {
@@ -142,6 +149,7 @@ func New(config Config) (*Worker, error) {
 		staleAfter:       positiveOrDefault(config.StaleAfter, DefaultStaleAfter),
 		recoveryInterval: positiveOrDefault(config.RecoveryInterval, DefaultRecoveryInterval),
 		logger:           config.Logger,
+		metricsRegistry:  config.Metrics,
 	}
 	if worker.logger == nil {
 		worker.logger = log.Default()
@@ -194,6 +202,10 @@ func (w *Worker) Run(ctx context.Context) error {
 // never understood - spending one of that job's three attempts to say "not me".
 func (w *Worker) claimOne(ctx context.Context) (jobs.JobView, bool) {
 	for _, jobType := range w.JobTypes() {
+		// The depth is read once per type per poll, and only while telemetry is on.
+		// It is a count, not a query against the payload, so it is bounded work
+		// and carries nothing about what is queued.
+		w.observeDepth(ctx, jobType)
 		job, err := w.jobs.Claim(ctx, jobs.ClaimInput{WorkerID: w.workerID, Type: jobType})
 		if errors.Is(err, jobs.ErrNotFound) {
 			continue
@@ -216,26 +228,81 @@ func (w *Worker) process(ctx context.Context, job jobs.JobView) {
 	// take. Cancelling a slow handler on shutdown would abandon a claim that
 	// could still have been completed, and the job would wait for recovery
 	// instead of finishing.
+	//
+	// The one thing added to the context is the request id the enqueueing request
+	// left in the payload. That is what makes a failure in here traceable to the
+	// upload or the research query that caused it, across a process boundary,
+	// without a log line having to carry the payload.
+	jobContext := telemetry.WithRequestID(ctx, telemetry.RequestIDFromPayload(payloadMap(job.Payload)))
+	started := time.Now()
 	handler, known := w.handlers[job.Type]
 	if !known {
 		w.logger.Printf("no handler for %s job %s, leaving it queued", job.Type, job.ID)
+		w.metrics().QueueJob(telemetry.JobTypeFor(job.Type), telemetry.JobAbandoned, time.Since(started))
 		return
 	}
 	lease := job.Lease(w.workerID)
-	err := handler.Handle(ctx, lease, job)
+	err := handler.Handle(jobContext, lease, job)
 	if err == nil {
 		w.complete(ctx, job, lease)
+		w.metrics().QueueJob(telemetry.JobTypeFor(job.Type), telemetry.JobCompleted, time.Since(started))
 		return
 	}
 	if leaseLost(err) {
 		// The claim is somebody else's now. The attempt that owns the job decides
 		// whether it failed, and requeueing it here would put the same work in
 		// flight twice.
-		w.logger.Printf("abandon %s job %s: %v", job.Type, job.ID, err)
+		w.logger.Printf("abandon %s job %s request_id=%s: %v", job.Type, job.ID, requestIDOf(job), err)
+		w.metrics().QueueJob(telemetry.JobTypeFor(job.Type), telemetry.JobAbandoned, time.Since(started))
 		return
 	}
-	w.logger.Printf("process %s job %s: %v", job.Type, job.ID, err)
+	w.logger.Printf("process %s job %s request_id=%s: %v", job.Type, job.ID, requestIDOf(job), err)
 	w.fail(ctx, job, lease, err)
+	w.metrics().QueueJob(telemetry.JobTypeFor(job.Type), telemetry.JobFailed, time.Since(started))
+}
+
+// observeDepth records how much work of a type is waiting. A queue that is not
+// being drained is the failure this whole package exists to make visible, and a
+// gauge is the only shape that answers "how deep is it now" - a counter of
+// enqueues answers a question nobody asks during an incident.
+func (w *Worker) observeDepth(ctx context.Context, jobType string) {
+	if !w.metrics().Enabled() {
+		return
+	}
+	depth, err := w.jobs.Depth(ctx, jobType)
+	if err != nil {
+		return
+	}
+	w.metrics().QueueDepth(telemetry.JobTypeFor(jobType), depth)
+}
+
+// requestIDOf is what a worker line says about the request behind a job. It is a
+// function rather than a field because most jobs have no request behind them - a
+// recovery pass, a sweep - and "none" is the truthful answer for those, printed
+// explicitly so an empty field never has to be guessed at.
+func requestIDOf(job jobs.JobView) string {
+	if id := telemetry.RequestIDFromPayload(payloadMap(job.Payload)); id != "" {
+		return id
+	}
+	return "none"
+}
+
+func payloadMap(payload []byte) map[string]any {
+	if len(payload) == 0 {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil
+	}
+	return decoded
+}
+
+func (w *Worker) metrics() *telemetry.Metrics {
+	if w == nil {
+		return nil
+	}
+	return w.metricsRegistry
 }
 
 // complete records the one thing a queue consumer has to be able to show: that a

@@ -10,6 +10,7 @@ import (
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/google/uuid"
 )
 
@@ -363,8 +364,16 @@ func (s *Service) failRun(ctx context.Context, runID string, cause error) error 
 	if errors.Is(cause, ErrGraphUnavailable) {
 		message = "research graph retrieval is unavailable"
 	}
-	_, err := s.Pool.Exec(ctx, `UPDATE research_runs SET status = 'failed', error = $1, updated_at = now() WHERE id = $2`, message, runID)
-	return err
+	var elapsed float64
+	// The failure is counted here, with the elapsed time the database measured,
+	// for the same reason the successes are counted where they finish: a run that
+	// failed is the outcome somebody needs the number of, and a counter that only
+	// moved on success would be a counter that reads as healthy.
+	if err := s.Pool.QueryRow(ctx, `UPDATE research_runs SET status = 'failed', error = $1, updated_at = now() WHERE id = $2 RETURNING extract(epoch from (now() - created_at))`, message, runID).Scan(&elapsed); err != nil {
+		return err
+	}
+	s.recordRun(telemetry.ResearchFailed, false, elapsed)
+	return nil
 }
 
 func (s *Service) persistRun(ctx context.Context, runID string, result QueryResult) error {

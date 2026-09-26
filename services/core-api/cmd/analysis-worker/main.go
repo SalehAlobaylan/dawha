@@ -26,6 +26,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobworker"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/google/uuid"
 )
 
@@ -34,7 +35,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL")})
+	telemetryConfig := telemetry.ConfigFromEnvironment(os.Getenv)
+	telemetryConfig.ServiceName = "dawha-analysis-worker"
+	_, metrics := telemetry.New(telemetryConfig)
+	stopMetrics, err := metrics.StartExporter(ctx, telemetry.ExporterConfig{
+		Enabled: telemetryConfig.Metrics,
+		Addr:    telemetryConfig.MetricsAddr,
+	})
+	if err != nil {
+		logger.Fatalf("the metrics exporter could not start: %v", err)
+	}
+	defer func() { _ = stopMetrics() }()
+	logger.Printf("telemetry: %s", telemetryConfig.Describe())
+
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: os.Getenv("DATABASE_URL"), Tracer: telemetry.NewQueryTracer(metrics)})
 	if err != nil || pool == nil {
 		logger.Fatal("analysis worker requires DATABASE_URL")
 	}
@@ -43,7 +57,7 @@ func main() {
 	queue := jobs.NewService(pool)
 	queue.LeaseDuration = durationEnvironment("ANALYSIS_WORKER_LEASE_DURATION", jobs.DefaultLeaseDuration)
 	queue.HeartbeatInterval = durationEnvironment("ANALYSIS_WORKER_HEARTBEAT_INTERVAL", jobs.DefaultHeartbeatInterval)
-	provider := ai.NewHTTPClient(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
+	provider := ai.NewClient(ai.NewHTTPProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")).WithMetrics(metrics))
 	handler, err := analysisworker.New(pool, queue, provider, logger)
 	if err != nil {
 		logger.Fatal(err)
@@ -54,6 +68,7 @@ func main() {
 		Handlers:   []jobworker.Handler{handler},
 		Logger:     logger,
 		StaleAfter: jobworker.DefaultStaleAfter,
+		Metrics:    metrics,
 	}
 	if err := jobworker.Run(ctx, config); err != nil && ctx.Err() == nil {
 		logger.Fatal(err)

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 )
 
 var (
@@ -201,6 +203,10 @@ type HTTPProvider struct {
 	HTTPClient *http.Client
 	MaxRetries int
 	RetryBase  time.Duration
+	// Metrics records one sample per call. Nil means no metrics, which is the
+	// default in every existing caller, so nothing about this field changes the
+	// behaviour of a deployment that has not asked for telemetry.
+	Metrics *telemetry.Metrics
 }
 
 func NewHTTPProvider(baseURL string) *HTTPProvider {
@@ -210,6 +216,18 @@ func NewHTTPProvider(baseURL string) *HTTPProvider {
 		MaxRetries: 2,
 		RetryBase:  200 * time.Millisecond,
 	}
+}
+
+// WithMetrics returns the same provider, recording into a registry. The call site
+// is in the ai-research HTTP client, which every process in this repository builds
+// the same way, so this is one line in one constructor rather than a field
+// somebody has to remember.
+func (p *HTTPProvider) WithMetrics(metrics *telemetry.Metrics) *HTTPProvider {
+	if p == nil {
+		return nil
+	}
+	p.Metrics = metrics
+	return p
 }
 
 type Client struct {
@@ -405,7 +423,32 @@ func callClient[T any](c *Client, ctx context.Context, call func(context.Context
 	return result, err
 }
 
+// post is the single choke point every AI call goes through, which is why it is
+// also the single place a call is measured. The measurement is three things: the
+// endpoint (as an enumeration, never the path a caller chose), how long it took,
+// and whether it worked - plus, where the provider reports usage, the number of
+// units it was billed. The request body is not measured, not sampled and not
+// logged: an AI call's input is exactly the source text this repository exists to
+// keep careful, and a telemetry package that grew a field for it would be a bug
+// nobody would find by reading the metric names.
 func (p *HTTPProvider) post(ctx context.Context, path string, input, output any) error {
+	operation := telemetry.AIOperationFor(path)
+	started := time.Now()
+	err := p.postOnce(ctx, path, input, output)
+	if p.Metrics.Enabled() {
+		outcome := telemetry.AIOutcomeOK
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(ctx.Err(), context.DeadlineExceeded):
+			outcome = telemetry.AIOutcomeTimeout
+		case err != nil:
+			outcome = telemetry.AIOutcomeError
+		}
+		p.Metrics.AICall(operation, outcome, time.Since(started), 0)
+	}
+	return err
+}
+
+func (p *HTTPProvider) postOnce(ctx context.Context, path string, input, output any) error {
 	if p == nil || p.BaseURL == "" {
 		return ErrUnavailable
 	}

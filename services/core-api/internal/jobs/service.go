@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -29,6 +30,43 @@ var (
 	// finished or failed.
 	ErrLeaseLost = errors.New("job lease is no longer held")
 )
+
+// withRequestID stamps the calling request's id into the job payload.
+//
+// This is the seam where correlation crosses a process boundary: a job enqueued
+// inside a request carries that request's id, and the worker that claims it reads
+// the id back out, so a line that fails at 3am in a worker is traceable to the
+// upload that caused it. It happens in ONE place - the enqueue - rather than in
+// each of the five packages that define a job payload, which is the only way it
+// stays true as more job types are added.
+//
+// A job enqueued outside any request (a recovery pass, a scheduled sweep) simply
+// gets no id, which is the truth: there was no request.
+func withRequestID(ctx context.Context, input EnqueueInput) EnqueueInput {
+	id := telemetry.RequestID(ctx)
+	if id == "" || len(input.Payload) == 0 {
+		return input
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(input.Payload, &payload); err != nil || payload == nil {
+		// A payload that is not a JSON object cannot carry an id, and refusing the
+		// enqueue over it would be a worse outcome than an uncorrelated job.
+		return input
+	}
+	if existing, ok := payload[telemetry.RequestIDPayloadKey].(string); ok && existing != "" {
+		// Something already set one. Not overwriting it keeps the id of the
+		// request that actually caused the work rather than the last request to
+		// touch the row.
+		return input
+	}
+	telemetry.PropagateRequestID(ctx, payload)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return input
+	}
+	input.Payload = encoded
+	return input
+}
 
 type EnqueueInput struct {
 	Type           string          `json:"type"`
@@ -148,6 +186,7 @@ func (s *Service) enqueue(ctx context.Context, q Executor, input EnqueueInput) (
 	if err != nil {
 		return EnqueueResult{}, err
 	}
+	input = withRequestID(ctx, input)
 	var runAt any
 	if input.RunAt != nil {
 		runAt = input.RunAt.UTC()
@@ -222,6 +261,29 @@ func (s *Service) Get(ctx context.Context, jobID string) (JobView, error) {
 		return JobView{}, err
 	}
 	return job, nil
+}
+
+// Depth counts the jobs of a type that are ready to be claimed right now.
+//
+// It counts ROWS and nothing else: no payload, no error text, no identifier. It
+// exists so a worker can publish how deep its queue is, and a depth gauge built
+// from anything a job carries would be a metric holding a copy of the queue.
+func (s *Service) Depth(ctx context.Context, jobType string) (int, error) {
+	if err := s.ready(); err != nil {
+		return 0, err
+	}
+	jobType, err := validateJobType(jobType)
+	if err != nil {
+		return 0, err
+	}
+	var depth int
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM jobs
+		WHERE status = 'queued' AND run_at <= now() AND ($1 = '' OR type = $1)
+	`, jobType).Scan(&depth); err != nil {
+		return 0, err
+	}
+	return depth, nil
 }
 
 func (s *Service) Claim(ctx context.Context, input ClaimInput) (JobView, error) {
