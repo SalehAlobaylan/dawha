@@ -12,11 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// GetProcessing answers with the whole candidate list, which is the behaviour the
+// endpoint had before it learned to page. A caller that wants a bounded page asks
+// for one through GetProcessingPage.
 func (s *Service) GetProcessing(ctx context.Context, sourceID, actorID string) (ProcessingView, error) {
+	return s.GetProcessingPage(ctx, sourceID, actorID, CandidatePage{})
+}
+
+// GetProcessingPage answers with one page of candidates.
+//
+// The default page is deliberately the whole list. Every candidate the endpoint
+// returned before is still returned, so no reviewed decision can disappear from
+// the only client that reads this response; a caller that opts into a limit
+// gets a bounded page and is told what the source holds in total.
+func (s *Service) GetProcessingPage(ctx context.Context, sourceID, actorID string, page CandidatePage) (ProcessingView, error) {
 	if err := s.ready(); err != nil {
 		return ProcessingView{}, err
 	}
 	sourceUUID, actorUUID, err := parseIDs(sourceID, actorID)
+	if err != nil {
+		return ProcessingView{}, err
+	}
+	page, err = validateCandidatePage(page)
 	if err != nil {
 		return ProcessingView{}, err
 	}
@@ -35,11 +52,18 @@ func (s *Service) GetProcessing(ctx context.Context, sourceID, actorID string) (
 	if err != nil {
 		return ProcessingView{}, err
 	}
-	candidates, err := s.candidates(ctx, sourceUUID)
+	pageResult, err := s.candidates(ctx, sourceUUID, page)
 	if err != nil {
 		return ProcessingView{}, err
 	}
-	return ProcessingView{SourceID: sourceUUID.String(), Files: files, Runs: runs, Candidates: candidates}, nil
+	return ProcessingView{
+		SourceID:            sourceUUID.String(),
+		Files:               files,
+		Runs:                runs,
+		Candidates:          pageResult.Candidates,
+		CandidatesTotal:     pageResult.Total,
+		CandidatesTruncated: pageResult.Truncated,
+	}, nil
 }
 
 func (s *Service) ReviewCandidate(ctx context.Context, candidateID, actorID string, input ReviewInput) (CandidateView, error) {
@@ -259,34 +283,107 @@ func (s *Service) runs(ctx context.Context, sourceID uuid.UUID) ([]ProcessingRun
 	return items, rows.Err()
 }
 
-func (s *Service) candidates(ctx context.Context, sourceID uuid.UUID) ([]CandidateView, error) {
-	rows, err := s.Pool.Query(ctx, candidateSelect+` WHERE c.source_id = $1 ORDER BY c.created_at, c.id LIMIT $2`, sourceID, MaxCandidates)
+// candidatePage is one bounded page of candidates plus what the source holds in
+// total, so a caller can tell a short list from a truncated one.
+type candidatePageResult struct {
+	Candidates []CandidateView
+	Total      int
+	Truncated  bool
+}
+
+// candidates reads the candidates of one source and the review history of all of
+// them in two round trips.
+//
+// The review history used to be one query per candidate, which made the endpoint
+// cost 1 + N statements for N candidates while returning exactly the same rows.
+// The single grouped query below is bounded by the candidate ids the page
+// produced, so a source with thousands of reviewed candidates costs the same two
+// statements as a source with none.
+func (s *Service) candidates(ctx context.Context, sourceID uuid.UUID, page CandidatePage) (candidatePageResult, error) {
+	ids := make([]uuid.UUID, 0)
+	// The total comes from a scalar aggregate joined to the page by LATERAL, so a
+	// single statement reports both how many candidates the source holds and which
+	// ids this page reads - including when the page is empty, where a window
+	// function would have returned no row to read the count from. A separate COUNT
+	// would cost a round trip per page for a number the page had to visit anyway.
+	total := 0
+	rows, err := s.Pool.Query(ctx, `
+		SELECT totals.total, page.id
+		FROM (SELECT count(*) AS total FROM source_candidates WHERE source_id = $1) totals
+		LEFT JOIN LATERAL (
+			SELECT c.id::text AS id
+			FROM source_candidates c
+			WHERE c.source_id = $1
+			ORDER BY c.created_at, c.id
+			OFFSET $2 LIMIT $3
+		) page ON TRUE
+	`, sourceID, page.Offset, page.Limit)
 	if err != nil {
-		return nil, err
+		return candidatePageResult{}, err
 	}
-	defer rows.Close()
-	items := make([]CandidateView, 0)
 	for rows.Next() {
-		item, err := scanCandidate(rows)
-		if err != nil {
-			return nil, err
+		var id *string
+		if err := rows.Scan(&total, &id); err != nil {
+			rows.Close()
+			return candidatePageResult{}, err
 		}
-		items = append(items, item)
+		if id == nil {
+			continue
+		}
+		parsed, parseErr := uuid.Parse(*id)
+		if parseErr != nil {
+			rows.Close()
+			return candidatePageResult{}, parseErr
+		}
+		ids = append(ids, parsed)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		rows.Close()
+		return candidatePageResult{}, err
 	}
-	for index := range items {
-		id, err := uuid.Parse(items[index].ID)
+	rows.Close()
+
+	// The ids are read first because they are the argument of the grouped review
+	// query. A page with no candidates therefore costs one statement, not two.
+	items := make([]CandidateView, 0, len(ids))
+	if len(ids) > 0 {
+		rows, err := s.Pool.Query(ctx, candidateSelect+` WHERE c.id = ANY($1) ORDER BY c.created_at, c.id`, ids)
 		if err != nil {
-			return nil, err
+			return candidatePageResult{}, err
 		}
-		items[index].Reviews, err = s.candidateReviews(ctx, id)
+		for rows.Next() {
+			item, scanErr := scanCandidate(rows)
+			if scanErr != nil {
+				rows.Close()
+				return candidatePageResult{}, scanErr
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return candidatePageResult{}, err
+		}
+		rows.Close()
+		reviews, err := s.candidateReviews(ctx, ids)
 		if err != nil {
-			return nil, err
+			return candidatePageResult{}, err
+		}
+		for index := range items {
+			parsed, parseErr := uuid.Parse(items[index].ID)
+			if parseErr != nil {
+				return candidatePageResult{}, parseErr
+			}
+			items[index].Reviews = reviews[parsed]
 		}
 	}
-	return items, nil
+	// The page holds fewer candidates than the source does whenever the offset
+	// plus the ids read stop short of the total. An empty page is not truncation:
+	// it may simply be past the end of the list.
+	return candidatePageResult{
+		Candidates: items,
+		Total:      total,
+		Truncated:  page.Offset+len(ids) < total,
+	}, nil
 }
 
 func (s *Service) getCandidate(ctx context.Context, candidateID uuid.UUID) (CandidateView, error) {
@@ -297,32 +394,68 @@ func (s *Service) getCandidate(ctx context.Context, candidateID uuid.UUID) (Cand
 		}
 		return CandidateView{}, err
 	}
-	item.Reviews, err = s.candidateReviews(ctx, candidateID)
-	return item, err
+	reviews, err := s.candidateReviews(ctx, []uuid.UUID{candidateID})
+	if err != nil {
+		return CandidateView{}, err
+	}
+	item.Reviews = reviews[candidateID]
+	return item, nil
 }
 
-func (s *Service) candidateReviews(ctx context.Context, candidateID uuid.UUID) ([]CandidateReviewView, error) {
+// candidateReviews loads the review history of every named candidate in one
+// grouped query, keyed by candidate id.
+//
+// The grouping is done here rather than in SQL so the per-candidate order is the
+// one the list always had, and every candidate the caller asked about is present
+// in the map with an empty slice rather than absent: the response renders reviews
+// as a list, and a candidate with no decision must read as "none yet" and not as
+// a missing field.
+func (s *Service) candidateReviews(ctx context.Context, candidateIDs []uuid.UUID) (map[uuid.UUID][]CandidateReviewView, error) {
+	grouped := make(map[uuid.UUID][]CandidateReviewView, len(candidateIDs))
+	for _, candidateID := range candidateIDs {
+		grouped[candidateID] = make([]CandidateReviewView, 0)
+	}
+	if len(candidateIDs) == 0 {
+		return grouped, nil
+	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, reviewer_id, decision, note_ar, created_at
-		FROM source_candidate_reviews WHERE candidate_id = $1 ORDER BY created_at DESC
-	`, candidateID)
+		SELECT candidate_id, id, reviewer_id, decision, note_ar, created_at
+		FROM source_candidate_reviews WHERE candidate_id = ANY($1) ORDER BY candidate_id, created_at DESC, id DESC
+	`, candidateIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := make([]CandidateReviewView, 0)
 	for rows.Next() {
 		var item CandidateReviewView
-		var reviewerID pgtype.UUID
+		var candidateID, reviewerID pgtype.UUID
 		var note pgtype.Text
-		if err := rows.Scan(&item.ID, &reviewerID, &item.Decision, &note, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&candidateID, &item.ID, &reviewerID, &item.Decision, &note, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.ReviewerID = uuidString(reviewerID)
 		item.NoteAR = textValue(note)
-		items = append(items, item)
+		grouped[uuidValue(candidateID)] = append(grouped[uuidValue(candidateID)], item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return grouped, nil
+}
+
+// validateCandidatePage bounds a requested page. The zero page is the whole list
+// up to MaxCandidates, which is what the endpoint returned before it could page.
+func validateCandidatePage(page CandidatePage) (CandidatePage, error) {
+	if page.Offset < 0 {
+		return CandidatePage{}, ErrValidation
+	}
+	if page.Limit < 0 || page.Limit > MaxCandidates {
+		return CandidatePage{}, ErrValidation
+	}
+	if page.Limit == 0 {
+		page.Limit = MaxCandidates
+	}
+	return page, nil
 }
 
 const candidateSelect = `

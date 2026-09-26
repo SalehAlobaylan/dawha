@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
@@ -55,12 +56,37 @@ func (h sourceProcessingHandler) getProcessing(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	result, err := h.Service.GetProcessing(r.Context(), r.PathValue("sourceID"), user.ID)
+	page, ok := candidatePage(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.GetProcessingPage(r.Context(), r.PathValue("sourceID"), user.ID, page)
 	if err != nil {
 		writeSourceProcessingError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// candidatePage reads the optional candidate page from the query string. No
+// parameters is the whole list, so a caller that never heard of pagination sees
+// exactly what it saw before.
+func candidatePage(w http.ResponseWriter, r *http.Request) (sourceprocessing.CandidatePage, bool) {
+	page := sourceprocessing.CandidatePage{}
+	query := r.URL.Query()
+	for name, target := range map[string]*int{"limit": &page.Limit, "offset": &page.Offset} {
+		value := query.Get(name)
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": name + " must be a number"})
+			return sourceprocessing.CandidatePage{}, false
+		}
+		*target = parsed
+	}
+	return page, true
 }
 
 func (h sourceProcessingHandler) reviewCandidate(w http.ResponseWriter, r *http.Request) {

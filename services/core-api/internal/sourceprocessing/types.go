@@ -128,10 +128,32 @@ type CandidateReviewView struct {
 }
 
 type ProcessingView struct {
-	SourceID   string              `json:"sourceId"`
-	Files      []FileView          `json:"files"`
-	Runs       []ProcessingRunView `json:"runs"`
-	Candidates []CandidateView     `json:"candidates"`
+	SourceID string              `json:"sourceId"`
+	Files    []FileView          `json:"files"`
+	Runs     []ProcessingRunView `json:"runs"`
+	// Candidates is the page asked for. With the default page it is every
+	// candidate the source holds, up to MaxCandidates, which is what the
+	// endpoint returned before it could page.
+	Candidates []CandidateView `json:"candidates"`
+	// CandidatesTotal is how many candidates the source holds, so a caller can
+	// tell a complete list from a page without counting the array it received.
+	CandidatesTotal int `json:"candidatesTotal"`
+	// CandidatesTruncated reports that the page is shorter than the source, so a
+	// reviewer reading the first page cannot mistake a bound for the whole set.
+	CandidatesTruncated bool `json:"candidatesTruncated"`
+}
+
+// CandidatePage is one bounded page of the source's candidates. The zero value
+// is the whole list, bounded by MaxCandidates.
+type CandidatePage struct {
+	// Limit is the maximum number of candidates to return. Zero means the whole
+	// list. A limit above MaxCandidates is refused rather than clamped, so a
+	// caller that asked for too much learns about it.
+	Limit int
+	// Offset is how many candidates to skip. The list is ordered by
+	// (created_at, id), a total order, so an offset cannot return a row twice
+	// or drop one between two pages.
+	Offset int
 }
 
 type ReviewInput struct {
