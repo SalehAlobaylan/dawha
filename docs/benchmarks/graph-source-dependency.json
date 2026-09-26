@@ -1,0 +1,619 @@
+{
+  "generated_at": "2026-09-26T17:41:05Z",
+  "command": "make graph-benchmark",
+  "commit": "4e54553",
+  "go_version": "go1.25.13",
+  "num_cpu": 8,
+  "postgres_server_version": "16.15",
+  "iterations": 20,
+  "percentile_method": "nearest rank: p50 is the slowest sample of the lower half, p95 is the ceil(0.95*n)-th slowest sample; no interpolation, so every reported percentile is an observation that happened",
+  "total_requests": 66,
+  "truncation_rate": 0.3333,
+  "truncation_rate_note": "the run-level truncation rate is over the measured neighborhood requests, and it is a property of the three chosen sizes rather than a measurement of how often real traffic truncates: a graph below or at the bounds cannot truncate and a graph above them must",
+  "bounds": {
+    "max_depth": 2,
+    "max_nodes": 200,
+    "max_edges": 200
+  },
+  "scenarios": [
+    {
+      "name": "below-50-nodes-49-edges",
+      "description": "root plus 49 direct dependencies: a quarter of the node bound and a quarter of the edge bound, and the case where truncation must NOT be reported",
+      "root_source_id": "fc8546d5-9437-0027-0000-000000000000",
+      "available_nodes": 50,
+      "available_edges": 49,
+      "returned_nodes": 50,
+      "returned_edges": 49,
+      "node_retention": 1,
+      "edge_retention": 1,
+      "requests": 22,
+      "truncated_requests": 0,
+      "truncation_rate": 0,
+      "truncated": false,
+      "truncation_reasons": [],
+      "status": "structural",
+      "retrieval": {
+        "samples": 20,
+        "first_call_ms": 61.341,
+        "min_ms": 4.121,
+        "p50_ms": 4.631,
+        "p95_ms": 8.007,
+        "max_ms": 61.341,
+        "mean_ms": 8.071,
+        "bytes_per_op": 184072,
+        "allocs_per_op": 602
+      },
+      "neighborhood": {
+        "samples": 20,
+        "first_call_ms": 63.078,
+        "min_ms": 33.442,
+        "p50_ms": 36.023,
+        "p95_ms": 37.623,
+        "max_ms": 63.078,
+        "mean_ms": 37.541,
+        "bytes_per_op": 591249,
+        "allocs_per_op": 10351
+      },
+      "community_detection": {
+        "samples": 20,
+        "first_call_ms": 2.443,
+        "min_ms": 1.376,
+        "p50_ms": 1.842,
+        "p95_ms": 2.323,
+        "max_ms": 2.443,
+        "mean_ms": 1.88,
+        "bytes_per_op": 2787440,
+        "allocs_per_op": 5428
+      },
+      "communities": {
+        "samples": 20,
+        "first_call_ms": 40.702,
+        "min_ms": 38.303,
+        "p50_ms": 42.338,
+        "p95_ms": 50.229,
+        "max_ms": 55.888,
+        "mean_ms": 43.307,
+        "bytes_per_op": 3549668,
+        "allocs_per_op": 15822
+      },
+      "partition_count": 1,
+      "largest_community": 50,
+      "inferred_merge_iterations": 49,
+      "query_plan": {
+        "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
+        "planning_ms": 2.172,
+        "execution_ms": 2.624,
+        "shared_hit_blocks": 164,
+        "shared_read_blocks": 0,
+        "node_types": {
+          "Aggregate": 12,
+          "Append": 1,
+          "CTE Scan": 24,
+          "Hash": 3,
+          "Hash Join": 3,
+          "Index Scan": 1,
+          "Limit": 3,
+          "Memoize": 1,
+          "Nested Loop": 6,
+          "ProjectSet": 1,
+          "Recursive Union": 1,
+          "Seq Scan": 3,
+          "Sort": 6,
+          "Unique": 1,
+          "WindowAgg": 3,
+          "WorkTable Scan": 1
+        },
+        "scans": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.07,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 50,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.017,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 54,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.013,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 2,
+            "actual_total_time_ms": 0.006,
+            "shared_hit_blocks": 4,
+            "shared_read_blocks": 0
+          }
+        ],
+        "top_nodes": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.07,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 50,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.017,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 54,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.013,
+            "shared_hit_blocks": 1,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 2,
+            "actual_total_time_ms": 0.006,
+            "shared_hit_blocks": 4,
+            "shared_read_blocks": 0
+          }
+        ],
+        "shared_buffers_used": true,
+        "root": {
+          "node_type": "Seq Scan",
+          "relation": "sources",
+          "actual_rows": 1,
+          "actual_loops": 1,
+          "actual_total_time_ms": 0.07,
+          "shared_hit_blocks": 1,
+          "shared_read_blocks": 0
+        },
+        "statement_timeout": "2000ms, as the service sets it"
+      },
+      "unbounded_probe": {
+        "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
+        "reachable_nodes": 50,
+        "reachable_edges": 49,
+        "elapsed_ms": 3.57,
+        "timed_out": false,
+        "overshoot_factor_vs_max_nodes": 0.25,
+        "matches_expected_shape": true
+      },
+      "stability": {
+        "path_id": "0e22cccd-6b3b-55e9-a878-981c23587631",
+        "input_fingerprint": "ade72e202147b1082ecad75e05775de2b82190a473a3ebcdace859dc72778295",
+        "edge_set_fingerprint": "7a9fa8b2fbcacc0cb701efdc0e9f95de8439d8e13ac70cb9297362aebd26d808",
+        "partition_fingerprint": "8a7446f30356a11a2ef46daf4f95a43612a8c80928cf9e3e470f17158b9b2f27",
+        "repeated_requests": 22,
+        "stable_within_the_run": true,
+        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it"
+      }
+    },
+    {
+      "name": "at-200-nodes-200-edges",
+      "description": "root plus 199 direct dependencies and one extra dependency statement between two of them: exactly both bounds, and the case where a bound that fired here would carry no information",
+      "root_source_id": "6e22c776-bc33-ecaa-0000-000000000000",
+      "available_nodes": 200,
+      "available_edges": 200,
+      "returned_nodes": 200,
+      "returned_edges": 200,
+      "node_retention": 1,
+      "edge_retention": 1,
+      "requests": 22,
+      "truncated_requests": 0,
+      "truncation_rate": 0,
+      "truncated": false,
+      "truncation_reasons": [],
+      "status": "structural",
+      "retrieval": {
+        "samples": 20,
+        "first_call_ms": 19.591,
+        "min_ms": 13.875,
+        "p50_ms": 18.001,
+        "p95_ms": 24.649,
+        "max_ms": 39.998,
+        "mean_ms": 19.284,
+        "bytes_per_op": 750743,
+        "allocs_per_op": 2117
+      },
+      "neighborhood": {
+        "samples": 20,
+        "first_call_ms": 172.69,
+        "min_ms": 138.976,
+        "p50_ms": 158.721,
+        "p95_ms": 186.516,
+        "max_ms": 187.035,
+        "mean_ms": 162.456,
+        "bytes_per_op": 2482939,
+        "allocs_per_op": 41611
+      },
+      "community_detection": {
+        "samples": 20,
+        "first_call_ms": 87.527,
+        "min_ms": 87.527,
+        "p50_ms": 89.944,
+        "p95_ms": 91.574,
+        "max_ms": 93.582,
+        "mean_ms": 90.055,
+        "bytes_per_op": 160749864,
+        "allocs_per_op": 82307
+      },
+      "communities": {
+        "samples": 20,
+        "first_call_ms": 268.215,
+        "min_ms": 246.191,
+        "p50_ms": 277.306,
+        "p95_ms": 373.163,
+        "max_ms": 438.361,
+        "mean_ms": 293.499,
+        "bytes_per_op": 163923073,
+        "allocs_per_op": 123979
+      },
+      "partition_count": 2,
+      "largest_community": 198,
+      "inferred_merge_iterations": 198,
+      "query_plan": {
+        "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
+        "planning_ms": 3.102,
+        "execution_ms": 10.679,
+        "shared_hit_blocks": 458,
+        "shared_read_blocks": 0,
+        "node_types": {
+          "Aggregate": 12,
+          "Append": 1,
+          "CTE Scan": 24,
+          "Hash": 3,
+          "Hash Join": 3,
+          "Index Scan": 2,
+          "Limit": 3,
+          "Memoize": 1,
+          "Nested Loop": 6,
+          "ProjectSet": 1,
+          "Recursive Union": 1,
+          "Seq Scan": 2,
+          "Sort": 6,
+          "Unique": 1,
+          "WindowAgg": 3,
+          "WorkTable Scan": 1
+        },
+        "scans": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 250,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.123,
+            "shared_hit_blocks": 4,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 254,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.101,
+            "shared_hit_blocks": 5,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.029,
+            "shared_hit_blocks": 2,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 4,
+            "actual_total_time_ms": 0.007,
+            "shared_hit_blocks": 8,
+            "shared_read_blocks": 0
+          }
+        ],
+        "top_nodes": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 250,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.123,
+            "shared_hit_blocks": 4,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 254,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.101,
+            "shared_hit_blocks": 5,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.029,
+            "shared_hit_blocks": 2,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 4,
+            "actual_total_time_ms": 0.007,
+            "shared_hit_blocks": 8,
+            "shared_read_blocks": 0
+          }
+        ],
+        "shared_buffers_used": true,
+        "root": {
+          "node_type": "Seq Scan",
+          "relation": "source_dependencies",
+          "actual_rows": 250,
+          "actual_loops": 1,
+          "actual_total_time_ms": 0.123,
+          "shared_hit_blocks": 4,
+          "shared_read_blocks": 0
+        },
+        "statement_timeout": "2000ms, as the service sets it"
+      },
+      "unbounded_probe": {
+        "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
+        "reachable_nodes": 200,
+        "reachable_edges": 200,
+        "elapsed_ms": 4.322,
+        "timed_out": false,
+        "overshoot_factor_vs_max_nodes": 1,
+        "matches_expected_shape": true
+      },
+      "stability": {
+        "path_id": "fa6a2f84-4267-55ab-86e6-5a05603d8e75",
+        "input_fingerprint": "d4c498dea69da5cc57971fdbdf16d9d19221d450322b49be3ae54caa8209928d",
+        "edge_set_fingerprint": "ed66e39c2753f74643eb3aa929763bbe1a2952e7ee20d936a84cb4d8cc3dfc26",
+        "partition_fingerprint": "78224af653cd2bda974fb2635e5394e59f09fb831089a8a99ee60a9dffcdc2bf",
+        "repeated_requests": 22,
+        "stable_within_the_run": true,
+        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it"
+      }
+    },
+    {
+      "name": "above-1201-nodes-1599-edges",
+      "description": "root plus 400 direct dependencies, each with 2 of its own and a second dependency statement on its predecessor: six times the node bound and eight times the edge bound, dense enough inside the bounded node set that both limits fire",
+      "root_source_id": "2c987417-37f6-be87-0000-000000000000",
+      "available_nodes": 1201,
+      "available_edges": 1599,
+      "returned_nodes": 200,
+      "returned_edges": 200,
+      "node_retention": 0.1665,
+      "edge_retention": 0.1251,
+      "requests": 22,
+      "truncated_requests": 22,
+      "truncation_rate": 1,
+      "truncated": true,
+      "truncation_reasons": [
+        "node_limit",
+        "edge_limit"
+      ],
+      "status": "partial",
+      "retrieval": {
+        "samples": 20,
+        "first_call_ms": 21.444,
+        "min_ms": 18.488,
+        "p50_ms": 23.347,
+        "p95_ms": 44.292,
+        "max_ms": 48.635,
+        "mean_ms": 25.789,
+        "bytes_per_op": 742468,
+        "allocs_per_op": 2212
+      },
+      "neighborhood": {
+        "samples": 20,
+        "first_call_ms": 367.297,
+        "min_ms": 166.838,
+        "p50_ms": 183.158,
+        "p95_ms": 213.284,
+        "max_ms": 367.297,
+        "mean_ms": 192.899,
+        "bytes_per_op": 2473379,
+        "allocs_per_op": 41719
+      },
+      "community_detection": {
+        "samples": 20,
+        "first_call_ms": 17.148,
+        "min_ms": 16.492,
+        "p50_ms": 19.765,
+        "p95_ms": 26.964,
+        "max_ms": 27.439,
+        "mean_ms": 21.342,
+        "bytes_per_op": 11541288,
+        "allocs_per_op": 54912
+      },
+      "communities": {
+        "samples": 20,
+        "first_call_ms": 279.967,
+        "min_ms": 184.876,
+        "p50_ms": 209.202,
+        "p95_ms": 220.507,
+        "max_ms": 279.967,
+        "mean_ms": 208.034,
+        "bytes_per_op": 14723874,
+        "allocs_per_op": 96675
+      },
+      "partition_count": 65,
+      "largest_community": 45,
+      "inferred_merge_iterations": 135,
+      "query_plan": {
+        "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
+        "planning_ms": 2.604,
+        "execution_ms": 14.649,
+        "shared_hit_blocks": 2381,
+        "shared_read_blocks": 0,
+        "node_types": {
+          "Aggregate": 12,
+          "Append": 1,
+          "CTE Scan": 24,
+          "Hash": 4,
+          "Hash Join": 4,
+          "Index Scan": 1,
+          "Limit": 3,
+          "Nested Loop": 5,
+          "ProjectSet": 1,
+          "Recursive Union": 1,
+          "Seq Scan": 3,
+          "Sort": 6,
+          "Unique": 1,
+          "WindowAgg": 3,
+          "WorkTable Scan": 1
+        },
+        "scans": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 1849,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.65,
+            "shared_hit_blocks": 32,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1455,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.452,
+            "shared_hit_blocks": 29,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1455,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.413,
+            "shared_hit_blocks": 29,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.019,
+            "shared_hit_blocks": 3,
+            "shared_read_blocks": 0
+          }
+        ],
+        "top_nodes": [
+          {
+            "node_type": "Seq Scan",
+            "relation": "source_dependencies",
+            "actual_rows": 1849,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.65,
+            "shared_hit_blocks": 32,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1455,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.452,
+            "shared_hit_blocks": 29,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Seq Scan",
+            "relation": "sources",
+            "actual_rows": 1455,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.413,
+            "shared_hit_blocks": 29,
+            "shared_read_blocks": 0
+          },
+          {
+            "node_type": "Index Scan",
+            "relation": "sources",
+            "index": "sources_pkey",
+            "actual_rows": 1,
+            "actual_loops": 1,
+            "actual_total_time_ms": 0.019,
+            "shared_hit_blocks": 3,
+            "shared_read_blocks": 0
+          }
+        ],
+        "shared_buffers_used": true,
+        "root": {
+          "node_type": "Seq Scan",
+          "relation": "source_dependencies",
+          "actual_rows": 1849,
+          "actual_loops": 1,
+          "actual_total_time_ms": 0.65,
+          "shared_hit_blocks": 32,
+          "shared_read_blocks": 0
+        },
+        "statement_timeout": "2000ms, as the service sets it"
+      },
+      "unbounded_probe": {
+        "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
+        "reachable_nodes": 1201,
+        "reachable_edges": 1599,
+        "elapsed_ms": 14.453,
+        "timed_out": false,
+        "overshoot_factor_vs_max_nodes": 6.01,
+        "matches_expected_shape": true
+      },
+      "stability": {
+        "path_id": "2dee36a8-335a-5e05-b82d-b8f8974839ea",
+        "input_fingerprint": "a294b0667ffa50e8522ebccfc9e4c650ef471ac59b171b015c1031c809a1b64e",
+        "edge_set_fingerprint": "ee32fa3bb6cb5b8871256e16b8b375ff11c5aff85da51b145e8992d5b901fc39",
+        "partition_fingerprint": "76e91df751c8f38c5d4ba0a176fc4dd52941126ea65d50a92dcf9b9d8f766835",
+        "repeated_requests": 22,
+        "stable_within_the_run": true,
+        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it; the community partition ALSO differed, so the greedy loop's tie-breaking depends on that random edge order"
+      }
+    }
+  ],
+  "assertions": {
+    "bounded_output": true,
+    "truncation_reported_above_the_bound": true,
+    "no_truncation_at_the_bound": true,
+    "stable_results": true,
+    "seeded_shape_matches_traversal": true
+  }
+}

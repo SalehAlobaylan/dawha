@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval graph-benchmark e2e e2e-clean
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark e2e e2e-clean
 
 install:
 	npm install
@@ -66,6 +66,22 @@ migration-check:
 migration-test:
 	@infra/local/migration_test.sh
 
+# docs-check fails when a document cites a path or a line range that no longer
+# exists. It is in `verify` because the alternative is a status matrix and a
+# decision record that rot quietly: a citation to `graphrag.go:37-42` is a claim
+# about what is on those lines, and nothing else in this repository checks it.
+#
+# The checker reads Markdown links, inline `path` and `path:12-34` citations, and
+# the line range itself. It does not fetch external URLs - a documentation gate
+# that needs the network is a gate that gets skipped offline. Citations that point
+# at build output are named in the report rather than counted as broken, and the
+# one citation it deliberately leaves unresolved is listed with its reason in
+# REVIEWED_EXCEPTIONS inside the script, the same way a scanner suppression is.
+#
+#   make docs-check
+docs-check:
+	@python3 infra/local/check-doc-links.py
+
 # verify is the FAST gate and stays that way: lint, typecheck, unit tests and a
 # build. It needs no database, no browser and no service startup, so the default
 # developer loop never pays for acceptance coverage. DATABASE_URL is
@@ -75,7 +91,7 @@ migration-test:
 # It is the gate, and the gate is only worth something if it is the one everybody
 # runs. `verify-full` and `make e2e` both build on what it checks, and neither
 # replaces it.
-verify: lint typecheck test build
+verify: lint typecheck test build docs-check
 
 # generated-check fails when the committed sqlc output no longer matches what the
 # current db/migrations produce.
