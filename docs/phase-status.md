@@ -20,12 +20,12 @@ reading commit history:
 | `partial` | A code slice exists and works, and at least one acceptance criterion of the phase is unmet, unmeasurable, or only reachable through a path the product does not ship. |
 | `not started` | No code slice exists. |
 
-**"A code slice exists" is not "V1 acceptance is verified."** Almost every phase in
-this repository has code. That is not the interesting claim. The interesting claim
-is whether the phase's own acceptance list is satisfied, and this document marks
-the difference in the last column of every table rather than in a footnote, because
-a reader who sees "implemented" eleven times and stops reading has been told
-something false.
+**"A code slice exists" is not "V1 acceptance is verified."** All twenty-five
+phases in this repository have code. That is not the interesting claim, and on its
+own it is close to worthless. The interesting claim is whether the phase's own
+acceptance list is satisfied: twenty-one phases are `implemented` on that basis and
+four are `partial`, and every table below says which criterion is missing rather
+than leaving the reader to infer it from a status word.
 
 Two more words used below:
 
@@ -444,8 +444,10 @@ Marked against evidence, not against intent. "Proved" means a test in
 | 17 | ask a source-grounded research question | **partly proved: the answer is grounded in *a* citation, not always in one that supports it** | `journeys/09-research-query.spec.ts`; `citation_precision` 0.8182; **Blocker 2** |
 | 18 | see the five layers separated | proved | `internal/research/layers.go`; `TestRetrieveClaimsRelevance`, `TestRetrieveTreeInterpretationsRelevance`, `TestFindingDoesNotBecomeInterpretationByIdentity`; `EvidencePanels.tsx` |
 
-**Fifteen of eighteen are proved outright. Three carry a gap**, and two of those
-three are the same two code defects the rest of this document is about.
+**Fourteen of the eighteen are proved outright. Four carry a gap, and those four
+come from three defects** - steps 13 and 14 are the same dictionary-index defect
+seen from two screens, so the number of gaps is larger than the number of things
+that are wrong.
 
 ---
 
