@@ -455,3 +455,134 @@ func firstWords(query string) string {
 	}
 	return strings.Join(fields, " ")
 }
+
+// TestTheSweepRefusesToCallSuccessWhatTheDatabaseDisagreesWith is the guarantee this
+// plan was sent back for, tested directly.
+//
+// The failure that reached a shared database was a sweep that reported success with rows
+// still in it, and the rows that survived had one thing in common: nothing the sweep had
+// looked at. An `audit_log` row's `entity_id` and a job's `payload` have no constraint, so
+// a row that another transaction commits while the sweep is working is neither rejected
+// nor seen, and the in-transaction proof - a snapshot of our own transaction - cannot
+// notice it afterwards either.
+//
+// So the check that matters runs after the commit, on a fresh connection, and asks the
+// database rather than the transaction. This test drives that check with the two states it
+// exists to distinguish: a clean database must pass, and a database that disagrees must be
+// named rather than accepted. The second half is the one that matters, because it is the
+// behaviour that was missing.
+func TestTheSweepRefusesToCallSuccessWhatTheDatabaseDisagreesWith(t *testing.T) {
+	databaseURL := requireDatabase(t)
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	actor := uuid.New()
+	source := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مreon')`,
+		actor, "verify-"+actor.String()+"@example.test"); err != nil {
+		t.Fatalf("insert the actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sources (id, title_ar, source_type, visibility, created_by)
+	      VALUES ($1, 'مصدر', 'book', 'public', $2)`, source, actor); err != nil {
+		t.Fatalf("insert the source: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM audit_log WHERE entity_id = $1`, source)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM audit_log WHERE actor_id = $1`, actor)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actor)
+	})
+
+	// Clean: the actor is present, so the check must say so - by naming it.
+	err = verifyAfterCommit(ctx, pool, []string{actor.String()}, []string{actor.String(), source.String()})
+	if err == nil {
+		t.Fatal("the post-commit check accepted a database that still holds the actor it removed")
+	}
+	if !strings.Contains(err.Error(), actor.String()) && !strings.Contains(err.Error(), "verify-") {
+		t.Errorf("the post-commit check did not name the surviving actor: %v", err)
+	}
+
+	// Remove them, and the check must now pass: a sweep that has nothing left to find is
+	// allowed to say so.
+	if err := SweepActors(ctx, pool, []string{actor.String()}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if err := verifyAfterCommit(ctx, pool, []string{actor.String()}, []string{actor.String(), source.String()}); err != nil {
+		t.Errorf("the post-commit check rejected a database the sweep had just cleaned: %v", err)
+	}
+}
+
+// TestTheSweepFailsWhenARowLandsAfterItsSnapshot is the measured failure, constructed.
+//
+// It reproduces the exact state a shared database was left in: a synthetic actor and its
+// rows are gone, and an `audit_log` row that names one of the removed ids is still there,
+// because nothing in the schema would have rejected it and it arrived after the sweep had
+// taken its snapshot. The sweep must not be able to call that success, and the check that
+// says so has to name the row class rather than a count.
+func TestTheSweepFailsWhenARowLandsAfterItsSnapshot(t *testing.T) {
+	databaseURL := requireDatabase(t)
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	actor := uuid.New()
+	source := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'متأخر')`,
+		actor, "late-"+actor.String()+"@example.test"); err != nil {
+		t.Fatalf("insert the actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sources (id, title_ar, source_type, visibility, created_by)
+	      VALUES ($1, 'مصدر', 'book', 'public', $2)`, source, actor); err != nil {
+		t.Fatalf("insert the source: %v", err)
+	}
+	if err := SweepActors(ctx, pool, []string{actor.String()}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	// The source is gone. This row is the residue: it names the source, nothing constrains
+	// it, and it is the shape of the eleven rows a shared database was found holding.
+	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (actor_id, action, entity_type, entity_id)
+	      VALUES (NULL, 'source_processing_completed', 'source', $1)`, source); err != nil {
+		t.Fatalf("insert the late audit row: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM audit_log WHERE entity_id = $1`, source)
+	})
+
+	err = verifyAfterCommit(ctx, pool, []string{actor.String()}, []string{actor.String(), source.String()})
+	if err == nil {
+		t.Fatalf("a row that names a removed id is still in the database and the post-commit check " +
+			"called it success; that is the leak this plan was sent back for")
+	}
+	if !strings.Contains(err.Error(), "audit row") {
+		t.Errorf("the check did not say which row class was left behind: %v", err)
+	}
+	t.Logf("the check refuses: %v", err)
+}
+
+// TestASweepOfNothingIsNotAFailure keeps the post-commit check from being a gate on its own
+// bookkeeping: a fixture whose actor is already gone has nothing to prove and must not be
+// reported as a failure.
+func TestASweepOfNothingIsNotAFailure(t *testing.T) {
+	databaseURL := requireDatabase(t)
+	if err := SweepActors(context.Background(), openPool(t, databaseURL),
+		[]string{uuid.New().String()}); err != nil {
+		t.Errorf("sweeping an actor that does not exist reported %v; it has nothing to remove and "+
+			"nothing to prove", err)
+	}
+}
+
+func openPool(t *testing.T, databaseURL string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}

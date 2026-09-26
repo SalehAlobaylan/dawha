@@ -40,6 +40,7 @@ package testsupport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -49,6 +50,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // SyntheticEmailSuffixes are the reserved address domains a test actor's email
@@ -374,17 +376,33 @@ func sweep(ctx context.Context, pool Database, actorIDs []string) (map[string]in
 		}
 	}()
 
+	// touched is every id this sweep removes, and it exists for the check after the
+	// commit: a row that names one of them and is still here afterwards was committed by
+	// another transaction while the sweep was working.
+	touched := []string{}
 	passes := 0
+	// failures is the statements that were blocked on the pass that removed nothing. A
+	// statement blocked on an earlier pass and resolved by a later one is a retry, not a
+	// failure - two rows at the same level referencing each other always need a second
+	// pass - so only the last pass's failures are the sweep's verdict.
+	failures := []string{}
 	for pass := 1; pass <= maxSweepPasses; pass++ {
 		scopes, err := buildScopesWithEdges(ctx, tx, actorIDs, edges)
 		if err != nil {
 			return nil, 0, 0, err
 		}
+		if pass == 1 {
+			collected, err := collectScopeIDs(ctx, tx, scopes)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+			touched = collected
+		}
 		removed := 0
 		// The unlinked references go first: they name rows that are about to be
 		// deleted, and the traversal that proves nothing survived looks at the tables
 		// they belong to.
-		unlinked, err := deleteUnlinkedReferences(ctx, tx, scopes)
+		unlinked, err := deleteUnlinkedReferences(ctx, tx, scopes, actorIDs)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -392,7 +410,7 @@ func sweep(ctx context.Context, pool Database, actorIDs []string) (map[string]in
 			deleted[table] += count
 			removed += count
 		}
-		changed, err := deleteScopes(ctx, tx, scopes)
+		changed, passFailures, err := deleteScopes(ctx, tx, scopes)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -401,13 +419,21 @@ func sweep(ctx context.Context, pool Database, actorIDs []string) (map[string]in
 			removed += count
 		}
 		passes = pass
+		failures = passFailures
 		if removed == 0 {
 			break
 		}
 	}
 	if passes == maxSweepPasses {
-		return deleted, passes, skippedCascade, fmt.Errorf("cleanup did not converge in %d passes, so the dependency "+
-			"graph has a cycle the traversal cannot order; nothing was committed", maxSweepPasses)
+		return deleted, passes, skippedCascade, fmt.Errorf("cleanup did not converge in %d passes, "+
+			"so the dependency graph has an order the traversal cannot satisfy; the last pass could "+
+			"not remove: %s. Nothing was committed.", maxSweepPasses, strings.Join(dedupeStrings(failures), " | "))
+	}
+	if len(failures) > 0 {
+		return deleted, passes, skippedCascade, fmt.Errorf("cleanup could not remove %d row(s); a pass "+
+			"that changed nothing was still blocked by: %s. Nothing was committed. The constraint and "+
+			"key in each message name the row to delete, or the table to teach the traversal about.",
+			len(failures), strings.Join(dedupeStrings(failures), " | "))
 	}
 
 	// The proof, inside the same transaction.
@@ -428,7 +454,141 @@ func sweep(ctx context.Context, pool Database, actorIDs []string) (map[string]in
 		return nil, 0, 0, fmt.Errorf("commit cleanup: %w", err)
 	}
 	committed = true
+
+	// The second proof, and the one that closes the hole the in-transaction proof has.
+	//
+	// The proof above reads a snapshot taken inside our own transaction, so it is blind to
+	// anything another transaction commits while we are still working. Two things can then
+	// go wrong, and both were measured on a shared database this plan had to clean: a
+	// survivor nobody noticed, and a row that dangles at an entity the sweep has just
+	// deleted. `audit_log.entity_id` and `jobs.payload` have no constraint, so a row that
+	// lands late is not rejected by anything - it simply outlives the thing it was about,
+	// and every later count of `audit_log` is then wrong.
+	//
+	// This check runs on a fresh connection after the commit, so it sees the database as any
+	// other reader would, and it asks the question the transaction could not: is any row
+	// still here that names one of the ids this sweep removed?
+	if err := verifyAfterCommit(ctx, pool, actorIDs, touched); err != nil {
+		return deleted, passes, skippedCascade, err
+	}
 	return deleted, passes, skippedCascade, nil
+}
+
+// collectScopeIDs returns every id in the scope set as text, which is the form the
+// post-commit check compares against. Only tables with a single-column `id` contribute: a
+// composite-keyed table's rows are identified by more than one value, and the dangling-row
+// check exists for the polymorphic columns that name a row by its id alone.
+func collectScopeIDs(ctx context.Context, tx pgx.Tx, scopes *scopeSet) ([]string, error) {
+	ids := []string{}
+	for _, scope := range scopes.tables {
+		if scope.count == 0 || len(scope.columns) != 1 || scope.columns[0] != "id" {
+			continue
+		}
+		rows, err := tx.Query(ctx, `SELECT DISTINCT id::text FROM `+pgx.Identifier{scope.alias}.Sanitize()+
+			` WHERE id IS NOT NULL`)
+		if err != nil {
+			return nil, fmt.Errorf("collect the ids removed from %s: %w", scope.table, err)
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("collect the ids removed from %s: %w", scope.table, err)
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("collect the ids removed from %s: %w", scope.table, err)
+		}
+	}
+	return ids, nil
+}
+
+// verifyAfterCommit re-reads the database from outside the sweep's transaction and
+// refuses to let the sweep be called a success unless it is one.
+//
+// It checks two things, both of which an in-transaction snapshot cannot: that no actor
+// row survived, and that no unlinked reference - an audit row or a queued job - still
+// names one of the ids the sweep removed. The second is the one that catches a row another
+// transaction committed while the sweep was working, and it is the failure that put eleven
+// `audit_log` rows in a shared database pointing at sources and runs that no longer exist.
+func verifyAfterCommit(ctx context.Context, pool Database, actorIDs []string, touched []string) error {
+	rows, err := pool.Query(ctx,
+		`SELECT email FROM users WHERE id::text = ANY($1::text[]) ORDER BY email`, actorIDs)
+	if err != nil {
+		return fmt.Errorf("verify the sweep after it committed: %w", err)
+	}
+	survivors := []string{}
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			rows.Close()
+			return fmt.Errorf("verify the sweep after it committed: %w", err)
+		}
+		survivors = append(survivors, email)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("verify the sweep after it committed: %w", err)
+	}
+	if len(survivors) > 0 {
+		return fmt.Errorf(
+			"cleanup committed and reported success, but %d synthetic actor(s) are still in the "+
+				"database: %s. A row that blocked the delete was committed by another transaction "+
+				"after this sweep took its snapshot, so the in-transaction proof could not see it.",
+			len(survivors), strings.Join(survivors, ", "))
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+	// A row that names a removed id and is still here. jobs.payload is scanned as jsonb
+	// because that is where a job keeps its subject, and the cast is guarded exactly as
+	// apps/web/e2e/cleanup.sql guards it: a payload value need not be a uuid.
+	auditLeft, jobLeft, err := danglingReferences(ctx, pool, touched)
+	if err != nil {
+		return err
+	}
+	if auditLeft > 0 || jobLeft > 0 {
+		return fmt.Errorf(
+			"cleanup committed and reported success, but %d audit row(s) and %d job(s) still name "+
+				"ids this sweep removed. They were committed by another transaction after the sweep "+
+				"took its snapshot, and neither audit_log.entity_id nor jobs.payload has a constraint "+
+				"to reject them, so they would have outlived the rows they are about.",
+			auditLeft, jobLeft)
+	}
+	return nil
+}
+
+func danglingReferences(ctx context.Context, pool Database, touched []string) (int, int, error) {
+	var auditLeft int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log WHERE entity_id::text = ANY($1::text[])`, touched).Scan(&auditLeft); err != nil {
+		return 0, 0, fmt.Errorf("verify the audit rows the sweep removed entities for: %w", err)
+	}
+	var jobLeft int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM jobs j
+		WHERE EXISTS (SELECT 1 FROM jsonb_each_text(j.payload) AS entry
+		              WHERE entry.value ~ '^[0-9a-fA-F-]{36}$'
+		                AND entry.value = ANY($1::text[]))`, touched).Scan(&jobLeft); err != nil {
+		return 0, 0, fmt.Errorf("verify the jobs the sweep removed entities for: %w", err)
+	}
+	return auditLeft, jobLeft, nil
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 // cleanupEdge is one referential edge of the schema, and the traversal follows all of
@@ -735,31 +895,48 @@ func buildScopesWithEdges(ctx context.Context, tx pgx.Tx, actorIDs []string, edg
 // A child is always deleted before its parent, which is what a RESTRICT or NO ACTION
 // foreign key needs. That is a guarantee about the *depth* of a row and not about the
 // order two rows at the same depth were found in, so a statement can still be blocked
+// deleteScopes removes every reachable row, deepest level first, and reports how many
+// rows went per table.
+//
+// A child is always deleted before its parent, which is what a RESTRICT or NO ACTION
+// foreign key needs. That is a guarantee about the *depth* of a row and not about the
+// order two rows at the same depth were found in, so a statement can still be blocked
 // - a claim and the geographic association that cites it are both one step from the
 // actor that owns them, and which one goes first is an accident of the table list.
-// Each statement therefore runs behind a savepoint: one that is blocked is rolled
-// back on its own and left for the next pass, by which time the row blocking it is
-// gone. Without the savepoint the first blocked statement would abort the transaction
-// and throw away the deletes that already worked.
-func deleteScopes(ctx context.Context, tx pgx.Tx, scopes *scopeSet) (map[string]int, error) {
+// Each statement therefore runs behind a savepoint: one that is blocked is rolled back
+// on its own and left for the next pass, by which time the row blocking it is gone.
+// Without the savepoint the first blocked statement would abort the transaction and
+// throw away the deletes that already worked.
+//
+// A statement that fails is NOT the same as a statement that had nothing to do, and the
+// difference is the whole point. An earlier version of this function discarded the
+// error and moved on, which is the same defect as the `defer pool.Exec(...)` whose error
+// nobody read that started this: the run reports success while a row stays behind. Every
+// failure is collected here with the table, the level and PostgreSQL's own DETAIL line
+// - which names the constraint and the key still referencing it - and the caller turns a
+// surviving failure into a hard error. A failure that a later pass resolves anyway is
+// reported as a retry rather than as success.
+func deleteScopes(ctx context.Context, tx pgx.Tx, scopes *scopeSet) (map[string]int, []string, error) {
 	deleted := map[string]int{}
+	failures := []string{}
 	for level := scopes.level(); level >= 0; level-- {
 		for _, scope := range scopes.tables {
 			if scope.count == 0 || scope.maxLevel < level {
 				continue
 			}
 			if _, err := tx.Exec(ctx, `SAVEPOINT p012_sweep_delete`); err != nil {
-				return nil, fmt.Errorf("savepoint: %w", err)
+				return nil, nil, fmt.Errorf("savepoint: %w", err)
 			}
 			tag, err := tx.Exec(ctx, scope.deleteAt(level))
 			if err != nil {
 				if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT p012_sweep_delete`); rollbackErr != nil {
-					return nil, fmt.Errorf("rollback to savepoint: %w", rollbackErr)
+					return nil, nil, fmt.Errorf("rollback to savepoint: %w", rollbackErr)
 				}
+				failures = append(failures, describeDeleteFailure(scope.table, level, err))
 				continue
 			}
 			if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT p012_sweep_delete`); err != nil {
-				return nil, fmt.Errorf("release savepoint: %w", err)
+				return nil, nil, fmt.Errorf("release savepoint: %w", err)
 			}
 			affected := int(tag.RowsAffected())
 			if affected > 0 {
@@ -768,7 +945,47 @@ func deleteScopes(ctx context.Context, tx pgx.Tx, scopes *scopeSet) (map[string]
 			}
 		}
 	}
-	return deleted, nil
+	return deleted, failures, nil
+}
+
+// describeDeleteFailure turns a PostgreSQL error into the one line that identifies a
+// leak: which table, which level, and the constraint and key that blocked the delete.
+// Without the DETAIL line a "foreign key violation" says nothing an author can act on,
+// and the DETAIL is the part that names the table still pointing at the row.
+func describeDeleteFailure(table string, level int, err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		message := fmt.Sprintf("%s at level %d: %s (SQLSTATE %s)", table, level, pgErr.Message, pgErr.Code)
+		if constraint := pgErr.ConstraintName; constraint != "" {
+			message += fmt.Sprintf(" on constraint %s", constraint)
+		}
+		if detail := pgErr.Detail; detail != "" {
+			message += fmt.Sprintf("; %s", detail)
+		}
+		return message
+	}
+	return fmt.Sprintf("%s at level %d: %v", table, level, err)
+}
+
+// transientDeleteFailure reports whether a delete failed for a reason another pass can
+// resolve: a lock that was held, a deadlock the server rolled back, or a transaction
+// that lost a race. A referential violation is NOT transient - it means a row exists that
+// the traversal could not see, which is a hole in the graph and not bad luck, so it is
+// reported immediately instead of being retried until the pass budget runs out.
+func transientDeleteFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	switch pgErr.Code {
+	case "40001", // serialization_failure
+		"40P01",          // deadlock_detected
+		"55P03",          // lock_not_available
+		"57014",          // query_canceled, which is how a lock_timeout and a statement_timeout both arrive
+		"08006", "08003": // connection failures, which a retry can ride out
+		return true
+	}
+	return false
 }
 
 // deleteUnlinkedReferences removes the rows that name a fixture's rows without a
@@ -794,8 +1011,27 @@ func deleteScopes(ctx context.Context, tx pgx.Tx, scopes *scopeSet) (map[string]
 //
 // A row of this shape has no foreign key, so deleting it cannot be blocked and its
 // order does not matter. It is not part of the convergence loop for the same reason.
-func deleteUnlinkedReferences(ctx context.Context, tx pgx.Tx, scopes *scopeSet) (map[string]int, error) {
+func deleteUnlinkedReferences(ctx context.Context, tx pgx.Tx, scopes *scopeSet, actorIDs []string) (map[string]int, error) {
 	deleted := map[string]int{}
+	// The actors' own audit rows go first, matched on actor_id and nothing else.
+	//
+	// This is the one deletion that is unconditional, and it is unconditional because of
+	// what was measured: a run against the shared database left five synthetic users and
+	// eleven `audit_log` rows behind, every one of those rows with a non-NULL actor_id and
+	// an entity_id naming a row that no longer existed. Those rows could not be found by
+	// entity_id - the entities they named were gone, or had been removed by a cascade
+	// before this pass looked - and `audit_log.actor_id` is NO ACTION, so each of them
+	// blocked the delete of the very user it belonged to. Matching on actor_id cannot miss:
+	// the actor is the one row the caller named, and it exists.
+	if len(actorIDs) > 0 {
+		tag, err := tx.Exec(ctx, `DELETE FROM audit_log WHERE actor_id::text = ANY($1::text[])`, actorIDs)
+		if err != nil {
+			return nil, fmt.Errorf("delete the actors' own audit rows: %w", err)
+		}
+		if affected := int(tag.RowsAffected()); affected > 0 {
+			deleted["audit_log"] += affected
+		}
+	}
 	auditBranches := []string{}
 	jobBranches := []string{}
 	for _, scope := range scopes.tables {
