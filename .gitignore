@@ -14,6 +14,11 @@ __pycache__/
 *.pyc
 *.egg-info/
 services/core-api/bin/
+# A `go build` run from inside the module writes the binary next to its package
+# unless -o names somewhere else, and a 24MB executable does not belong in a
+# repository. `make build` writes to /tmp on purpose.
+services/core-api/api
+services/core-api/*-worker
 tmp/
 
 # Playwright and local runtime artifacts
