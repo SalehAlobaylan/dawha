@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// publicSourceExists is the one statement the deliberately public source dependency
+// graph asks about a source, written as a fragment so the single-source decision
+// and the batched one read the same rule.
+const publicSourceExists = `EXISTS (SELECT 1 FROM sources s WHERE s.id = %s AND s.visibility = 'public')`
 
 type ResearchRunSummary struct {
 	ID                   string    `json:"id"`
@@ -187,12 +193,61 @@ func (s *Service) filterResearchRunSummaries(ctx context.Context, actorID string
 	return s.filterResearchRunSummariesWithExecutor(ctx, s.Pool, actorID, summaries)
 }
 
+// filterResearchRunSummariesWithExecutor hides every run whose authorization fails
+// and returns the rest, in the order they were given.
+//
+// The authorization itself is resolved once for the whole page: the runs name
+// their trees, evidence sources and graph sources in three set-based reads, the
+// policy decides every one of those resources in two more, and the all-or-nothing
+// rule is then applied per run in memory. It used to be one role lookup plus three
+// structural reads plus one statement per resource, for every run in the page -
+// a hundred runs cost several hundred round trips to render one list. The verdicts
+// are unchanged: same grants, same all-or-nothing rule, same error propagation -
+// only the number of statements changed.
 func (s *Service) filterResearchRunSummariesWithExecutor(ctx context.Context, executor historyExecutor, actorID string, summaries []ResearchRunSummary) ([]ResearchRunSummary, error) {
 	filtered := make([]ResearchRunSummary, 0, len(summaries))
+	if len(summaries) == 0 {
+		return filtered, nil
+	}
+	actorUUID, err := parseRunActor(actorID)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := resolveResearchScope(ctx, executor, actorUUID)
+	if err != nil {
+		return nil, err
+	}
+	runIDs := make([]uuid.UUID, 0, len(summaries))
 	for _, summary := range summaries {
-		allowed, err := s.canAccessPersistedRunWithExecutor(ctx, executor, optionalUUID(summary.ID), actorID)
-		if err != nil {
-			return nil, err
+		// A summary whose id is not a uuid cannot name a run, so nothing can
+		// vouch for it and it is dropped rather than passed on.
+		if runID := optionalUUID(summary.ID); runID != uuid.Nil {
+			runIDs = append(runIDs, runID)
+		}
+	}
+	resources, err := collectRunResources(ctx, executor, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := resolveRunVisibility(ctx, executor, policy, resources)
+	if err != nil {
+		return nil, err
+	}
+	for _, summary := range summaries {
+		runID := optionalUUID(summary.ID)
+		scoped, found := resources[runID]
+		if !found {
+			// The run names no resource at all, or the id was not one. Either way
+			// there is nothing the reader could be denied, and a run with no
+			// resources is exactly the run the per-run walk allowed.
+			if found || runID != uuid.Nil {
+				filtered = append(filtered, summary)
+			}
+			continue
+		}
+		allowed, allowErr := verdicts.allows(scoped)
+		if allowErr != nil {
+			return nil, allowErr
 		}
 		if allowed {
 			filtered = append(filtered, summary)
@@ -201,18 +256,205 @@ func (s *Service) filterResearchRunSummariesWithExecutor(ctx context.Context, ex
 	return filtered, nil
 }
 
+// parseRunActor turns the actor identifier into a uuid, mapping a malformed one
+// onto the package's own forbidden error so a list cannot be told apart from a
+// call that named nobody.
+func parseRunActor(actorID string) (uuid.UUID, error) {
+	if strings.TrimSpace(actorID) == "" {
+		return uuid.Nil, nil
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(actorID))
+	if err != nil {
+		return uuid.Nil, ErrForbidden
+	}
+	return parsed, nil
+}
+
+// runResources is everything a persisted run names that the policy has a say
+// about. The three lists are the three different rules: a tree is scoped by the
+// tree policy, an evidence source by the source policy, and a source that appears
+// only in the graph by the deliberately public source contract.
+type runResources struct {
+	trees        []uuid.UUID
+	sources      []uuid.UUID
+	graphSources []uuid.UUID
+}
+
+// collectRunResources reads the resources of every named run in three statements
+// rather than three per run. Each statement keeps the exact predicate the per-run
+// walk used, so which resources a run is judged on has not changed.
+func collectRunResources(ctx context.Context, executor historyExecutor, runIDs []uuid.UUID) (map[uuid.UUID]runResources, error) {
+	resources := make(map[uuid.UUID]runResources, len(runIDs))
+	if len(runIDs) == 0 {
+		return resources, nil
+	}
+	for _, runID := range runIDs {
+		resources[runID] = runResources{}
+	}
+	rows, err := executor.Query(ctx, `SELECT run_id::text, tree_id::text FROM research_graph_paths WHERE run_id = ANY($1) AND tree_id IS NOT NULL`, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var runID, treeID string
+		if err := rows.Scan(&runID, &treeID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		scoped := resources[optionalUUID(runID)]
+		scoped.trees = append(scoped.trees, optionalUUID(treeID))
+		resources[optionalUUID(runID)] = scoped
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = executor.Query(ctx, `SELECT run_id::text, source_id::text FROM research_graph_path_evidence WHERE run_id = ANY($1) AND source_id IS NOT NULL AND (statement_id IS NOT NULL OR passage_id IS NOT NULL OR claim_id IS NOT NULL)`, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var runID, sourceID string
+		if err := rows.Scan(&runID, &sourceID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		scoped := resources[optionalUUID(runID)]
+		scoped.sources = append(scoped.sources, optionalUUID(sourceID))
+		resources[optionalUUID(runID)] = scoped
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = executor.Query(ctx, `
+		SELECT run_id::text, identifier
+		FROM (
+			SELECT rgp.run_id, node->>'id' AS identifier
+			FROM research_graph_paths rgp
+			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rgp.nodes, '[]'::jsonb)) node
+			WHERE rgp.run_id = ANY($1) AND rgp.operation IN ($2, $3)
+			UNION
+			SELECT edge.run_id, edge.from_node_id::text
+			FROM research_graph_edges edge
+			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
+			WHERE edge.run_id = ANY($1) AND rgp.operation IN ($2, $3)
+			UNION
+			SELECT edge.run_id, edge.to_node_id::text
+			FROM research_graph_edges edge
+			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
+			WHERE edge.run_id = ANY($1) AND rgp.operation IN ($2, $3)
+			UNION
+			SELECT neighborhood.run_id, neighborhood.root_source_id::text
+			FROM research_graph_source_dependency_neighborhoods neighborhood
+			WHERE neighborhood.run_id = ANY($1)
+			UNION
+			SELECT community.run_id, community.root_source_id::text
+			FROM research_graph_source_dependency_communities community
+			WHERE community.run_id = ANY($1)
+			UNION
+			SELECT context.run_id, context.scope_id::text
+			FROM research_run_contexts context
+			JOIN research_runs run ON run.id = context.run_id
+			WHERE context.run_id = ANY($1) AND context.scope_type = 'source' AND run.graph_operation IN ($2, $3)
+		) identifiers
+		WHERE identifier IS NOT NULL
+	`, runIDs, GraphOperationSourceDependency, GraphOperationSourceCommunities)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var runID, sourceID string
+		if err := rows.Scan(&runID, &sourceID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		scoped := resources[optionalUUID(runID)]
+		scoped.graphSources = append(scoped.graphSources, optionalUUID(sourceID))
+		resources[optionalUUID(runID)] = scoped
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	return resources, nil
+}
+
+// runVisibility is the resolved access of every resource a batch of runs named.
+type runVisibility struct {
+	trees         map[uuid.UUID]visibility.Access
+	sources       map[uuid.UUID]visibility.Access
+	publicSources map[uuid.UUID]bool
+}
+
+// resolveRunVisibility decides every resource the runs named in three statements.
+func resolveRunVisibility(ctx context.Context, executor historyExecutor, policy visibility.Policy, resources map[uuid.UUID]runResources) (runVisibility, error) {
+	var treeIDs, sourceIDs, graphSourceIDs []uuid.UUID
+	for _, scoped := range resources {
+		treeIDs = append(treeIDs, scoped.trees...)
+		sourceIDs = append(sourceIDs, scoped.sources...)
+		graphSourceIDs = append(graphSourceIDs, scoped.graphSources...)
+	}
+	trees, err := policy.Trees(ctx, executor, treeIDs)
+	if err != nil {
+		return runVisibility{}, err
+	}
+	sources, err := policy.Sources(ctx, executor, sourceIDs)
+	if err != nil {
+		return runVisibility{}, err
+	}
+	published, err := canViewPersistedPublicSources(ctx, executor, graphSourceIDs)
+	if err != nil {
+		return runVisibility{}, err
+	}
+	return runVisibility{trees: trees, sources: sources, publicSources: published}, nil
+}
+
+// allows is the all-or-nothing rule from db/migrations/0004 atomic provenance: a
+// run whose sources are not all visible stays hidden, and one tree or one
+// evidence source the reader may not see is enough. A run that names nothing is
+// visible, which is the same answer the per-run walk gave.
+func (v runVisibility) allows(scoped runResources) (bool, error) {
+	for _, treeID := range scoped.trees {
+		if !v.trees[treeID].Allowed() {
+			return false, nil
+		}
+	}
+	for _, sourceID := range scoped.sources {
+		if !v.sources[sourceID].Allowed() {
+			return false, nil
+		}
+	}
+	for _, sourceID := range scoped.graphSources {
+		if sourceID == uuid.Nil {
+			return false, nil
+		}
+		if !v.publicSources[sourceID] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (s *Service) canAccessPersistedRun(ctx context.Context, runID uuid.UUID, actorID string) (bool, error) {
 	return s.canAccessPersistedRunWithExecutor(ctx, s.Pool, runID, actorID)
 }
 
+// canAccessPersistedRunWithExecutor answers for one run through the same set-based
+// path the list uses, so the single-run and the list decision cannot be two
+// different rules.
 func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executor historyExecutor, runID uuid.UUID, actorID string) (bool, error) {
-	actorUUID := uuid.Nil
-	if strings.TrimSpace(actorID) != "" {
-		parsed, err := uuid.Parse(strings.TrimSpace(actorID))
-		if err != nil {
-			return false, ErrForbidden
-		}
-		actorUUID = parsed
+	if runID == uuid.Nil {
+		return false, nil
+	}
+	actorUUID, err := parseRunActor(actorID)
+	if err != nil {
+		return false, err
 	}
 	// The policy is resolved once and reused for every tree and source in the run so
 	// the all-or-nothing walk costs one role lookup instead of one per resource.
@@ -220,154 +462,52 @@ func (s *Service) canAccessPersistedRunWithExecutor(ctx context.Context, executo
 	if err != nil {
 		return false, err
 	}
-	treeRows, err := executor.Query(ctx, `SELECT DISTINCT tree_id::text FROM research_graph_paths WHERE run_id = $1 AND tree_id IS NOT NULL`, runID)
+	resources, err := collectRunResources(ctx, executor, []uuid.UUID{runID})
 	if err != nil {
 		return false, err
 	}
-	treeIDs := make([]uuid.UUID, 0)
-	for treeRows.Next() {
-		var treeID string
-		if err := treeRows.Scan(&treeID); err != nil {
-			treeRows.Close()
-			return false, err
-		}
-		treeIDs = append(treeIDs, optionalUUID(treeID))
-	}
-	if err := treeRows.Err(); err != nil {
-		treeRows.Close()
-		return false, err
-	}
-	treeRows.Close()
-	for _, treeID := range treeIDs {
-		access, accessErr := policy.Tree(ctx, executor, treeID)
-		allowed := access.Allowed()
-		if accessErr != nil {
-			return false, accessErr
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	sourceRows, err := executor.Query(ctx, `SELECT DISTINCT evidence.source_id::text FROM research_graph_path_evidence evidence WHERE evidence.run_id = $1 AND evidence.source_id IS NOT NULL AND (evidence.statement_id IS NOT NULL OR evidence.passage_id IS NOT NULL OR evidence.claim_id IS NOT NULL)`, runID)
+	verdicts, err := resolveRunVisibility(ctx, executor, policy, resources)
 	if err != nil {
 		return false, err
 	}
-	sourceIDs := make([]uuid.UUID, 0)
-	for sourceRows.Next() {
-		var sourceID string
-		if err := sourceRows.Scan(&sourceID); err != nil {
-			sourceRows.Close()
-			return false, err
-		}
-		sourceIDs = append(sourceIDs, optionalUUID(sourceID))
-	}
-	if err := sourceRows.Err(); err != nil {
-		sourceRows.Close()
-		return false, err
-	}
-	sourceRows.Close()
-	for _, sourceID := range sourceIDs {
-		access, accessErr := policy.Source(ctx, executor, sourceID)
-		allowed := access.Allowed()
-		if accessErr != nil {
-			return false, accessErr
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	sourceGraphRows, err := executor.Query(ctx, `
-		SELECT DISTINCT identifier
-		FROM (
-			SELECT node->>'id' AS identifier
-			FROM research_graph_paths rgp
-			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rgp.nodes, '[]'::jsonb)) node
-			WHERE rgp.run_id = $1 AND rgp.operation IN ($2, $3)
-			UNION
-			SELECT edge.from_node_id::text
-			FROM research_graph_edges edge
-			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
-			WHERE edge.run_id = $1 AND rgp.operation IN ($2, $3)
-			UNION
-			SELECT edge.to_node_id::text
-			FROM research_graph_edges edge
-			JOIN research_graph_paths rgp ON rgp.id = edge.path_id
-			WHERE edge.run_id = $1 AND rgp.operation IN ($2, $3)
-			UNION
-			SELECT neighborhood.root_source_id::text
-			FROM research_graph_source_dependency_neighborhoods neighborhood
-			WHERE neighborhood.run_id = $1
-			UNION
-			SELECT community.root_source_id::text
-			FROM research_graph_source_dependency_communities community
-			WHERE community.run_id = $1
-			UNION
-			SELECT context.scope_id::text
-			FROM research_run_contexts context
-			JOIN research_runs run ON run.id = context.run_id
-			WHERE context.run_id = $1 AND context.scope_type = 'source' AND run.graph_operation IN ($2, $3)
-		) identifiers
-		WHERE identifier IS NOT NULL
-	`, runID, GraphOperationSourceDependency, GraphOperationSourceCommunities)
-	if err != nil {
-		return false, err
-	}
-	graphSourceIDs := make([]uuid.UUID, 0)
-	for sourceGraphRows.Next() {
-		var sourceID string
-		if err := sourceGraphRows.Scan(&sourceID); err != nil {
-			sourceGraphRows.Close()
-			return false, err
-		}
-		graphSourceIDs = append(graphSourceIDs, optionalUUID(sourceID))
-	}
-	if err := sourceGraphRows.Err(); err != nil {
-		sourceGraphRows.Close()
-		return false, err
-	}
-	sourceGraphRows.Close()
-	for _, sourceID := range graphSourceIDs {
-		allowed, accessErr := canViewPersistedPublicSource(ctx, executor, sourceID)
-		if accessErr != nil {
-			return false, accessErr
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	return true, nil
+	return verdicts.allows(resources[runID])
 }
 
+// filterPersistedGraphPaths redacts a run's graph paths under the caller's policy.
+//
+// The paths used to be walked one edge and one evidence ref at a time, each asking
+// the policy about one source, so a run with five paths of two hundred edges cost
+// hundreds of round trips to answer one request. Every source, tree and public-only
+// graph source the paths name is now collected first and decided in three
+// statements; the redaction rules below then run in memory. The rules, their order
+// and their outcomes are unchanged: a hidden tree drops the path, a hidden endpoint
+// drops a source-dependency path, a hidden edge source is blanked, and hidden
+// evidence is either dropped or blanked according to whether it is direct.
 func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string, paths []GraphPath) ([]GraphPath, error) {
-	actorUUID := uuid.Nil
-	if strings.TrimSpace(actorID) != "" {
-		parsed, err := uuid.Parse(strings.TrimSpace(actorID))
-		if err != nil {
-			return nil, ErrForbidden
-		}
-		actorUUID = parsed
+	actorUUID, err := parseRunActor(actorID)
+	if err != nil {
+		return nil, err
 	}
 	// Resolved once so walking the paths does not repeat the role lookup per edge.
 	policy, err := resolveResearchScope(ctx, s.Pool, actorUUID)
 	if err != nil {
 		return nil, err
 	}
+	grants, err := resolveGraphPathVisibility(ctx, s.Pool, policy, paths)
+	if err != nil {
+		return nil, err
+	}
 	filtered := make([]GraphPath, 0, len(paths))
 	for _, path := range paths {
 		if path.TreeScope.TreeID != "" {
-			access, err := policy.Tree(ctx, s.Pool, optionalUUID(path.TreeScope.TreeID))
-			if err != nil {
-				return nil, err
-			}
-			allowed := access.Allowed()
-			if !allowed {
+			if !grants.trees[optionalUUID(path.TreeScope.TreeID)].Allowed() {
 				continue
 			}
 		}
 		if isSourceDependencyGraphOperation(path.Operation) {
-			visible, err := graphSourceDependencyPathVisible(ctx, s.Pool, path)
-			if err != nil {
-				return nil, err
+			visible, visibleErr := graphSourceDependencyPathVisible(path, grants.publicSources)
+			if visibleErr != nil {
+				return nil, visibleErr
 			}
 			if !visible {
 				continue
@@ -377,24 +517,14 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 			if path.Edges[index].SourceID == "" {
 				continue
 			}
-			access, err := policy.Source(ctx, s.Pool, optionalUUID(path.Edges[index].SourceID))
-			if err != nil {
-				return nil, err
-			}
-			allowed := access.Allowed()
-			if !allowed {
+			if !grants.sources[optionalUUID(path.Edges[index].SourceID)].Allowed() {
 				path.Edges[index].SourceID = ""
 			}
 		}
 		keptEvidence := make([]GraphEvidenceRef, 0, len(path.EvidenceRefs))
 		for _, evidence := range path.EvidenceRefs {
 			if evidence.SourceID != "" {
-				access, err := policy.Source(ctx, s.Pool, optionalUUID(evidence.SourceID))
-				if err != nil {
-					return nil, err
-				}
-				allowed := access.Allowed()
-				if !allowed {
+				if !grants.sources[optionalUUID(evidence.SourceID)].Allowed() {
 					if graphEvidenceIsDirect(evidence) {
 						continue
 					}
@@ -421,15 +551,69 @@ func (s *Service) filterPersistedGraphPaths(ctx context.Context, actorID string,
 	return filtered, nil
 }
 
-func graphSourceDependencyPathVisible(ctx context.Context, executor historyExecutor, path GraphPath) (bool, error) {
-	sourceSet := make(map[uuid.UUID]struct{}, len(path.Nodes)+len(path.Edges))
+// graphPathGrants is the resolved access of everything a run's graph paths name.
+type graphPathGrants struct {
+	trees         map[uuid.UUID]visibility.Access
+	sources       map[uuid.UUID]visibility.Access
+	publicSources map[uuid.UUID]bool
+}
+
+// resolveGraphPathVisibility decides every tree, source and graph source the paths
+// name in three statements.
+func resolveGraphPathVisibility(ctx context.Context, executor historyExecutor, policy visibility.Policy, paths []GraphPath) (graphPathGrants, error) {
+	var treeIDs, sourceIDs, graphSourceIDs []uuid.UUID
+	for _, path := range paths {
+		if path.TreeScope.TreeID != "" {
+			treeIDs = append(treeIDs, optionalUUID(path.TreeScope.TreeID))
+		}
+		sourceDependency := isSourceDependencyGraphOperation(path.Operation)
+		for _, node := range path.Nodes {
+			if node.Type != "source" {
+				continue
+			}
+			if sourceDependency {
+				graphSourceIDs = append(graphSourceIDs, optionalUUID(node.ID))
+			}
+		}
+		for _, edge := range path.Edges {
+			if sourceDependency {
+				graphSourceIDs = append(graphSourceIDs, optionalUUID(edge.FromNodeID), optionalUUID(edge.ToNodeID))
+			}
+			if edge.SourceID != "" {
+				sourceIDs = append(sourceIDs, optionalUUID(edge.SourceID))
+			}
+		}
+		for _, evidence := range path.EvidenceRefs {
+			if evidence.SourceID != "" {
+				sourceIDs = append(sourceIDs, optionalUUID(evidence.SourceID))
+			}
+		}
+	}
+	trees, err := policy.Trees(ctx, executor, treeIDs)
+	if err != nil {
+		return graphPathGrants{}, err
+	}
+	sources, err := policy.Sources(ctx, executor, sourceIDs)
+	if err != nil {
+		return graphPathGrants{}, err
+	}
+	published, err := canViewPersistedPublicSources(ctx, executor, graphSourceIDs)
+	if err != nil {
+		return graphPathGrants{}, err
+	}
+	return graphPathGrants{trees: trees, sources: sources, publicSources: published}, nil
+}
+
+// graphSourceDependencyPathVisible keeps the deliberately public source dependency
+// graph contract on a path: every source the path touches must be published. A node
+// or edge endpoint that is not a source id at all is refused, as it always was.
+func graphSourceDependencyPathVisible(path GraphPath, publicSources map[uuid.UUID]bool) (bool, error) {
 	add := func(value string) bool {
 		sourceID := optionalUUID(value)
 		if sourceID == uuid.Nil {
 			return false
 		}
-		sourceSet[sourceID] = struct{}{}
-		return true
+		return publicSources[sourceID]
 	}
 	for _, node := range path.Nodes {
 		if node.Type == "source" && !add(node.ID) {
@@ -441,27 +625,45 @@ func graphSourceDependencyPathVisible(ctx context.Context, executor historyExecu
 			return false, nil
 		}
 	}
-	for sourceID := range sourceSet {
-		allowed, err := canViewPersistedPublicSource(ctx, executor, sourceID)
-		if err != nil {
-			return false, err
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
 	return true, nil
 }
 
-// canViewPersistedPublicSource keeps the deliberately public source dependency graph
-// contract: a public source is readable by everyone and nothing else is.
-func canViewPersistedPublicSource(ctx context.Context, executor historyExecutor, sourceID uuid.UUID) (bool, error) {
-	if sourceID == uuid.Nil {
-		return false, nil
+// canViewPersistedPublicSources keeps the deliberately public source dependency graph
+// contract for many sources in one statement: a public source is readable by
+// everyone and nothing else is. The predicate is the single fragment below, so the
+// rule has one spelling rather than one per caller.
+func canViewPersistedPublicSources(ctx context.Context, executor historyExecutor, sourceIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	viewable := make(map[uuid.UUID]bool, len(sourceIDs))
+	if len(sourceIDs) == 0 {
+		return viewable, nil
 	}
-	var allowed bool
-	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sources s WHERE s.id = $1 AND s.visibility = 'public')`, sourceID).Scan(&allowed)
-	return allowed, err
+	rows, err := executor.Query(ctx, `
+		SELECT requested.id, `+fmt.Sprintf(publicSourceExists, "requested.id")+`
+		FROM unnest($1::uuid[]) AS requested(id)
+	`, sourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var allowed bool
+		if err := rows.Scan(&id, &allowed); err != nil {
+			return nil, err
+		}
+		viewable[id] = allowed
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// An id the server did not answer for is not viewable: the contract is
+	// affirmative, so silence denies.
+	for _, sourceID := range sourceIDs {
+		if _, found := viewable[sourceID]; !found {
+			viewable[sourceID] = false
+		}
+	}
+	return viewable, nil
 }
 
 // loadHistoryPolicy resolves the central policy for a history caller and maps a

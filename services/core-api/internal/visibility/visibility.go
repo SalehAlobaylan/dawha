@@ -201,15 +201,95 @@ func resolve(ctx context.Context, executor Executor, params *Params, table strin
 	if err := executor.QueryRow(ctx, `SELECT `+strings.Join(selects, ", "), params.Args()...).Scan(targets...); err != nil {
 		return AccessHidden, err
 	}
+	return classify(exists, flags, grants), nil
+}
+
+// classify is the one decision the package makes about a record: a row that is
+// not there is missing, otherwise the first grant that holds names the access, and
+// a row no grant reaches is hidden. Both the single-id decision above and the
+// batched one below go through it, so the difference between "not found" and "not
+// allowed" cannot be made in one path and forgotten in the other.
+func classify(exists bool, flags []bool, grants []grant) Access {
 	if !exists {
-		return AccessMissing, nil
+		return AccessMissing
 	}
 	for index, current := range grants {
 		if flags[index] {
-			return current.access, nil
+			return current.access
 		}
 	}
-	return AccessHidden, nil
+	return AccessHidden
+}
+
+// grantFactory builds the grant list for one id reference. The single-id accessors
+// pass a parameter placeholder and resolveMany passes the column an unnest produced,
+// so both decisions are assembled from literally the same fragments.
+type grantFactory func(reference, actorReference string) []grant
+
+// resolveMany decides the access of every id in one statement.
+//
+// A list endpoint that has to authorize a hundred records cannot afford one
+// statement per record, but it cannot be handed a weaker rule either. The batched
+// statement evaluates the same grant fragments per id - the fragments are produced
+// by the same functions the single-id path calls - and the verdict comes from the
+// same classify, so batching is a statement-count change and not a policy change.
+//
+// Every requested id appears in the result, including one that does not exist: a
+// caller walking a list of resources has to be able to tell "missing" from
+// "hidden" for each of them, exactly as it could one at a time.
+func resolveMany(ctx context.Context, executor Executor, table string, ids []uuid.UUID, build grantFactory, actorID uuid.UUID) (map[uuid.UUID]Access, error) {
+	outcomes := make(map[uuid.UUID]Access, len(ids))
+	if len(ids) == 0 {
+		return outcomes, nil
+	}
+	params := &Params{}
+	actorReference := castUUID(params.Add(actorID))
+	// The array is allocated through the same counter as the actor so the two
+	// placeholders cannot collide, however many grants the rule has.
+	idsReference := params.Add(ids)
+	column := "requested.id"
+	grants := build(column, actorReference)
+	selects := make([]string, 0, len(grants)+2)
+	selects = append(selects, column)
+	selects = append(selects, "EXISTS (SELECT 1 FROM "+table+" vis_row WHERE vis_row.id = "+column+")")
+	for _, current := range grants {
+		selects = append(selects, "("+current.sql+")")
+	}
+	rows, err := executor.Query(ctx,
+		`SELECT `+strings.Join(selects, ", ")+` FROM unnest(`+idsReference+`::uuid[]) AS requested(id)`,
+		params.Args()...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	flags := make([]bool, len(grants))
+	targets := make([]any, 0, len(flags)+2)
+	var id uuid.UUID
+	var exists bool
+	targets = append(targets, &id, &exists)
+	for index := range flags {
+		targets = append(targets, &flags[index])
+	}
+	for rows.Next() {
+		for index := range flags {
+			flags[index] = false
+		}
+		if err := rows.Scan(targets...); err != nil {
+			return nil, err
+		}
+		outcomes[id] = classify(exists, flags, grants)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// An id the server did not echo back - a concurrent delete, or a driver that
+	// dropped a row - is reported the way the single-id path would report it.
+	for _, requested := range ids {
+		if _, found := outcomes[requested]; !found {
+			outcomes[requested] = AccessMissing
+		}
+	}
+	return outcomes, nil
 }
 
 // Person reports whether the policy may read a person record. A research role is
@@ -269,6 +349,45 @@ func (p Policy) Tree(ctx context.Context, executor Executor, treeID uuid.UUID) (
 	reference := params.Add(treeID)
 	grants := treeGrants(reference, castUUID(params.Add(p.actorID)))
 	return resolve(ctx, executor, params, "trees", reference, grants)
+}
+
+// Trees is Tree for many ids in one statement. It exists for the list endpoints
+// that have to authorize a page of records, and it is the batched twin of Tree
+// rather than a second rule: same table, same grants, same classification.
+func (p Policy) Trees(ctx context.Context, executor Executor, treeIDs []uuid.UUID) (map[uuid.UUID]Access, error) {
+	filtered := withoutNil(treeIDs)
+	return resolveMany(ctx, executor, "trees", filtered, treeGrants, p.actorID)
+}
+
+// Sources is Source for many ids in one statement. See Trees.
+//
+// The research flag is read from the policy rather than passed in, so the grant
+// list is the one this policy would have used one id at a time: a batch that
+// dropped the flag would hide research sources from the very readers who wrote
+// them, which is the failure a batching change is not allowed to introduce.
+func (p Policy) Sources(ctx context.Context, executor Executor, sourceIDs []uuid.UUID) (map[uuid.UUID]Access, error) {
+	filtered := withoutNil(sourceIDs)
+	return resolveMany(ctx, executor, "sources", filtered, func(reference, actorReference string) []grant {
+		return sourceGrants(reference, actorReference, p.research)
+	}, p.actorID)
+}
+
+// withoutNil drops the nil uuid. A nil id has no row, and resolveMany reports a
+// row it did not find as missing, which is the answer a nil id already has.
+func withoutNil(ids []uuid.UUID) []uuid.UUID {
+	filtered := make([]uuid.UUID, 0, len(ids))
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, found := seen[id]; found {
+			continue
+		}
+		seen[id] = struct{}{}
+		filtered = append(filtered, id)
+	}
+	return filtered
 }
 
 // referenceTables is the closed set of reference families. A caller names a kind
