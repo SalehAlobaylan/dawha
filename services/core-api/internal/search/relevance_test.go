@@ -41,6 +41,7 @@ type relevanceFixture struct {
 	fuzzyPersonID  uuid.UUID
 	unrelatedID    uuid.UUID
 	familyID       uuid.UUID
+	branchID       uuid.UUID
 	placeID        uuid.UUID
 	publicSourceID uuid.UUID
 	// passages and their vectors, by the label the fixtures use.
@@ -63,6 +64,7 @@ type relevanceFixture struct {
 // on: Arabic names share long prefixes, so a near miss is a near miss in the
 // trigram sense as well as in the reading sense.
 const (
+	aliasText        = "أبو بكر الصديق"
 	exactPersonName  = "عبد الرحمن بن محمد"
 	aliasPersonName  = "عمر بن الخطاب"
 	fuzzyPersonName  = "فاطمة الزهراء"
@@ -103,13 +105,19 @@ func seedRelevanceFixture(t *testing.T, fixture *testsupport.Fixture) *relevance
 
 	// The alias is the second spelling of a person whose canonical name does not
 	// contain the term, so an alias match cannot be mistaken for an exact one.
-	aliasText := "أبو بكر الصديق"
 	fixture.Exec(`INSERT INTO person_aliases (person_id, value_ar, normalized_value_ar, source_id) VALUES ($1, $2, $3, NULL)`,
 		seeded.aliasPersonID, aliasText, identity.NormalizeArabicName(aliasText))
 
+	// A branch carries its family's name as its secondary name rather than an alias
+	// value, which is the one secondary name the page does not have to look up. It is
+	// the case a change to the secondary-name computation is most likely to break,
+	// because it comes from a join rather than from a correlated lookup.
+	seeded.branchID = uuid.New()
 	seeded.familyID = uuid.New()
 	fixture.Exec(`INSERT INTO families (id, canonical_name_ar, normalized_name_ar, visibility, created_by) VALUES ($1, $2, $3, 'public', $4)`,
 		seeded.familyID, familyName, identity.NormalizeArabicName(familyName), ownerID)
+	fixture.Exec(`INSERT INTO branches (id, family_id, canonical_name_ar, normalized_name_ar, visibility, created_by) VALUES ($1, $2, $3, $4, 'public', $5)`,
+		seeded.branchID, seeded.familyID, "فرع النخبة", identity.NormalizeArabicName("فرع النخبة"), ownerID)
 	familyAlias := "بنو الأناف"
 	fixture.Exec(`INSERT INTO family_aliases (family_id, value_ar, normalized_value_ar) VALUES ($1, $2, $3)`,
 		seeded.familyID, familyAlias, identity.NormalizeArabicName(familyAlias))
@@ -171,6 +179,9 @@ type relevanceCase struct {
 	// exactScore is the score the stage assigns to a normalized equality, where the
 	// stage publishes one. Zero means the fixture does not pin a score.
 	exactScore float64
+	// subtitle is the secondary name the result must be shown under, where the stage
+	// defines one. Empty means the fixture does not pin it.
+	subtitle string
 	// because says what the fixture is protecting, so a failure explains itself.
 	because string
 }
@@ -202,6 +213,9 @@ func TestSearchNameRelevance(t *testing.T) {
 			name:    "alias",
 			query:   "أبو بكر الصديق",
 			firstID: seeded.aliasPersonID.String(),
+			// The alias a match was found through is also the name the result is
+			// shown under, so the value is pinned as well as the rank.
+			subtitle: aliasText,
 			// The alias grant is 90, below the 100 of an exact canonical name and
 			// above the 70 a trigram similarity can reach.
 			exactScore: 90,
@@ -220,6 +234,18 @@ func TestSearchNameRelevance(t *testing.T) {
 			firstID:    seeded.placeID.String(),
 			exactScore: 100,
 			because:    "a place is a name the stage searches",
+		},
+		{
+			name:       "branch exact",
+			query:      "فرع النخبة",
+			firstID:    seeded.branchID.String(),
+			exactScore: 100,
+			// The one secondary name the page does not have to look up: a branch is
+			// drawn under its family's name, which comes from the join rather than
+			// from the alias table. It is the value a change to the secondary-name
+			// computation is most likely to lose.
+			subtitle: familyName,
+			because:  "a branch is shown under its family, not under an alias",
 		},
 		{
 			name:    "fuzzy",
@@ -246,6 +272,9 @@ func TestSearchNameRelevance(t *testing.T) {
 			}
 			if testCase.exactScore != 0 && items[0].Score != testCase.exactScore {
 				t.Fatalf("%q scored %v, want %v: %s", testCase.query, items[0].Score, testCase.exactScore, testCase.because)
+			}
+			if testCase.subtitle != "" && items[0].Subtitle != testCase.subtitle {
+				t.Fatalf("%q is shown under %q, want %q: %s", testCase.query, items[0].Subtitle, testCase.subtitle, testCase.because)
 			}
 			// The winner is unique. A tie between two results would make "first"
 			// depend on the plan, which is exactly what these fixtures exist to stop.
@@ -322,6 +351,9 @@ func TestSearchPassageRelevance(t *testing.T) {
 			}
 			if testCase.exactScore != 0 && items[0].Score != testCase.exactScore {
 				t.Fatalf("%q scored %v, want %v: %s", testCase.query, items[0].Score, testCase.exactScore, testCase.because)
+			}
+			if testCase.subtitle != "" && items[0].Subtitle != testCase.subtitle {
+				t.Fatalf("%q is shown under %q, want %q: %s", testCase.query, items[0].Subtitle, testCase.subtitle, testCase.because)
 			}
 		})
 	}

@@ -1,0 +1,61 @@
+-- Plan 007, step 4: index the one lexical candidate stage an index can serve.
+--
+-- The passage search stage filters with two ILIKEs and nothing else:
+--
+--   WHERE ($1 = '' OR sp.normalized_text_ar ILIKE '%' || $1 || '%'
+--                       OR sp.text_ar ILIKE '%' || $1 || '%')
+--
+-- and computes its score on the rows that survive. That is the shape a trigram
+-- index exists for, and it is the only one of the lexical stages with that shape.
+--
+-- Measured with EXPLAIN (ANALYZE, BUFFERS) on library-shaped corpora - several
+-- sources, their own passages, and a term one passage carries, which is what a
+-- caller searching for a name is doing:
+--
+--   sources x passages   without the index              with the index
+--   50 x 20   (1k)       Seq Scan  2229 buffers  5.6ms  Bitmap  24 buffers  4.0ms
+--   200 x 100 (20k)      Seq Scan  2232 buffers 43.0ms  Bitmap  28 buffers  9.8ms
+--   200 x 500 (100k)     Seq Scan  3913 buffers 240ms   Bitmap  28 buffers  6.7ms
+--   500 x 500 (250k)     Seq Scan  8288 buffers 395ms   Bitmap  36 buffers  8.0ms
+--   1000 x 500 (500k)    Seq Scan 15914 buffers 610ms   Bitmap  34 buffers  7.0ms
+--
+-- The planner chose the index on every one of them. It is inert on a freshly
+-- seeded database - a sequential scan of a few dozen rows is cheaper than any index
+-- probe, and the three passages the development seed holds are three rows - so the
+-- index buys nothing there and costs one trigram entry per passage written.
+--
+-- pg_trgm's cost model is pessimistic enough that on some corpus shapes it costs
+-- the index path more than the sequential scan it still beats in execution. That is
+-- why the test that guards this index checks the index is in the schema and records
+-- the plans rather than requiring the planner to pick one: a test asserting the
+-- choice would be asserting the cost model.
+--
+-- The other candidate indexes were measured and are deliberately absent:
+--
+--   * sources (title_ar, author_ar, citation_ar, gin_trgm_ops). The stage ORs three
+--     columns. The planner's cost for the sequential scan is 871.18 with the index
+--     absent and 871.18 with it present: it never considers the index, at 20000
+--     rows, at either 20000 or 200000. An index the planner does not choose is write
+--     cost with no read benefit.
+--
+--   * open_questions (title_ar, description_ar, gin_trgm_ops). Same answer at 5000
+--     rows and at 50000: the plan is a sequential scan either way, and at 50000 the
+--     run measured 494 ms with the index present against 346 ms without it.
+--
+--   * people (normalized_name_ar, gin_trgm_ops). The name stage keeps every row
+--     whose score is above zero, and pg_trgm's operators are defined at a threshold
+--     of 0.3, so no operator over that column can serve the filter without dropping
+--     the candidates between zero and the threshold.
+--
+--   * the stages in internal/research/retrieval.go. Same reason, and the
+--     measurement is recorded rather than argued: a passage mentioning "أبو بكر"
+--     scores 0.1951 and is a candidate the stage keeps, which is exactly the band a
+--     pre-filter built from `%` would drop. The fixture that pins it is
+--     TestRetrieveLexicalPassagesRelevance.
+--
+--   * historical_place_names (name_ar, gin_trgm_ops). The name stage's place branch
+--     asks this question once per place, over a table with no rows in the
+--     representative corpus, so there is no measurement to justify an index here and
+--     the plan's own rule is to leave it out.
+CREATE INDEX IF NOT EXISTS source_passages_trgm_idx
+  ON source_passages USING gin (normalized_text_ar gin_trgm_ops, text_ar gin_trgm_ops);
