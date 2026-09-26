@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -103,22 +104,7 @@ func seedQuestionFixture(t *testing.T, pool *pgxpool.Pool) *questionFixture {
 		}
 		return title, status, updatedAt
 	}
-	t.Cleanup(func() {
-		cleanupCtx := context.Background()
-		for _, statement := range []struct {
-			query string
-			args  []any
-		}{
-			{`DELETE FROM question_notes WHERE created_by = $1`, []any{actorID}},
-			{`DELETE FROM open_questions WHERE id = $1`, []any{questionID}},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, []any{actorID}},
-			{`DELETE FROM users WHERE id = $1`, []any{actorID}},
-		} {
-			if _, err := pool.Exec(cleanupCtx, statement.query, statement.args...); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement.query, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID) })
 	return fixture
 }
 

@@ -139,8 +139,34 @@ against another scratch database, and `make ai-eval`.
 
 `dbtestguard` is what makes that a gate rather than a green tick. It fails on a
 non-zero exit, on a `DATABASE_URL` that points at an unmigrated database, on any
-test that skipped on the database gate, and on a package in its required manifest
-that ran no test at all.
+test that skipped on the database gate, on a package in its required manifest that
+ran no test at all, and on a **synthetic test row left behind** in the database
+the suite just ran against.
+
+That last one is not a detail. A fixture that inserts a user into the shared
+`public` schema and never removes it grows the developer's own database by a person
+per run, which is how 593 test users ended up in it, and the suite still passed
+every time. The convention now, and the gate that enforces it:
+
+- A fixture that writes to the shared schema gives its actor an address ending in
+  `@example.test` or `@dawha.test`. Those two domains are reserved for tests; a
+  real registration is never in one.
+- The actor is registered with
+  `testsupport.CleanupSyntheticActors(t, pool, actorID, ...)` from `t.Cleanup`.
+  Everything the fixture wrote hangs off its actors, so naming the actors is
+  enough - the helper reads the dependency graph out of `pg_constraint`, deletes in
+  dependency order, loops until a pass changes nothing, and fails the test if
+  anything survives. No fixture enumerates its own tables.
+- Prefer `testsupport.New(t)`, which builds a per-test migrated schema and drops
+  it. A fixture only reaches for the shared schema because the code under test
+  hard-codes it.
+- `make db-sweep` removes anything left over from a run that was killed before its
+  cleanup, using that same helper. It is scoped by the markers, so it cannot touch
+  a seeded row.
+
+The gate is scoped by the marker and never by a row count, because packages run in
+parallel and a global before/after comparison is a race - plan 005 already lost a
+day to one.
 
 ### Every target, and what it proves
 
@@ -167,6 +193,7 @@ that ran no test at all.
 | `make security-scan` | dependency advisories and committed secrets; CI gate, needs the network | no |
 | `make e2e` | 28 browser journeys against a three-process stack | yes |
 | `make e2e-clean` | removes the rows a browser run created, and nothing else | yes |
+| `make db-sweep` | removes the synthetic rows a Go fixture created, and nothing else | yes |
 
 `make security-scan` and `make e2e` are deliberately not part of `verify-full`:
 the scanners need the network and install their own tools, and the browser suite

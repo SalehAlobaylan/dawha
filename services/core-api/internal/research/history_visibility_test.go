@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,29 +142,7 @@ func seedRunHistoryFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	fixture.runContextTreeID = treeID
 	fixture.runContextVersion = versionID
 	t.Cleanup(func() {
-		for _, cleanup := range []struct {
-			sql string
-			arg any
-		}{
-			{`DELETE FROM research_run_contexts WHERE run_id = $1`, fixture.runID},
-			{`DELETE FROM research_answers WHERE run_id = $1`, fixture.runID},
-			{`DELETE FROM research_evidence WHERE run_id = $1`, fixture.runID},
-			{`DELETE FROM research_graph_paths WHERE run_id = $1`, fixture.runID},
-			{`DELETE FROM research_runs WHERE id = $1`, fixture.runID},
-			{`DELETE FROM open_questions WHERE id = $1`, fixture.questionID},
-			{`DELETE FROM tree_versions WHERE id = $1`, fixture.runContextVersion},
-			{`DELETE FROM trees WHERE id = $1`, fixture.runContextTreeID},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, fixture.ownerID},
-			{`DELETE FROM user_roles WHERE user_id = $1`, fixture.ownerID},
-			{`DELETE FROM user_roles WHERE user_id = $1`, fixture.registeredID},
-			{`DELETE FROM users WHERE id = $1`, fixture.ownerID},
-			{`DELETE FROM users WHERE id = $1`, fixture.registeredID},
-			{`DELETE FROM users WHERE id = $1`, fixture.strangerID},
-		} {
-			if _, err := pool.Exec(context.Background(), cleanup.sql, cleanup.arg); err != nil {
-				t.Errorf("cleanup failed for %q: %v", cleanup.sql, err)
-			}
-		}
+		testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID, fixture.registeredID, fixture.strangerID)
 	})
 	return fixture
 }

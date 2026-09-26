@@ -36,6 +36,7 @@ from evaluation.thresholds import (
     THRESHOLDS_REVIEWED_ON,
     THRESHOLDS_VERSION,
     defects_for,
+    describe,
     thresholds_for,
 )
 
@@ -123,10 +124,16 @@ def test_every_safety_floor_is_one() -> None:
         "citations.excerpt_fidelity",
         "citations.source_id_fidelity",
         "citations.grounded_answer_rate",
+        "citations.unsupported_refusal",
     )
     for key in floors:
         group, metric = key.split(".", 1)
         assert thresholds_for(group)[metric] == 1.0, f"{key} is not held at 1.0"
+    described = set(describe()["safety_floors"])
+    assert described == set(floors), (
+        f"thresholds.describe() calls {sorted(described - set(floors))} safety floors that the "
+        f"test does not check, and misses {sorted(set(floors) - described)}"
+    )
 
 
 def test_every_known_defect_names_a_metric_that_exists() -> None:
@@ -267,6 +274,48 @@ def test_an_unsupported_answer_refuses_in_words_and_not_only_in_metrics() -> Non
     )
     assert grounded.citations
     assert "ليست إجابة تاريخية" in grounded.answer
+
+
+def test_a_shared_function_word_is_not_grounding_and_a_shared_content_word_is() -> None:
+    """The citation filter itself, pinned directly rather than only through the fixtures.
+
+    The fixtures measure the filter's effect on a metric; this measures the filter,
+    so a regression that a future fixture set happens not to cover is still a
+    failing test rather than a number that quietly moved. The three cases are the
+    three directions cit-003, cit-007 and cit-008 pin, in one place.
+    """
+    from app.main import ResearchQueryRequest, content_tokens
+
+    provider = DeterministicProvider()
+
+    def cited(query: str, text: str) -> list[str]:
+        response = provider.research_query(
+            ResearchQueryRequest(
+                query=query, contexts=[{"id": "s1", "title": "مصدر", "text": text}]
+            )
+        )
+        return [citation.source_id for citation in response.citations]
+
+    # A shared preposition and nothing else is not a source that answers.
+    question = "في أي سنة هاجرت القبيلة إلى الأحساء؟"
+    registry = "قيد في سجل الرياض، صفحة تسع."
+    assert content_tokens(question) & content_tokens(registry) == set()
+    assert cited(question, registry) == []
+
+    # A shared content word is.
+    assert "السجل" in content_tokens("ما الذي ذكره السجل عن قبيلة تميم؟")
+    assert cited("ما الذي ذكره السجل عن قبيلة تميم؟", "ذكر السجل حكما على قبيلة تميم.") == ["s1"]
+
+    # A function word riding along with a content word is not a reason to drop it.
+    assert cited("من كتب رسالة ابن فضالة؟", "من كتب هذه الرسالة هو أحمد بن محمد بن فضالة.") == [
+        "s1"
+    ]
+
+    # The English half of the list, because a function-word filter that only
+    # knows Arabic is half a filter.
+    assert content_tokens("who wrote the letter about the tribe?") & content_tokens(
+        "a note in the other book about it"
+    ) == set()
 
 
 def test_the_evaluation_directory_has_no_unread_fixture() -> None:

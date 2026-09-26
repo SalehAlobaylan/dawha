@@ -12,7 +12,12 @@
 //   - a test that skipped with testsupport.DBSkipMessage while DATABASE_URL was
 //     set fails, which is the silent skip this command exists to catch;
 //   - a package listed in the required manifest that ran no test fails, so a
-//     deleted or emptied package cannot read as a pass.
+//     deleted or emptied package cannot read as a pass;
+//   - a synthetic user left in the database after the suite fails, named by its
+//     address, together with the rows still hanging off it. That is the leak half
+//     of the same mistake: a fixture that inserts into the shared schema and
+//     never removes its actor used to pass here and quietly grow the developer's
+//     database by a person per run.
 //
 // It refuses to run without DATABASE_URL, because an audit with no database to
 // check is exactly the vacuous pass being designed out.
@@ -32,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,6 +112,10 @@ func run() int {
 			result.Problems = append(result.Problems, fmt.Sprintf(
 				"%d fixture schema(s) survived the run, so the suite left data in the shared database: %s",
 				len(leaked), strings.Join(leaked, ", ")))
+		}
+		if err := auditSyntheticRows(&result); err != nil {
+			fmt.Fprintf(os.Stderr, "dbtestguard: %v\n", err)
+			return 2
 		}
 	}
 
@@ -197,6 +207,67 @@ func listFixtureSchemas() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return testsupport.ListFixtureSchemas(ctx, strings.TrimSpace(os.Getenv("DATABASE_URL")))
+}
+
+// auditSyntheticRows is the leak check: after the suite, no synthetic actor may
+// still be in the database.
+//
+// It is scoped by the marker in testsupport.SyntheticEmailSuffixes, never by a
+// before/after row count. Packages run in parallel and `go test ./...` interleaves
+// them, so a global count is a race that can fail for a reason unrelated to any
+// test - and plan 005 already lost a day to exactly that. A marker is a
+// property of the row, so it does not matter who else is writing at the time.
+//
+// The rows still hanging off a leaked actor are reported with it, because "one
+// synthetic user is left" is a number and "this is what it is still holding up" is
+// what a fixture author can act on.
+func auditSyntheticRows(result *testsupport.AuditResult) error {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	users, err := testsupport.ListSyntheticUsers(ctx, databaseURL)
+	if err != nil {
+		result.OK = false
+		result.Problems = append(result.Problems, fmt.Sprintf("audit synthetic users: %v", err))
+		return nil
+	}
+	result.SyntheticUsers = len(users)
+	if len(users) == 0 {
+		return nil
+	}
+	addresses := make([]string, 0, len(users))
+	for _, user := range users {
+		addresses = append(addresses, user.Email)
+	}
+	problem := fmt.Sprintf(
+		"%d synthetic user(s) survived the run, so a fixture inserted into the shared schema and "+
+			"did not clean up after itself: %s. Register the actor with "+
+			"testsupport.CleanupSyntheticActors so the sweep removes everything hanging off it.",
+		len(users), strings.Join(addresses, ", "))
+
+	reachable, err := testsupport.ListReachableFromSyntheticUsers(ctx, databaseURL)
+	if err != nil {
+		problem += fmt.Sprintf(" (the rows still reachable from them could not be listed: %v)", err)
+	} else {
+		result.SyntheticRows = reachable
+		for _, table := range sortedTables(reachable) {
+			problem += fmt.Sprintf("\n    %s: %d row(s) e.g. %s", table,
+				len(reachable[table]), strings.Join(reachable[table], ", "))
+		}
+	}
+	result.OK = false
+	result.Problems = append(result.Problems, problem)
+	return nil
+}
+
+func sortedTables(values map[string][]string) []string {
+	tables := make([]string, 0, len(values))
+	for table := range values {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	return tables
 }
 
 func repositoryRoot() (string, error) {

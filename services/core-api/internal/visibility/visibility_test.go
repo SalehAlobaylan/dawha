@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -473,30 +474,8 @@ func seedPolicyFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *p
 // database is left exactly as it was found.
 func cleanupPolicyFixture(t *testing.T, pool *pgxpool.Pool, fixture *policyFixture) {
 	t.Helper()
-	ctx := context.Background()
-	actors := []uuid.UUID{fixture.ownerID, fixture.collaboratorID, fixture.researcherID, fixture.unrelatedResearcherID, fixture.adminID}
-	statements := []string{
-		`DELETE FROM question_sources WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM question_claims WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM open_questions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claims WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM source_statements WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM sources WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM tree_nodes WHERE person_id IN (SELECT id FROM people WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM tree_versions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM trees WHERE owner_id = ANY($1::uuid[])`,
-		`DELETE FROM people WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM users WHERE id = ANY($1::uuid[])`,
-	}
-	for _, statement := range statements {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
-			t.Errorf("cleanup failed for %q: %v", statement, err)
-		}
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM source_passages WHERE id = ANY($1::uuid[])`, fixture.passageIDs); err != nil {
-		t.Errorf("cleanup failed for source passages: %v", err)
-	}
+	testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID, fixture.collaboratorID,
+		fixture.researcherID, fixture.unrelatedResearcherID, fixture.adminID)
 }
 
 // TestReferenceFamiliesAreScopedByVisibility pins the rule the reference families
@@ -536,20 +515,7 @@ func TestReferenceFamiliesAreScopedByVisibility(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher'), ($2, 'collaborator'), ($3, 'registered')`, researcherID, collaboratorID, registeredID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanup := context.Background()
-		for _, statement := range []string{
-			`DELETE FROM places WHERE created_by IN ($1, $2, $3)`,
-			`DELETE FROM families WHERE created_by IN ($1, $2, $3)`,
-			`DELETE FROM audit_log WHERE actor_id IN ($1, $2, $3)`,
-			`DELETE FROM user_roles WHERE user_id IN ($1, $2, $3)`,
-			`DELETE FROM users WHERE id IN ($1, $2, $3)`,
-		} {
-			if _, err := pool.Exec(cleanup, statement, researcherID, collaboratorID, registeredID); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, researcherID, collaboratorID, registeredID) })
 
 	publicPlaceID := uuid.New()
 	researchPlaceID := uuid.New()

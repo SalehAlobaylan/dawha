@@ -474,22 +474,28 @@ claim that graph retrieval helps is currently unfalsifiable in this repository.
 passages, and a second retrieval path to run it against. Both are new work; neither
 is a measurement of what exists.
 
-### Blocker 2 - a source that does not answer the question is still cited
+### Blocker 2 - a source that does not answer the question is still cited - FIXED in plan 012
 
-`services/ai-research/app/main.py:607-620` keeps every context whose token set
-intersects the query's, with no minimum overlap. The preposition `في` is a token, so
-`services/ai-research/evaluation/citation_cases.jsonl` case `cit-003` - a question
-about a migration, answered by nothing - comes back with a citation to a registry
-entry that does not mention it. Measured: `citations.unsupported_refusal = 0.5`.
+**Status: closed.** `research_query` in `services/ai-research/app/main.py` no longer
+counts any shared token as grounding. A context is cited only when it shares a
+*content* token with the question: the existing tokenizer's output minus an
+explicit, documented stopword set of Arabic and English function words, written out
+next to the filter. The preposition `في` was the load-bearing case -
+`services/ai-research/evaluation/citation_cases.jsonl` case `cit-003`, a question
+about a migration answered by nothing, used to come back citing a registry entry
+that never mentions it. It now refuses. `citations.unsupported_refusal` measures
+**1.0** and its threshold is 1.0; the entry is no longer in
+`evaluation/thresholds.py` `KNOWN_DEFECTS`, because a defect leaves that list when
+the provider changes, not when the number moves.
 
-**Why it blocks:** V1 step 17 promises a *source-grounded* question. A citation
-that does not support its answer is the failure this product's whole layering
-exists to prevent, and it is reachable from the shipped research path.
+**Why it was a blocker:** V1 step 17 promises a *source-grounded* question. A
+citation that does not support its answer is the failure this product's whole
+layering exists to prevent, and it was reachable from the shipped research path.
 
-**Why it is not fixed here:** the fix is in the provider, and this plan adds
-measurement. A gate made green by editing the thing it measures is not a gate. It
-is recorded in `evaluation/thresholds.py` KNOWN_DEFECTS, printed by `make ai-eval`
-next to the pass, and its threshold sits at the measurement rather than at 1.0.
+**What holds it there now:** `cit-003` (a function word alone is not grounding),
+`cit-007` (a content word is) and `cit-008` (a content word alongside a function
+word still is) pin all three directions, and `unsupported_refusal` is one of the
+safety floors in `thresholds.describe()` with its threshold at 1.0.
 
 ### Blocker 3 - the disputed-claims dictionary index cannot be searched by a ة name
 

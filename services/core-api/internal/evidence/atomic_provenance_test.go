@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -97,27 +98,7 @@ func seedAtomicFixture(t *testing.T, pool *pgxpool.Pool) *atomicFixture {
 	if _, err := pool.Exec(ctx, `INSERT INTO source_passages (id, source_id, sequence_number, text_ar, normalized_text_ar) VALUES ($1, $2, 1, 'مقطع الذرّية', 'مقطع الذرّية')`, fixture.passageID, fixture.sourceID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx := context.Background()
-		for _, statement := range []struct {
-			query string
-			args  []any
-		}{
-			{`DELETE FROM claim_evidence WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claim_counter_evidence WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claim_versions WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claims WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM source_statements WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM sources WHERE id = $1`, []any{fixture.sourceID}},
-			{`DELETE FROM people WHERE id = $1`, []any{fixture.personID}},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM users WHERE id = $1`, []any{fixture.ownerID}},
-		} {
-			if _, err := pool.Exec(cleanupCtx, statement.query, statement.args...); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement.query, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID) })
 	return fixture
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/google/uuid"
@@ -83,25 +84,7 @@ func newDownloadFixture(t *testing.T) *downloadFixture {
 	fixture.ownerToken = "download-owner-" + uuid.NewString()
 	fixture.readerTok = "download-reader-" + uuid.NewString()
 
-	t.Cleanup(func() {
-		for _, cleanup := range []struct {
-			sql string
-			arg any
-		}{
-			{`DELETE FROM jobs WHERE type = 'source_process' AND payload ->> 'source_id' = $1`, fixture.source.String()},
-			{`DELETE FROM source_processing_runs WHERE source_id = $1`, fixture.source},
-			{`DELETE FROM source_files WHERE source_id = $1`, fixture.source},
-			{`DELETE FROM audit_log WHERE actor_id = ANY($1)`, []uuid.UUID{fixture.owner, fixture.reader}},
-			{`DELETE FROM auth_sessions WHERE user_id = ANY($1)`, []uuid.UUID{fixture.owner, fixture.reader}},
-			{`DELETE FROM sources WHERE id = $1`, fixture.source},
-			{`DELETE FROM user_roles WHERE user_id = ANY($1)`, []uuid.UUID{fixture.owner, fixture.reader}},
-			{`DELETE FROM users WHERE id = ANY($1)`, []uuid.UUID{fixture.owner, fixture.reader}},
-		} {
-			if _, err := pool.Exec(context.Background(), cleanup.sql, cleanup.arg); err != nil {
-				t.Errorf("cleanup failed for %q: %v", cleanup.sql, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.owner, fixture.reader) })
 
 	for _, account := range []struct {
 		id    uuid.UUID
@@ -188,10 +171,7 @@ func TestSignedDownloadRefusesAnAccountThatCannotReviewTheSource(t *testing.T) {
 	if _, err := fixture.pool.Exec(ctx, `INSERT INTO auth_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 hour')`, outsider, auth.HashToken(outsiderToken)); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = fixture.pool.Exec(context.Background(), `DELETE FROM auth_sessions WHERE user_id = $1`, outsider)
-		_, _ = fixture.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, outsider)
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, fixture.pool, outsider) })
 
 	recorder := fixture.request(t, outsiderToken, "/api/v1/source-files/"+fixture.fileID.String()+"/download")
 	if recorder.Code != http.StatusForbidden {

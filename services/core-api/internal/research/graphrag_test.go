@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 )
@@ -136,13 +137,17 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	viewerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	ownerID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, 'graph-private-owner@dawha.local', 'مالك شجرة الاختبار') ON CONFLICT (id) DO NOTHING`, ownerID); err != nil {
+	// The owner is a synthetic actor like any other, so it carries the synthetic
+	// marker. It used to be inserted as graph-private-owner@dawha.local, which put
+	// a test row in the one domain the leak gate does not look at: a fixture that
+	// leaked here would have been invisible to the gate forever.
+	ownerID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مالك شجرة الاختبار')`, ownerID, "graph-private-owner-"+ownerID.String()+"@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, ownerID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID) })
 	roleExisted := false
 	if err := pool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM user_roles WHERE user_id = $1 AND role = 'researcher')`, viewerID).Scan(&roleExisted); err != nil {
 		t.Fatal(err)
@@ -171,7 +176,6 @@ func TestGraphPrivateTreeRequiresResourceAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM trees WHERE id = $1`, treeID)
 	input, err := validateQueryInput(QueryInput{Question: "سؤال", GraphOperation: GraphOperationCommonAncestor, GraphStartType: "person", GraphStartID: "10000000-0000-0000-0000-000000000001", GraphEndType: "person", GraphEndID: "10000000-0000-0000-0000-000000000002", TreeID: treeID.String(), TreeVersionID: versionID.String()})
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +268,7 @@ func TestGraphShortestRelationshipPathIsBoundedAndDirectional(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ownerID := uuid.New()
 	treeID := uuid.New()
@@ -275,15 +279,13 @@ func TestGraphShortestRelationshipPathIsBoundedAndDirectional(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مالك شجرة المسار')`, ownerID, "shortest-path-"+ownerID.String()+"@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ownerID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) SELECT p.id, p.name, p.name, $1 FROM (VALUES ($2::uuid, 'الشخص أ'), ($3::uuid, 'الشخص ب'), ($4::uuid, 'الشخص ج'), ($5::uuid, 'الشخص د'), ($6::uuid, 'الشخص هـ')) AS p(id, name)`, ownerID, personIDs[0], personIDs[1], personIDs[2], personIDs[3], personIDs[4]); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, personIDs)
 	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة المسار', 'public', $2)`, treeID, ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state) VALUES ($1, $2, 1, 'published')`, versionID, treeID); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +338,7 @@ func TestGraphConnectedComponentIsVersionScopedAndBounded(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ownerID := uuid.New()
 	treeID := uuid.New()
@@ -348,15 +350,13 @@ func TestGraphConnectedComponentIsVersionScopedAndBounded(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مالك المكوّن')`, ownerID, "component-"+ownerID.String()+"@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ownerID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, created_by) SELECT p.id, p.name, p.name, $1 FROM (VALUES ($2::uuid, 'جذر المكوّن'), ($3::uuid, 'الفرد الثاني'), ($4::uuid, 'الفرد الثالث'), ($5::uuid, 'الفرد الرابع'), ($6::uuid, 'فرد منفصل'), ($7::uuid, 'فرد منفصل آخر')) AS p(id, name)`, ownerID, personIDs[0], personIDs[1], personIDs[2], personIDs[3], personIDs[4], personIDs[5]); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, personIDs)
 	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة المكوّن', 'public', $2)`, treeID, ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state) VALUES ($1, $2, 1, 'published'), ($3, $2, 2, 'published')`, versionID, treeID, emptyVersionID); err != nil {
 		t.Fatal(err)
 	}

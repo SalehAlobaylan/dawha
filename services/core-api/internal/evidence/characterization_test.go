@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 )
@@ -68,20 +69,19 @@ func TestSourceCharacterizationRunAndReview(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ownerID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث المصدر')`, ownerID, characterizationTestEmail(ownerID)); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, ownerID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID) })
 
 	sourceID := uuid.New()
 	corroboratorID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO sources (id, title_ar, citation_ar, source_type, visibility, created_by) VALUES ($1, 'المصدر الأول', 'مجلد ١، صفحة ٢', 'book', 'public', $3), ($2, 'المصدر المؤكد', 'مجلد ٢، صفحة ٤', 'book', 'public', $3)`, sourceID, corroboratorID, ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM sources WHERE id = ANY($1::uuid[])`, []uuid.UUID{sourceID, corroboratorID})
 
 	passageID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO source_passages (id, source_id, sequence_number, text_ar, normalized_text_ar) VALUES ($1, $2, 1, 'نص المصدر', 'نص المصدر')`, passageID, sourceID); err != nil {
@@ -99,7 +99,6 @@ func TestSourceCharacterizationRunAndReview(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO claims (id, subject_type, subject_id, predicate, object_type, object_id, status, created_by) VALUES ($1, 'person', $2, 'parent_of', 'person', $3, 'supported', $4)`, claimID, uuid.New(), uuid.New(), ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM claims WHERE id = $1`, claimID)
 	if _, err := pool.Exec(ctx, `INSERT INTO claim_evidence (claim_id, source_statement_id, relation, created_by) VALUES ($1, $2, 'supports', $3), ($1, $4, 'supports', $3)`, claimID, statementID, ownerID, corroboratorStatementID); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +179,7 @@ func TestSourceCharacterizationRedactsPrivateRelatedSources(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	ownerID := uuid.New()
 	viewerID := uuid.New()
@@ -192,19 +191,17 @@ func TestSourceCharacterizationRedactsPrivateRelatedSources(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::uuid[])`, []uuid.UUID{ownerID, viewerID})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID, viewerID) })
 
 	publicSourceID := uuid.New()
 	privateSourceID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO sources (id, title_ar, source_type, visibility, created_by) VALUES ($1, 'مصدر عام', 'book', 'public', $3), ($2, 'مصدر خاص', 'book', 'private', $3)`, publicSourceID, privateSourceID, ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM sources WHERE id = ANY($1::uuid[])`, []uuid.UUID{publicSourceID, privateSourceID})
 	claimID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO claims (id, subject_type, subject_id, predicate, object_type, object_id, status, created_by) VALUES ($1, 'person', $2, 'parent_of', 'person', $3, 'supported', $4)`, claimID, uuid.New(), uuid.New(), ownerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM claims WHERE id = $1`, claimID)
 	publicStatementID := uuid.New()
 	privateStatementID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO source_statements (id, source_id, statement_text_ar, review_status, created_by) VALUES ($1, $2, 'عبارة عامة', 'accepted', $5), ($3, $4, 'عبارة خاصة', 'accepted', $5)`, publicStatementID, publicSourceID, privateStatementID, privateSourceID, ownerID); err != nil {

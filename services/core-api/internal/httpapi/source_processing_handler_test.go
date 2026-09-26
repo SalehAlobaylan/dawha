@@ -18,6 +18,7 @@ import (
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/google/uuid"
@@ -231,25 +232,7 @@ func newSourceUploadFixture(t *testing.T) *sourceUploadFixture {
 		storage: store.Root,
 	}
 	// Registered before the inserts so a failed setup cannot leak fixture rows.
-	t.Cleanup(func() {
-		for _, cleanup := range []struct {
-			sql string
-			arg any
-		}{
-			{`DELETE FROM jobs WHERE type = 'source_process' AND payload ->> 'source_id' = $1`, fixture.source.String()},
-			{`DELETE FROM source_processing_runs WHERE source_id = $1`, fixture.source},
-			{`DELETE FROM source_files WHERE source_id = $1`, fixture.source},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, fixture.userID},
-			{`DELETE FROM auth_sessions WHERE user_id = $1`, fixture.userID},
-			{`DELETE FROM sources WHERE id = $1`, fixture.source},
-			{`DELETE FROM user_roles WHERE user_id = $1`, fixture.userID},
-			{`DELETE FROM users WHERE id = $1`, fixture.userID},
-		} {
-			if _, err := pool.Exec(context.Background(), cleanup.sql, cleanup.arg); err != nil {
-				t.Errorf("cleanup failed for %q: %v", cleanup.sql, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.userID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'رافع المصدر')`, fixture.userID, fixture.token+"@dawha.test"); err != nil {
 		t.Fatal(err)
 	}

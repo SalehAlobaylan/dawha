@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -302,37 +303,7 @@ func seedSuggestionFixture(t *testing.T, pool *pgxpool.Pool) *suggestionFixture 
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar, sort_order) VALUES ($1, $2, $3, 'أبو عبد الله', 0)`, fixture.nodeID, fixture.versionID, fixture.personID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx := context.Background()
-		for _, statement := range []struct {
-			query string
-			args  []any
-		}{
-			{`DELETE FROM suggestion_change_sets WHERE suggestion_id IN (SELECT id FROM suggestions WHERE tree_id = $1)`, []any{fixture.treeID}},
-			{`DELETE FROM suggestion_reviews WHERE suggestion_id IN (SELECT id FROM suggestions WHERE tree_id = $1)`, []any{fixture.treeID}},
-			{`DELETE FROM suggestions WHERE tree_id = $1`, []any{fixture.treeID}},
-			{`DELETE FROM claim_evidence WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claim_counter_evidence WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claim_versions WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM claims WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM entity_relationships WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM person_aliases WHERE person_id IN (SELECT id FROM people WHERE id = ANY($1::uuid[]))`, []any{[]uuid.UUID{fixture.personID, fixture.otherPersonID}}},
-			{`DELETE FROM open_questions WHERE created_by = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM tree_nodes WHERE tree_version_id = $1`, []any{fixture.versionID}},
-			{`DELETE FROM tree_versions WHERE id = $1`, []any{fixture.versionID}},
-			{`DELETE FROM trees WHERE id = $1`, []any{fixture.treeID}},
-			{`DELETE FROM source_statements WHERE id = $1`, []any{fixture.statementID}},
-			{`DELETE FROM source_passages WHERE id = $1`, []any{fixture.passageID}},
-			{`DELETE FROM sources WHERE id = $1`, []any{fixture.sourceID}},
-			{`DELETE FROM people WHERE id = ANY($1::uuid[])`, []any{[]uuid.UUID{fixture.personID, fixture.otherPersonID}}},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, []any{fixture.ownerID}},
-			{`DELETE FROM users WHERE id = $1`, []any{fixture.ownerID}},
-		} {
-			if _, err := pool.Exec(cleanupCtx, statement.query, statement.args...); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement.query, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID) })
 	return fixture
 }
 
@@ -638,14 +609,7 @@ func TestReviewAuthorizationAndConflictAreUnchanged(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'غريب')`, strangerID, "suggestion-stranger-"+strangerID.String()+"@dawha.test"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM audit_log WHERE actor_id = $1`, strangerID); err != nil {
-			t.Errorf("cleanup failed for the stranger: %v", err)
-		}
-		if _, err := pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, strangerID); err != nil {
-			t.Errorf("cleanup failed for the stranger: %v", err)
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, strangerID) })
 	if _, err := service.Review(ctx, suggestion.ID, strangerID.String(), ReviewInput{Decision: "accepted", ChangeSet: claimChange}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("an unrelated reviewer applied a change: %v", err)
 	}

@@ -133,6 +133,194 @@ def tokenize(value: str) -> set[str]:
     return {token for token in re.findall(r"[\w؀-ۿ]+", normalized_text(value)) if token}
 
 
+# A shared function word is not grounding.
+#
+# `tokenize` keeps every word, so the question "في أي سنة هاجرت القبيلة إلى
+# الأحساء؟" and a registry line "قيد في سجل الرياض، صفحة تسع." intersect on the
+# single token "في" - the preposition - and on nothing that any of them is about.
+# Counting that intersection as support made a source that says nothing about the
+# question into a citation, and a reader who opens it learns nothing, which is
+# the failure this product's whole source-grounding premise exists to prevent.
+#
+# So a context is cited only when it shares at least one *content* token with the
+# question: the tokenizer's own output minus the words below. They are the words
+# that mean nothing on their own - articles, pronouns, prepositions, conjunctions,
+# the question words and the auxiliaries - in Arabic and in English.
+#
+# The list is short on purpose. A longer one starts removing words that do carry
+# meaning, and a shorter one lets a shared preposition back in; either mistake
+# would move a number nobody read the code for. Three citation fixtures pin both
+# directions and the case between them, so changing a word here has to be a
+# deliberate edit rather than a quiet one: cit-003 shares only a function word
+# and must not be cited, cit-007 shares a content word and must be, and cit-008
+# shares both and must still be.
+#
+# Every entry is written in the form `tokenize` returns, which is
+# `normalize_arabic_name` followed by `casefold`: أ/إ/آ are ا, ى is ي, ة is ه, and
+# English is lowercased. "الى" for "إلى" here is the tokenizer's output, not a
+# typo, and adding an un-normalised spelling would silently never match.
+#
+# The Arabic clitics (و, ف, ب, ك, ل, ال) are not listed separately: the tokenizer
+# does not split them off, so "والد" is one token and the words below are only
+# ever matched whole.
+_FUNCTION_WORDS = frozenset(
+    {
+        # Arabic: articles, pronouns, prepositions, conjunctions, question words,
+        # auxiliaries, negation and demonstratives.
+        "ال",
+        "الي",
+        "التي",
+        "الذي",
+        "الذين",
+        "الذان",
+        "اللواتي",
+        "ذات",
+        "ذاك",
+        "هذا",
+        "هذه",
+        "ذلك",
+        "تلك",
+        "هؤلاء",
+        "هو",
+        "هي",
+        "هم",
+        "هما",
+        "نحن",
+        "انت",
+        "انتم",
+        "انا",
+        "ان",
+        "انها",
+        "انه",
+        "ايضا",
+        "في",
+        "من",
+        "الى",
+        "على",
+        "عن",
+        "مع",
+        "بين",
+        "حول",
+        "لدى",
+        "منذ",
+        "دون",
+        "حتى",
+        "او",
+        "ثم",
+        "لكن",
+        "اذا",
+        "كما",
+        "ما",
+        "ماذا",
+        "اي",
+        "اين",
+        "متي",
+        "كيف",
+        "هل",
+        "كم",
+        "لماذا",
+        "كان",
+        "كانت",
+        "يكون",
+        "قد",
+        "لقد",
+        "ليس",
+        "لا",
+        "لم",
+        "لن",
+        "غير",
+        # English: the same categories.
+        "a",
+        "about",
+        "after",
+        "all",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "but",
+        "by",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "here",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "may",
+        "might",
+        "must",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "our",
+        "she",
+        "should",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
+
+
+def content_tokens(value: str) -> set[str]:
+    """The tokens of `value` that carry meaning on their own.
+
+    This is the tokenizer's output minus the function words above, and it is the
+    only difference between "these two texts are about the same thing" and "these
+    two texts both contain a preposition".
+    """
+    return tokenize(value) - _FUNCTION_WORDS
+
+
 def contains_any(value: str, terms: tuple[str, ...]) -> bool:
     normalized = normalized_text(value)
     return any(normalized_text(term) in normalized for term in terms)
@@ -605,15 +793,27 @@ class DeterministicProvider:
         return RerankResponse(documents=documents)
 
     def research_query(self, request: ResearchQueryRequest) -> ResearchQueryResponse:
+        # Ranking is unchanged and still counts every shared token, because the
+        # order of the contexts is a retrieval decision and this function is not
+        # where it is made. What changed is the filter below: a context becomes a
+        # citation only when it shares a *content* token with the question, so a
+        # preposition both texts happen to contain is no longer enough to cite a
+        # source that says nothing about the question.
         query_tokens = tokenize(request.query)
+        query_content = content_tokens(request.query)
         ranked = sorted(
             request.contexts, key=lambda item: len(query_tokens & tokenize(item.text)), reverse=True
         )
+        # The filter runs before the five-citation cap, not after it, so a
+        # context that shares only a function word cannot use up one of the five
+        # slots and push out a source that does answer. The cap still applies to
+        # the citations, which is what cit-005 measures: six supporting sources,
+        # five returned.
         citations = [
             ResearchCitation(source_id=item.id, title=item.title, excerpt=item.text[:1000])
-            for item in ranked[:5]
-            if query_tokens & tokenize(item.text)
-        ]
+            for item in ranked
+            if query_content & content_tokens(item.text)
+        ][:5]
         answer = "هذه صياغة بحثية أولية وليست إجابة تاريخية؛ راجع المصادر المرتبطة قبل الاعتماد."
         if not citations:
             answer = "لم أجد سياقاً كافياً في المواد المرسلة؛ لا أستطيع بناء جواب موثوق من دون مصدر."

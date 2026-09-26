@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -235,38 +236,18 @@ func seedSearchVisibilityFixture(t *testing.T, ctx context.Context, pool *pgxpoo
 
 func cleanupSearchVisibilityFixture(t *testing.T, pool *pgxpool.Pool, fixture *searchVisibilityFixture) {
 	t.Helper()
+	testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID, fixture.researcherID)
+	// Two statements that clean up after an interrupted earlier run rather than after
+	// this one: the passages are named by their own text marker, so they can outlive
+	// the actor that created them, and a statement pointing at one of them would block
+	// the passage delete.
 	ctx := context.Background()
-	actors := []uuid.UUID{fixture.ownerID, fixture.researcherID}
 	for _, statement := range []string{
-		`DELETE FROM question_sources WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM question_claims WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM open_questions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claims WHERE created_by = ANY($1::uuid[])`,
+		`DELETE FROM source_statements WHERE source_passage_id IN (SELECT id FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%')`,
+		`DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%'`,
 	} {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
+		if _, err := pool.Exec(ctx, statement); err != nil {
 			t.Errorf("cleanup failed for %q: %v", statement, err)
 		}
-	}
-	for _, statement := range []string{
-		`DELETE FROM source_statements WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM sources WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM tree_nodes WHERE person_id IN (SELECT id FROM people WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM tree_versions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM trees WHERE owner_id = ANY($1::uuid[])`,
-		`DELETE FROM people WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM users WHERE id = ANY($1::uuid[])`,
-	} {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
-			t.Errorf("cleanup failed for %q: %v", statement, err)
-		}
-	}
-	// The statements that reference a leftover passage go first so an interrupted
-	// earlier run cannot block the cleanup.
-	if _, err := pool.Exec(ctx, `DELETE FROM source_statements WHERE source_passage_id IN (SELECT id FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%')`); err != nil {
-		t.Errorf("cleanup failed for leftover statements: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع بحث%'`); err != nil {
-		t.Errorf("cleanup failed for source passages: %v", err)
 	}
 }

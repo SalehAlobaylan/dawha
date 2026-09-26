@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -90,10 +91,13 @@ func seedMapFixture(t *testing.T, pool *pgxpool.Pool) *mapFixture {
 	`, uuid.New(), versionID, fixture.publishedID, uuid.New(), draftVersionID, fixture.draftID); err != nil {
 		t.Fatal(err)
 	}
+	// The place carries created_by, and that is load-bearing rather than decorative: an
+	// unattributed place is a row no actor points at, so the shared cleanup cannot find
+	// it and it survives every run. The test asserted nothing about who created it.
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, visibility)
-		VALUES ($1, 'موضع الخريطة ' || $2, 'موضع الخريطة ' || $2, 'city', ST_SetSRID(ST_MakePoint(46.7, 24.7), 4326), 'public')
-	`, fixture.placeID, tag); err != nil {
+		INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, visibility, created_by)
+		VALUES ($1, 'موضع الخريطة ' || $2, 'موضع الخريطة ' || $2, 'city', ST_SetSRID(ST_MakePoint(46.7, 24.7), 4326), 'public', $3)
+	`, fixture.placeID, tag, fixture.ownerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -124,31 +128,7 @@ func seedMapFixture(t *testing.T, pool *pgxpool.Pool) *mapFixture {
 	`, fixture.publishedMigr, fixture.draftMigr, fixture.publishedID, fixture.draftID, fixture.placeID, sourceID, fixture.ownerID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanup := context.Background()
-		// One statement per placeholder count, in dependency order, so a delete
-		// never has to guess how many arguments the one before it took.
-		for _, statement := range []struct {
-			query string
-			arg   any
-		}{
-			{`DELETE FROM migration_events WHERE id = ANY($1::uuid[])`, []uuid.UUID{mustParse(t, fixture.publishedMigr), mustParse(t, fixture.draftMigr)}},
-			{`DELETE FROM geographic_associations WHERE id = ANY($1::uuid[])`, []uuid.UUID{mustParse(t, fixture.publishedAssoc), mustParse(t, fixture.draftAssoc)}},
-			{`DELETE FROM tree_nodes WHERE person_id = ANY($1::uuid[])`, []uuid.UUID{fixture.publishedID, fixture.draftID}},
-			{`DELETE FROM tree_versions WHERE tree_id IN (SELECT id FROM trees WHERE owner_id = $1)`, fixture.ownerID},
-			{`DELETE FROM trees WHERE owner_id = $1`, fixture.ownerID},
-			{`DELETE FROM sources WHERE created_by = $1`, fixture.ownerID},
-			{`DELETE FROM places WHERE id = $1`, fixture.placeID},
-			{`DELETE FROM people WHERE id = ANY($1::uuid[])`, []uuid.UUID{fixture.publishedID, fixture.draftID}},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, fixture.ownerID},
-			{`DELETE FROM user_roles WHERE user_id = $1`, fixture.ownerID},
-			{`DELETE FROM users WHERE id = $1`, fixture.ownerID},
-		} {
-			if _, err := pool.Exec(cleanup, statement.query, statement.arg); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement.query, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID) })
 	return fixture
 }
 

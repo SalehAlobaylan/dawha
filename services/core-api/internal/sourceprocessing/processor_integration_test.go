@@ -14,6 +14,7 @@ import (
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/google/uuid"
@@ -220,26 +221,7 @@ func newLegacyFileFixture(t *testing.T, mimeType, filename string, content []byt
 	}
 	fixture.fileKey = "sources/" + fixture.sourceID.String() + "/" + fixture.fileID.String() + "-source"
 	// Registered before the inserts so a failed setup cannot leak fixture rows.
-	t.Cleanup(func() {
-		for _, cleanup := range []struct {
-			sql string
-			arg any
-		}{
-			{`DELETE FROM jobs WHERE id = $1`, fixture.jobID},
-			{`DELETE FROM source_passages WHERE source_file_id = $1`, fixture.fileID},
-			{`DELETE FROM source_candidates WHERE source_file_id = $1`, fixture.fileID},
-			{`DELETE FROM source_statements WHERE source_file_id = $1`, fixture.fileID},
-			{`DELETE FROM source_processing_runs WHERE id = $1`, fixture.runID},
-			{`DELETE FROM source_files WHERE id = $1`, fixture.fileID},
-			{`DELETE FROM audit_log WHERE entity_id = $1`, fixture.fileID},
-			{`DELETE FROM sources WHERE id = $1`, fixture.sourceID},
-			{`DELETE FROM users WHERE id = $1`, fixture.userID},
-		} {
-			if _, err := pool.Exec(context.Background(), cleanup.sql, cleanup.arg); err != nil {
-				t.Errorf("cleanup failed for %q: %v", cleanup.sql, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.userID) })
 	if _, err := store.Put(ctx, fixture.fileKey, strings.NewReader(string(content)), mimeType); err != nil {
 		t.Fatal(err)
 	}

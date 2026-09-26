@@ -20,10 +20,14 @@ Three rules, and the report depends on all three:
    quality one. `unknown_left_unresolved` is 1.0 because resolving a name nobody
    recorded asserts a false identity; `excerpt_fidelity` and `source_id_fidelity`
    are 1.0 because a citation whose text or whose source id is not real is a
-   fabricated source. Where a safety property is NOT being met, the threshold sits
-   at the measured value and the shortfall is recorded in KNOWN_DEFECTS - never at
-   1.0, which would be a gate that fails on arrival and teaches people to ignore
-   gates.
+   fabricated source; `grounded_answer_rate` is 1.0 because an answer with
+   nothing behind it is not an answer; and `unsupported_refusal` is 1.0 because
+   a question the sources do not answer must come back with no citation rather
+   than with one that does not support it. Where a safety property is NOT being
+   met, the threshold sits at the measured value and the shortfall is recorded in
+   KNOWN_DEFECTS - never at 1.0, which would be a gate that fails on arrival and
+   teaches people to ignore gates. A defect leaves KNOWN_DEFECTS when its metric
+   moves above its threshold for a reason other than the threshold moving.
 
 The values below are the ones measured on commit 4e54553 with the fixtures in
 this directory. The measured value of every metric is in the report next to its
@@ -37,7 +41,7 @@ from typing import Any
 # THRESHOLDS_VERSION identifies this set of numbers. It goes into the report, so
 # two reports can be compared only when their thresholds are comparable, and a
 # threshold change is visible in a diff of report files.
-THRESHOLDS_VERSION = "2026-09-26.1"
+THRESHOLDS_VERSION = "2026-09-26.2"
 
 # THRESHOLDS_REVIEWED_ON is the day a human read the measured values against the
 # fixtures and agreed to hold them. It is a date and not a version because it does
@@ -84,20 +88,26 @@ THRESHOLDS: dict[str, dict[str, float]] = {
         "pair_recall": 0.5,
         "verdict_accuracy": 0.6667,
     },
-    # Citation grounding, added by plan 009. Two of these are safety properties
+    # Citation grounding, added by plan 009. Four of these are safety properties
     # rather than quality ones and are held at 1.0: a citation to a source that
-    # was never sent, or an answer presented as grounded with nothing behind it.
+    # was never sent, an answer presented as grounded with nothing behind it, a
+    # quotation that is not in the source it points at, and a question the
+    # sources do not answer coming back with a citation anyway.
     #
-    # unsupported_refusal sits at 0.5 because that is what the fixtures measure,
-    # and the number is a defect rather than an achievement - see KNOWN_DEFECTS.
-    # It is the one threshold in this file that a reader should expect to move
-    # upward, and moving it up means fixing the provider, not moving the number.
+    # unsupported_refusal reached 1.0 in plan 012, when research_query started
+    # requiring a shared *content* token before citing a context instead of any
+    # shared token at all. It sits at 1.0 for the same reason
+    # unknown_left_unresolved does: a source that does not answer the question is
+    # a citation a reader has to open to discover is worthless, and the cost of
+    # that is the reader's trust in every other citation. The entry left
+    # KNOWN_DEFECTS in the same commit - the number moved because the provider
+    # changed, which is the only reason a defect is allowed to leave that list.
     "citations": {
         "citation_precision": 0.5,
         "support_recall": 0.7,
         "excerpt_fidelity": 1.0,
         "source_id_fidelity": 1.0,
-        "unsupported_refusal": 0.5,
+        "unsupported_refusal": 1.0,
         "grounded_answer_rate": 1.0,
     },
 }
@@ -118,29 +128,6 @@ THRESHOLDS: dict[str, dict[str, float]] = {
 # is the one thing that must never happen: it converts a measurement into a
 # description.
 KNOWN_DEFECTS: dict[str, dict[str, str]] = {
-    "citations.unsupported_refusal": {
-        "summary": (
-            "A question the sources do not answer can still come back with a citation, "
-            "because the reranker counts any shared token as grounding - including a "
-            "preposition."
-        ),
-        "cause": (
-            "app/main.py research_query keeps every context whose token set intersects the "
-            "query's, with no minimum overlap; citation fixture cit-003 shares only the "
-            "token 'في' with its question and is cited anyway."
-        ),
-        "consequence": (
-            "A reader can be shown a source that does not contain the answer. For a product "
-            "whose premise is that every claim is traceable to a source, a citation that "
-            "does not support anything is the failure mode that matters most."
-        ),
-        "fix": (
-            "Require a minimum content-token overlap, or a content term, before a context "
-            "becomes a citation. That is a change to app/main.py and is deliberately not made "
-            "here: this plan adds measurement, and a gate that was made green by editing the "
-            "thing it measures is not a gate."
-        ),
-    },
     "extraction.entity_precision": {
         "summary": "The extractor proposes spans that are much longer than the entity.",
         "cause": "app/main.py extract_entities matches any run of four or more Arabic characters.",
@@ -214,6 +201,7 @@ def describe() -> dict[str, Any]:
             "citations.excerpt_fidelity",
             "citations.source_id_fidelity",
             "citations.grounded_answer_rate",
+            "citations.unsupported_refusal",
         ],
     }
 

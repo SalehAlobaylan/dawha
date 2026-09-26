@@ -361,18 +361,19 @@ def evaluate_citations(provider: DeterministicProvider) -> dict[str, Any]:
             "never asked what it thinks supports the question.",
             "excerpt_fidelity, source_id_fidelity and grounded_answer_rate are held at 1.0 "
             "because they are safety properties, not quality ones.",
-            "unsupported_refusal is 0.5 and that is a defect, not a baseline worth keeping: "
-            "research_query treats any shared token as grounding, so a source that shares "
-            "only a preposition with the question is still cited. It is recorded in "
-            "evaluation.thresholds.KNOWN_DEFECTS and listed in docs/phase-status.md; the "
-            "threshold is the measurement, and raising it to 1.0 without changing the "
-            "provider would turn a defect into a description.",
+            "unsupported_refusal is held at 1.0 for the same reason. It was 0.5 and a recorded "
+            "defect until plan 012: research_query counted any shared token as grounding, so a "
+            "source that shared only the preposition 'في' with the question was cited. It now "
+            "requires a shared content token - the tokenizer's output minus the function words "
+            "listed next to the filter in app/main.py - and cit-003 refuses instead of citing a "
+            "registry line that never mentions the question.",
             "support_recall cannot reach 1.0 while the response keeps at most five "
             "citations: cit-005 sends six supporting sources, so one is dropped by design.",
             "This group does not measure answer prose. The deterministic provider returns "
             "one of two fixed sentences, so an answer-quality metric here would measure "
             "those strings; the refusal wording is pinned in tests/test_evaluation.py.",
             "The citation fixtures were written by the plan-009 executor against the same "
-            "rubric as the plan-004 set and have not been through a second reader.",
+            "rubric as the plan-004 set; cit-007 and cit-008 were added and the whole set "
+            "re-read by the plan-012 executor when the content-token filter landed.",
         ],
     }

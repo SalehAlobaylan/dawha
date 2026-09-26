@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,15 +24,14 @@ func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	actorID := uuid.New()
 	viewerID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث الوكيل'), ($3, $4, 'باحث آخر')`, actorID, researchAgentTestEmail(actorID, "actor"), viewerID, researchAgentTestEmail(viewerID, "viewer")); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::uuid[])`, []uuid.UUID{actorID, viewerID})
-	defer pool.Exec(ctx, `DELETE FROM audit_log WHERE actor_id = ANY($1::uuid[])`, []uuid.UUID{actorID, viewerID})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID, viewerID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher'), ($2, 'researcher')`, actorID, viewerID); err != nil {
 		t.Fatal(err)
 	}
@@ -40,20 +40,10 @@ func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
 	questionID := uuid.New()
 	sourceID, privateSourceID, dependencySourceID := uuid.New(), uuid.New(), uuid.New()
 	placeID := uuid.New()
-	defer pool.Exec(ctx, `DELETE FROM places WHERE id = $1`, placeID)
 	statementID, privateStatementID := uuid.New(), uuid.New()
 	claimID, counterClaimID := uuid.New(), uuid.New()
 	relationshipID := uuid.New()
 	associationID := uuid.New()
-	defer pool.Exec(ctx, `DELETE FROM research_agent_runs WHERE requested_by = ANY($1::uuid[])`, []uuid.UUID{actorID, viewerID})
-	defer pool.Exec(ctx, `DELETE FROM geographic_associations WHERE id = $1`, associationID)
-	defer pool.Exec(ctx, `DELETE FROM tree_relationships WHERE id = $1`, relationshipID)
-	defer pool.Exec(ctx, `DELETE FROM claims WHERE id = ANY($1::uuid[])`, []uuid.UUID{claimID, counterClaimID})
-	defer pool.Exec(ctx, `DELETE FROM source_dependencies WHERE source_id = ANY($1::uuid[]) OR depends_on_source_id = ANY($1::uuid[])`, []uuid.UUID{sourceID, dependencySourceID})
-	defer pool.Exec(ctx, `DELETE FROM sources WHERE id = ANY($1::uuid[])`, []uuid.UUID{sourceID, privateSourceID, dependencySourceID})
-	defer pool.Exec(ctx, `DELETE FROM people WHERE id = ANY($1::uuid[])`, []uuid.UUID{personID, relatedPersonID})
-	defer pool.Exec(ctx, `DELETE FROM open_questions WHERE id = $1`, questionID)
-	defer pool.Exec(ctx, `DELETE FROM trees WHERE id = $1`, treeID)
 	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة وكيل البحث', 'public', $2)`, treeID, actorID); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +79,6 @@ func TestResearchAgentRunProducesTraceableBoundedPackage(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO source_statements (id, source_id, statement_text_ar, review_status, created_by) VALUES ($1, $2, 'العبارة المضادة.', 'accepted', $3)`, counterStatementID, sourceID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM source_statements WHERE id = $1`, counterStatementID)
 	if _, err := pool.Exec(ctx, `INSERT INTO claim_evidence (claim_id, source_statement_id, relation, created_by) VALUES ($1, $2, 'supports', $4), ($3, $5, 'contradicts', $4)`, claimID, statementID, counterClaimID, actorID, counterStatementID); err != nil {
 		t.Fatal(err)
 	}
@@ -192,12 +181,12 @@ func TestResearchAgentRejectsInvalidAndUnauthorizedRuns(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	actorID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'مستخدم غير مخول')`, actorID, researchAgentTestEmail(actorID, "unauthorized")); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actorID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID) })
 	service := NewService(pool).WithQueue(jobs.NewService(pool))
 	entityID := uuid.NewString()
 	if _, err := service.StartRun(context.Background(), actorID.String(), RunInput{Question: "سؤال", EntityID: entityID, EntityType: "person"}); !errors.Is(err, ErrForbidden) {
@@ -207,7 +196,7 @@ func TestResearchAgentRejectsInvalidAndUnauthorizedRuns(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث صالح')`, actorUUID, researchAgentTestEmail(actorUUID, "valid")); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actorUUID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorUUID) })
 	if _, err := pool.Exec(context.Background(), `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher')`, actorUUID); err != nil {
 		t.Fatal(err)
 	}

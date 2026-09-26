@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,23 +142,6 @@ func seedRouteClaimFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	if _, err := pool.Exec(ctx, `INSERT INTO claim_evidence (claim_id, source_statement_id, relation, created_by) VALUES ($1, $2, 'supports', $3), ($4, $5, 'supports', $3)`, fixture.publicClaimID, fixture.publicStatementID, fixture.ownerID, fixture.privateClaimID, privateStatementID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		for _, statement := range []string{
-			`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = $1)`,
-			`DELETE FROM claims WHERE created_by = $1`,
-			`DELETE FROM source_statements WHERE created_by = $1`,
-			`DELETE FROM sources WHERE created_by = $1`,
-			`DELETE FROM people WHERE created_by = $1`,
-			`DELETE FROM audit_log WHERE actor_id = $1`,
-			`DELETE FROM users WHERE id = $1`,
-		} {
-			if _, err := pool.Exec(context.Background(), statement, fixture.ownerID); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement, err)
-			}
-		}
-		if _, err := pool.Exec(context.Background(), `DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع المسار%'`); err != nil {
-			t.Errorf("cleanup failed for source passages: %v", err)
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID) })
 	return fixture
 }

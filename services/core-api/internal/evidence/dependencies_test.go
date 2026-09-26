@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 )
@@ -42,12 +43,12 @@ func TestSourceDependencyDetectionAndReview(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	actorID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث الاعتماد')`, actorID, dependencyTestEmail(actorID)); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actorID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID) })
 	sourceID := uuid.New()
 	targetID := uuid.New()
 	for _, source := range []struct {
@@ -58,7 +59,6 @@ func TestSourceDependencyDetectionAndReview(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM sources WHERE id IN ($1, $2)`, sourceID, targetID)
 	text := strings.Repeat("هذه جملة عربية طويلة تتكرر في مصدرين لاختبار تحليل الاعتماد. ", 3)
 	for _, source := range []uuid.UUID{sourceID, targetID} {
 		if _, err := pool.Exec(context.Background(), `INSERT INTO source_passages (source_id, sequence_number, text_ar, normalized_text_ar) VALUES ($1, 1, $2, $2)`, source, text); err != nil {
@@ -86,7 +86,6 @@ func TestSourceDependencyDetectionAndReview(t *testing.T) {
 			}
 		}
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM claims WHERE id = ANY($1::uuid[])`, claimIDs)
 	service := &Service{Pool: pool}
 	graph, err := service.DetectSourceDependencies(context.Background(), sourceID.String(), actorID.String())
 	if err != nil {
@@ -155,18 +154,17 @@ func TestSourceDependencyManualCreateAndRejection(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	actorID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث الاعتماد')`, actorID, dependencyTestEmail(actorID)); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, actorID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID) })
 	sourceID := uuid.New()
 	targetID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `INSERT INTO sources (id, title_ar, source_type, visibility, created_by) VALUES ($1, 'المصدر الأول', 'book', 'public', $3), ($2, 'المصدر الهدف', 'book', 'public', $3)`, sourceID, targetID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM sources WHERE id IN ($1, $2)`, sourceID, targetID)
 	service := &Service{Pool: pool}
 	graph, err := service.CreateSourceDependency(context.Background(), sourceID.String(), actorID.String(), CreateSourceDependencyInput{DependsOnSourceID: targetID.String(), DependencyType: "cites", EvidenceAR: "اقتباس مباشر"})
 	if err != nil {
@@ -203,7 +201,7 @@ func TestSourceDependencyVisibilityHidesPrivateTarget(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ownerID := uuid.New()
 	targetOwnerID := uuid.New()
 	for _, actor := range []struct {
@@ -214,13 +212,12 @@ func TestSourceDependencyVisibilityHidesPrivateTarget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM users WHERE id IN ($1, $2)`, ownerID, targetOwnerID)
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, ownerID, targetOwnerID) })
 	sourceID := uuid.New()
 	targetID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `INSERT INTO sources (id, title_ar, source_type, visibility, created_by) VALUES ($1, 'مصدر عام', 'book', 'public', $2), ($3, 'مصدر خاص', 'book', 'private', $4)`, sourceID, ownerID, targetID, targetOwnerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM sources WHERE id IN ($1, $2)`, sourceID, targetID)
 	if _, err := pool.Exec(context.Background(), `INSERT INTO source_dependencies (source_id, depends_on_source_id, dependency_type, status) VALUES ($1, $2, 'cites', 'needs_review')`, sourceID, targetID); err != nil {
 		t.Fatal(err)
 	}

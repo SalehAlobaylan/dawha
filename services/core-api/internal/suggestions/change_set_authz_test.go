@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -27,29 +28,7 @@ func addTreeReviewer(t *testing.T, pool *pgxpool.Pool, fixture *suggestionFixtur
 	if _, err := pool.Exec(ctx, `INSERT INTO tree_collaborators (tree_id, user_id, permission_level, invited_by) VALUES ($1, $2, 'review', $3)`, fixture.treeID, reviewerID, fixture.ownerID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx := context.Background()
-		for _, statement := range []struct {
-			query string
-			args  []any
-		}{
-			{`DELETE FROM claim_evidence WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM claim_counter_evidence WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM claim_versions WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM claims WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM entity_relationships WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM open_questions WHERE created_by = $1`, []any{reviewerID}},
-			{`DELETE FROM suggestion_change_sets WHERE applied_by = $1`, []any{reviewerID}},
-			{`DELETE FROM suggestion_reviews WHERE reviewer_id = $1`, []any{reviewerID}},
-			{`DELETE FROM tree_collaborators WHERE user_id = $1`, []any{reviewerID}},
-			{`DELETE FROM audit_log WHERE actor_id = $1`, []any{reviewerID}},
-			{`DELETE FROM users WHERE id = $1`, []any{reviewerID}},
-		} {
-			if _, err := pool.Exec(cleanupCtx, statement.query, statement.args...); err != nil {
-				t.Errorf("cleanup failed for %q: %v", statement.query, err)
-			}
-		}
-	})
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, reviewerID) })
 	return reviewerID
 }
 

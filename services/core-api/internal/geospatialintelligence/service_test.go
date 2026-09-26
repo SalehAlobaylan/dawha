@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 )
@@ -19,27 +20,18 @@ func TestGeospatialIntelligenceRunSeparatesSourceAndInferredLayers(t *testing.T)
 	if err != nil || pool == nil {
 		t.Fatal("database is unavailable")
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	actorID := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث جغرافي')`, actorID, geospatialTestEmail(actorID)); err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, actorID)
-	defer pool.Exec(ctx, `DELETE FROM audit_log WHERE actor_id = $1`, actorID)
-	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher')`, actorID); err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'researcher'`, actorID)
 	viewerID := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث جغرافي آخر')`, viewerID, geospatialTestEmail(viewerID)+"-viewer"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث جغرافي'), ($3, $4, 'باحث جغرافي آخر')`,
+		actorID, geospatialTestEmail(actorID), viewerID, geospatialTestEmail(viewerID)+"-viewer"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher')`, viewerID); err != nil {
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID, viewerID) })
+	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher'), ($2, 'researcher')`, actorID, viewerID); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1 AND role = 'researcher'`, viewerID)
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, viewerID)
 	treeID, versionID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة جغرافية', 'public', $2)`, treeID, actorID); err != nil {
 		t.Fatal(err)

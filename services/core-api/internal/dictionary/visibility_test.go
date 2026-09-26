@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -339,30 +340,11 @@ func seedVisibilityFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 
 func cleanupVisibilityFixture(t *testing.T, pool *pgxpool.Pool, fixture *visibilityFixture) {
 	t.Helper()
+	testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID, fixture.collaboratorID)
+	// This fixture's one place carries a NULL created_by, so no actor points at it
+	// and the actor-scoped sweep cannot reach it. It is removed by its own marker.
 	ctx := context.Background()
-	actors := []uuid.UUID{fixture.ownerID, fixture.collaboratorID}
-	statements := []string{
-		`DELETE FROM question_sources WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM question_claims WHERE question_id IN (SELECT id FROM open_questions WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM open_questions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claims WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM source_statements WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM sources WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM geographic_associations WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM tree_nodes WHERE person_id IN (SELECT id FROM people WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM tree_versions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM trees WHERE owner_id = ANY($1::uuid[])`,
-		`DELETE FROM people WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM users WHERE id = ANY($1::uuid[])`,
-	}
-	for _, statement := range statements {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
-			t.Errorf("cleanup failed for %q: %v", statement, err)
-		}
-	}
 	for _, statement := range []string{
-		`DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع القاموس%'`,
 		`DELETE FROM places WHERE canonical_name_ar LIKE 'موضع اختبار القاموس%'`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {

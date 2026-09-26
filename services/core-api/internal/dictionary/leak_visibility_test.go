@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -382,29 +383,20 @@ func seedLeakedFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *l
 
 func cleanupLeakedFixture(t *testing.T, pool *pgxpool.Pool, fixture *leakedFixture) {
 	t.Helper()
+	// Everything the fixture wrote hangs off one of its four actors, so the shared
+	// sweep in testsupport removes all of it. The hand-written statement list this
+	// replaced could only cover the tables somebody remembered, and a table it forgot
+	// turned into a `DELETE FROM users` that aborted on the foreign key nobody thought
+	// of - which is how 593 test users ended up in the development database.
+	testsupport.CleanupSyntheticActors(t, pool,
+		fixture.ownerID, fixture.collaboratorID, fixture.strangerID, fixture.researcherID)
+	// The three places this fixture inserts carry a NULL created_by on purpose: they
+	// are what the test is about, a place no actor owns. Nothing links them to an
+	// actor, so the sweep cannot find them and they are removed by their own marker.
+	// This is the one row class the actor-scoped sweep cannot reach, and it is scoped
+	// to a prefix no real place name starts with.
 	ctx := context.Background()
-	actors := []uuid.UUID{fixture.ownerID, fixture.collaboratorID, fixture.strangerID, fixture.researcherID}
 	for _, statement := range []string{
-		`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claims WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM person_aliases WHERE person_id IN (SELECT id FROM people WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM geographic_associations WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM source_statements WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM sources WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM tree_nodes WHERE person_id IN (SELECT id FROM people WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM tree_versions WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM trees WHERE owner_id = ANY($1::uuid[])`,
-		`DELETE FROM people WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM audit_log WHERE actor_id = ANY($1::uuid[])`,
-		`DELETE FROM user_roles WHERE user_id = ANY($1::uuid[])`,
-		`DELETE FROM users WHERE id = ANY($1::uuid[])`,
-	} {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
-			t.Errorf("cleanup failed for %q: %v", statement, err)
-		}
-	}
-	for _, statement := range []string{
-		`DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع التسريب%'`,
 		`DELETE FROM places WHERE canonical_name_ar LIKE 'موضع التسريب%'`,
 	} {
 		if _, err := pool.Exec(ctx, statement); err != nil {

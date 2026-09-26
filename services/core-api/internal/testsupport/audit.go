@@ -53,18 +53,20 @@ type AuditInput struct {
 
 // AuditResult is the machine-readable outcome the CLI prints.
 type AuditResult struct {
-	OK                bool              `json:"ok"`
-	ExitCode          int               `json:"exit_code"`
-	Total             int               `json:"total"`
-	Passed            int               `json:"passed"`
-	Failed            int               `json:"failed"`
-	Skipped           int               `json:"skipped"`
-	DatabaseSkips     []string          `json:"database_skips"`
-	OtherSkips        []string          `json:"other_skips"`
-	RequiredPackages  []RequiredPackage `json:"required_packages"`
-	Schema            SchemaReport      `json:"schema"`
-	Problems          []string          `json:"problems"`
-	DatabaseAvailable bool              `json:"database_available"`
+	OK                bool                `json:"ok"`
+	ExitCode          int                 `json:"exit_code"`
+	Total             int                 `json:"total"`
+	Passed            int                 `json:"passed"`
+	Failed            int                 `json:"failed"`
+	Skipped           int                 `json:"skipped"`
+	DatabaseSkips     []string            `json:"database_skips"`
+	OtherSkips        []string            `json:"other_skips"`
+	RequiredPackages  []RequiredPackage   `json:"required_packages"`
+	Schema            SchemaReport        `json:"schema"`
+	SyntheticUsers    int                 `json:"synthetic_users_left"`
+	SyntheticRows     map[string][]string `json:"synthetic_rows_left"`
+	Problems          []string            `json:"problems"`
+	DatabaseAvailable bool                `json:"database_available"`
 }
 
 // RequiredPackage is the per-package coverage the audit insists on.
@@ -117,6 +119,7 @@ func Audit(input AuditInput) AuditResult {
 		Problems:         []string{},
 		DatabaseSkips:    []string{},
 		OtherSkips:       []string{},
+		SyntheticRows:    map[string][]string{},
 	}
 	databaseAvailable := input.Schema.Connected()
 	result.DatabaseAvailable = databaseAvailable

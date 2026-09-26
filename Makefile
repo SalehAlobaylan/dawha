@@ -259,7 +259,9 @@ verify-full: verify generated-check
 # db-verify runs the complete Go suite against DATABASE_URL with the skip audit,
 # without touching migrations or the seed. This is the command the CI database
 # job and verify-full both depend on. It fails when DATABASE_URL is unset, when
-# the schema is missing, and when any test skipped on the database gate.
+# the schema is missing, when any test skipped on the database gate, and when a
+# fixture left a synthetic actor behind - the last of which is why a green tick
+# here means the developer's database is the size it was before the run.
 #
 #   DATABASE_URL=postgres://dawha:dawha_local@localhost:55432/dawha make db-verify
 db-verify:
@@ -479,3 +481,34 @@ e2e:
 e2e-clean:
 	@$(MAKE) db-up
 	@docker compose exec -T db psql -U $${POSTGRES_USER:-dawha} -d $${POSTGRES_DB:-dawha} -v ON_ERROR_STOP=1 < apps/web/e2e/cleanup.sql
+
+# db-sweep removes the synthetic rows a Go fixture created, and nothing else: only
+# the actors whose address carries a reserved test marker (%@example.test or
+# %@dawha.test) and everything reachable from them. It is the Go counterpart of
+# e2e-clean, and it exists for the same reason: the fixtures were fixed before the
+# database they had been quietly filling was cleaned, and a cleanup that only runs
+# from inside a test cannot clean a database no test is running against.
+#
+# The same shared helper every fixture's t.Cleanup uses does the work -
+# services/core-api/internal/testsupport.CleanupSyntheticActors - so "swept by hand"
+# and "swept by a test" cannot mean different things. It reads the dependency graph
+# out of pg_constraint rather than a hand-written list, deletes in dependency order,
+# loops until a pass changes no rows, and refuses to commit if a single row
+# reachable from an actor is still there or if any row is left without its parent.
+#
+# tools/dbtestguard fails a suite run that leaves one of these behind, so this is a
+# recovery tool rather than routine tidying. `-n` reports what is there and changes
+# nothing.
+#
+#   COMPOSE_PROJECT_NAME=dawha make db-sweep
+#   COMPOSE_PROJECT_NAME=dawha make db-sweep ARGS=-n
+#
+# DBSWEEP_REPORT writes the machine-readable report; it is how the plan-012 sweep
+# recorded its before/after counts and its orphan probe.
+DBSWEEP_REPORT ?=
+db-sweep:
+	@$(MAKE) db-up
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		DBSWEEP_REPORT="$(DBSWEEP_REPORT)" \
+		go run ./tools/dbsweep $(ARGS)

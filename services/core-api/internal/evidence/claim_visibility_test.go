@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -193,23 +194,5 @@ func seedClaimVisibilityFixture(t *testing.T, ctx context.Context, pool *pgxpool
 
 func cleanupClaimVisibilityFixture(t *testing.T, pool *pgxpool.Pool, fixture *claimVisibilityFixture) {
 	t.Helper()
-	ctx := context.Background()
-	actors := []uuid.UUID{fixture.ownerID, fixture.strangerID}
-	for _, statement := range []string{
-		`DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claim_versions WHERE claim_id IN (SELECT id FROM claims WHERE created_by = ANY($1::uuid[]))`,
-		`DELETE FROM claims WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM source_statements WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM sources WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM people WHERE created_by = ANY($1::uuid[])`,
-		`DELETE FROM audit_log WHERE actor_id = ANY($1::uuid[])`,
-		`DELETE FROM users WHERE id = ANY($1::uuid[])`,
-	} {
-		if _, err := pool.Exec(ctx, statement, actors); err != nil {
-			t.Errorf("cleanup failed for %q: %v", statement, err)
-		}
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM source_passages WHERE normalized_text_ar LIKE 'مقطع ادعاء%'`); err != nil {
-		t.Errorf("cleanup failed for source passages: %v", err)
-	}
+	testsupport.CleanupSyntheticActors(t, pool, fixture.ownerID, fixture.strangerID)
 }
