@@ -161,6 +161,12 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case jobs.ErrConflict:
 		status = http.StatusConflict
 		message = err.Error()
+	case jobs.ErrLeaseLost:
+		// The caller is late, not unauthorised: the claim it holds has expired or
+		// been taken. 409 is the honest answer, and it is the one an operator can
+		// act on by re-claiming rather than by giving up on the job.
+		status = http.StatusConflict
+		message = err.Error()
 	case jobs.ErrDatabaseUnavailable:
 		status = http.StatusServiceUnavailable
 		message = "jobs service is not configured"
