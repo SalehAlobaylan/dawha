@@ -59,48 +59,79 @@ func newTestWorker(t *testing.T, fixture *testsupport.Fixture, handlers ...Handl
 	return worker
 }
 
-// TestTheLoopDrainsWhatItIsRegisteredFor is the dispatch contract: a job of a
-// registered type is claimed and finished, and a job of a type nobody registered
-// is left exactly where it was rather than being failed by a worker that cannot
-// help.
+// TestTheLoopDrainsWhatItIsRegisteredFor is the dispatch contract: every job of
+// every registered type is claimed, handed to the handler that registered for it,
+// and finished.
 func TestTheLoopDrainsWhatItIsRegisteredFor(t *testing.T) {
 	fixture := testsupport.New(t)
 	queue := jobs.NewService(fixture.Pool())
-	mine := &recordingHandler{jobType: "p006_loop_mine_" + fixture.Tag()}
-	theirs := &recordingHandler{jobType: "p006_loop_theirs_" + fixture.Tag()}
-	worker := newTestWorker(t, fixture, mine, theirs)
+	first := &recordingHandler{jobType: "p006_loop_first_" + fixture.Tag()}
+	second := &recordingHandler{jobType: "p006_loop_second_" + fixture.Tag()}
+	worker := newTestWorker(t, fixture, first, second)
 
-	enqueued := enqueueLoopJob(t, fixture, queue, mine.jobType)
-	foreign := enqueueLoopJob(t, fixture, queue, theirs.jobType)
+	firstJob := enqueueLoopJob(t, fixture, queue, first.jobType)
+	secondJob := enqueueLoopJob(t, fixture, queue, second.jobType)
 
 	ctx, cancel := context.WithCancel(fixture.Ctx())
 	done := make(chan error, 1)
 	go func() { done <- worker.Run(ctx) }()
-	waitFor(t, 30*time.Second, func() bool { return len(mine.handled) == 1 })
+	// Both handlers have to have run before the loop is stopped. Stopping it as
+	// soon as the first job finished would be a race, and a test that loses it
+	// teaches a reader that the loop is unreliable rather than that the test was.
+	waitFor(t, 30*time.Second, func() bool { return len(first.handled) == 1 && len(second.handled) == 1 })
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("run: %v", err)
 	}
 
-	finished, err := queue.Get(fixture.Ctx(), enqueued.ID)
+	if first.handled[0] != firstJob.ID || second.handled[0] != secondJob.ID {
+		t.Fatalf("handlers ran on %v and %v, want %s and %s", first.handled, second.handled, firstJob.ID, secondJob.ID)
+	}
+	for name, jobID := range map[string]string{"first": firstJob.ID, "second": secondJob.ID} {
+		current, err := queue.Get(fixture.Ctx(), jobID)
+		if err != nil {
+			t.Fatalf("read the %s job: %v", name, err)
+		}
+		if current.Status != "succeeded" || current.Attempts != 0 {
+			t.Fatalf("the %s job = %s after %d attempt(s), want succeeded on the first", name, current.Status, current.Attempts)
+		}
+	}
+}
+
+// TestTheLoopLeavesAJobOfATypeItDoesNotServe is the other half of dispatch, and the
+// one that costs something if it is wrong. A worker registered for one type must not
+// claim a job of another: it would have no handler for it, and failing it would
+// spend one of that job's three attempts to say "not me".
+func TestTheLoopLeavesAJobOfATypeItDoesNotServe(t *testing.T) {
+	fixture := testsupport.New(t)
+	queue := jobs.NewService(fixture.Pool())
+	mine := &recordingHandler{jobType: "p006_loop_mine_" + fixture.Tag()}
+	worker := newTestWorker(t, fixture, mine)
+	foreign := enqueueLoopJob(t, fixture, queue, "p006_loop_someone_else_"+fixture.Tag())
+	mineJob := enqueueLoopJob(t, fixture, queue, mine.jobType)
+
+	ctx, cancel := context.WithCancel(fixture.Ctx())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	waitFor(t, 30*time.Second, func() bool { return len(mine.handled) == 1 })
+	// Long enough that the loop has had every opportunity to reach for the other job.
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+	<-done
+
+	untouched, err := queue.Get(fixture.Ctx(), foreign.ID)
 	if err != nil {
-		t.Fatalf("read the drained job: %v", err)
+		t.Fatalf("read the foreign job: %v", err)
+	}
+	if untouched.Status != "queued" || untouched.Attempts != 0 || untouched.LastError != "" {
+		t.Fatalf("a job of another type = %s after %d attempt(s) (%q), want untouched", untouched.Status, untouched.Attempts, untouched.LastError)
+	}
+	finished, err := queue.Get(fixture.Ctx(), mineJob.ID)
+	if err != nil {
+		t.Fatalf("read the worker's own job: %v", err)
 	}
 	if finished.Status != "succeeded" {
-		t.Fatalf("job = %s (%s), want succeeded", finished.Status, finished.LastError)
-	}
-	// The job the loop was not registered for is untouched, and its worker - which
-	// was registered for it in this test but shares the loop - got it only because
-	// the loop asked for its type.
-	if len(theirs.handled) != 1 {
-		t.Fatalf("the other handler ran %d time(s), want 1", len(theirs.handled))
-	}
-	other, err := queue.Get(fixture.Ctx(), foreign.ID)
-	if err != nil {
-		t.Fatalf("read the other job: %v", err)
-	}
-	if other.Status != "succeeded" {
-		t.Fatalf("the other job = %s, want succeeded", other.Status)
+		t.Fatalf("the worker's own job = %s, want succeeded", finished.Status)
 	}
 }
 
