@@ -1233,5 +1233,3 @@ type UserRole struct {
 	Role      string
 	CreatedAt pgtype.Timestamptz
 }
-
-// drift
