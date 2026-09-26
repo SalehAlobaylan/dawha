@@ -44,6 +44,7 @@ type Branch struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Visibility       string
 }
 
 type Claim struct {
@@ -212,6 +213,10 @@ type EntityResolutionRun struct {
 	Error                pgtype.Text
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+	JobID                pgtype.UUID
+	Stage                string
+	StartedAt            pgtype.Timestamptz
+	CompletedAt          pgtype.Timestamptz
 }
 
 type Family struct {
@@ -226,6 +231,7 @@ type Family struct {
 	IdentityStatus   string
 	MergedIntoID     pgtype.UUID
 	MergedAt         pgtype.Timestamptz
+	Visibility       string
 }
 
 type FamilyAlias struct {
@@ -350,6 +356,9 @@ type Job struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	MaxAttempts    int32
+	LeaseToken     pgtype.UUID
+	LeaseExpiresAt pgtype.Timestamptz
+	HeartbeatAt    pgtype.Timestamptz
 }
 
 type MigrationEvent struct {
@@ -420,6 +429,7 @@ type Place struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Visibility       string
 }
 
 type PlatformFinding struct {
@@ -554,6 +564,9 @@ type ResearchAgentRun struct {
 	StartedAt                  pgtype.Timestamptz
 	CompletedAt                pgtype.Timestamptz
 	UpdatedAt                  pgtype.Timestamptz
+	JobID                      pgtype.UUID
+	Stage                      string
+	Scope                      []byte
 }
 
 type ResearchAgentStep struct {
@@ -1035,6 +1048,18 @@ type Suggestion struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type SuggestionChangeSet struct {
+	ID           pgtype.UUID
+	SuggestionID pgtype.UUID
+	ReviewID     pgtype.UUID
+	Target       string
+	Change       []byte
+	ResultType   string
+	ResultID     pgtype.UUID
+	AppliedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type SuggestionReview struct {
 	ID           pgtype.UUID
 	SuggestionID pgtype.UUID
@@ -1167,6 +1192,7 @@ type Tribe struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Visibility       string
 }
 
 type TribeAlias struct {
@@ -1207,3 +1233,5 @@ type UserRole struct {
 	Role      string
 	CreatedAt pgtype.Timestamptz
 }
+
+// drift

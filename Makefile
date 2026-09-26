@@ -71,15 +71,83 @@ migration-test:
 # developer loop never pays for acceptance coverage. DATABASE_URL is
 # deliberately not exported here: without it the database-backed tests skip
 # instead of reaching for a PostgreSQL that may not be running.
+#
+# It is the gate, and the gate is only worth something if it is the one everybody
+# runs. `verify-full` and `make e2e` both build on what it checks, and neither
+# replaces it.
 verify: lint typecheck test build
 
-# verify-full is the ACCEPTANCE gate. It is deliberately the slow one:
+# generated-check fails when the committed sqlc output no longer matches what the
+# current db/migrations produce.
 #
-#   1. reuses (or starts) the local PostgreSQL container and applies every
-#      db/migrations/*.sql, then db/seeds/001_demo.sql;
-#   2. exports DATABASE_URL and runs the COMPLETE Go suite (./...) against it;
-#   3. audits that run so a database-backed test cannot pass by skipping;
-#   4. runs every AI evaluation metric group.
+# This is not a theoretical gate. When this target was added the committed output
+# was already stale: it predated the job-lease columns, the visibility columns
+# and the analysis-run staging tables, so `sqlc generate` and a clean checkout
+# disagreed. Nothing caught it because nothing ran `sqlc generate`. A generated
+# file nobody regenerates is a comment, not a contract.
+#
+# The check regenerates into a copy, diffs, and restores the tree, so a failing
+# check leaves the working tree exactly as it found it and the developer is not
+# left with an unreviewed diff in services/core-api/generated.
+#
+# It needs sqlc. It is not in `verify` because it is a build-tool dependency the
+# fast gate does not otherwise have, and a gate that fails because a developer
+# has not installed a code generator teaches people to ignore gates.
+#
+#   go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+SQLC_VERSION ?= v1.31.1
+generated-check:
+	@if ! command -v sqlc >/dev/null 2>&1; then \
+		printf 'sqlc is not installed. Install the pinned version with `go install github.com/sqlc-dev/sqlc/cmd/sqlc@%s`.\n' "$(SQLC_VERSION)" >&2; \
+		exit 2; \
+	fi
+	@before=$$(mktemp -d) && \
+		cp -R services/core-api/generated "$$before/generated" && \
+		(cd services/core-api && sqlc generate) && \
+		if diff -ru "$$before/generated" services/core-api/generated >/dev/null 2>&1; then \
+			rm -rf "$$before"; \
+			printf 'generated code is up to date with db/migrations\n'; \
+		else \
+			printf '%s\n' 'the committed sqlc output does not match db/migrations. Run `make sqlc` and commit the result.' >&2; \
+			diff -ru "$$before/generated" services/core-api/generated 2>&1 | head -80 >&2; \
+			rm -rf services/core-api/generated && cp -R "$$before/generated" services/core-api/generated; \
+			rm -rf "$$before"; \
+			exit 1; \
+		fi
+
+# verify-full is the ACCEPTANCE gate: the whole release signal in one command. It
+# is deliberately the slow one, and it is the target that decides whether a tree
+# is shippable rather than merely tidy. In order:
+#
+#   1. `verify` - lint, typecheck, unit tests and a build for the web app, the
+#      Go service and the Python service. Included rather than assumed, because a
+#      gate somebody has to remember to run in two commands is two commands.
+#   2. `generated-check` - the committed sqlc output still matches the schema.
+#   3. `db-migrate` - the atomic, locked, checksum-protected runner, against the
+#      database named below.
+#   4. `migration-check` - drift: nothing pending, every recorded checksum equal
+#      to the file on disk. Run after db-migrate, which is what turns a database
+#      that predates the checksum into one with recorded backfills.
+#   5. `db-seed` - db/seeds/001_demo.sql, so the suite runs against the shape
+#      the application actually ships with rather than an empty schema.
+#   6. the COMPLETE Go suite (./...) against that database, through
+#      tools/dbtestguard, which fails on a non-zero exit, on a database that was
+#      never migrated, and on any test that skipped on the database gate.
+#   7. `migration-test` - the runner's five cases against a scratch database.
+#   8. `ai-eval` - every AI evaluation metric group.
+#
+# What it deliberately does NOT include, and why:
+#
+#   * `make e2e`. The browser suite starts a three-process stack and is its own
+#     gate with its own CI job; folding it in here would make the acceptance
+#     gate fail for reasons that have nothing to do with the API.
+#   * `make security-scan`. The dependency and secret scanners need the network
+#     and install their own tools, so putting them in the local acceptance gate
+#     would turn "is this tree correct" into "is this laptop online". They are a
+#     CI gate, and the same commands run locally on demand.
+#   * a database reset. It migrates and seeds the database it is pointed at; it
+#     never drops one. That is why POSTGRES_DB below wants a scratch database
+#     when the point is to verify from clean.
 #
 # Environment it reads:
 #   COMPOSE_PROJECT_NAME  reuse an already running `db` container. Without it
@@ -95,12 +163,15 @@ verify: lint typecheck test build
 #   AI_RESEARCH_URL       optional. When set, the one AI-backed Go test runs
 #                         instead of skipping; the deterministic ai-research
 #                         service has no credentials to configure.
-verify-full:
-	@$(MAKE) db-migrate db-seed
+verify-full: verify generated-check
+	@$(MAKE) db-migrate
+	@$(MAKE) migration-check
+	@$(MAKE) db-seed
 	cd services/core-api && \
 		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
 		AI_RESEARCH_URL="$${AI_RESEARCH_URL:-}" \
 		go run ./tools/dbtestguard -- ./...
+	@$(MAKE) migration-test
 	@$(MAKE) ai-eval
 
 # db-verify runs the complete Go suite against DATABASE_URL with the skip audit,
