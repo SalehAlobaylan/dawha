@@ -13,6 +13,13 @@ __pycache__/
 .venv/
 *.pyc
 *.egg-info/
+# `pip install .` - a non-editable install of the ai-research service, which is
+# what a virtualenv that predates the packaging fix still has - leaves a copy of
+# the sources here. It is a build artifact of a copy, it is never what the tests
+# should be reading, and `git add -A` will otherwise commit it. Scoped to the one
+# service rather than written as a bare `build/`, so a legitimate directory with
+# that name elsewhere in the tree is not ignored by accident.
+services/ai-research/build/
 services/core-api/bin/
 # A `go build` run from inside the module writes the binary next to its package
 # unless -o names somewhere else, and a 24MB executable does not belong in a

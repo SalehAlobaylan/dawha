@@ -20,10 +20,33 @@ lint:
 typecheck:
 	npm run typecheck
 
+# The pytest line's `cd` is load-bearing, not decoration.
+#
+# It used to read `services/ai-research/.venv/bin/pytest`, run from the repository
+# root. From there pytest's rootdir is the repository, `services/ai-research/
+# pyproject.toml` is never loaded as a configfile, and its
+# `[tool.pytest.ini_options] pythonpath = ["."]` therefore never applies.
+# `services/ai-research/tests/` has no `__init__.py`, so pytest's prepend import
+# mode puts the tests directory on sys.path and not the service root - which means
+# `from app.main import app` could only resolve against whatever `app` the
+# virtualenv happened to have installed.
+#
+# That made the gate a test of the venv rather than of the tree, and it failed the
+# moment a test needed a module the installed copy did not provide. On a machine
+# with no install of the service at all, every test module in the service failed
+# collection with ModuleNotFoundError; on one with a stale non-editable install,
+# the suite ran the copy - and the evaluation fixtures, which are loaded relative
+# to the module's own __file__, were not installed with it, so they failed with
+# FileNotFoundError from inside a fixture loader. The CI job was never affected
+# because it already sets `working-directory: services/ai-research`.
+#
+# services/ai-research/tests/test_packaging.py now asserts the working directory,
+# the pytest configuration and the resolved location of the modules under test, so
+# a regression here is a named failure rather than a puzzling one.
 test:
 	npm run test
 	cd services/core-api && go test ./...
-	services/ai-research/.venv/bin/pytest
+	cd services/ai-research && .venv/bin/pytest
 
 db-up:
 	docker compose up -d db
