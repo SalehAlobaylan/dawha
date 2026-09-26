@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval e2e e2e-clean
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval graph-benchmark e2e e2e-clean
 
 install:
 	npm install
@@ -200,6 +200,57 @@ db-verify:
 AI_EVAL_REPORT ?= evaluation/report.json
 ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
+
+# graph-benchmark measures the bounded source-dependency graph in PostgreSQL at,
+# below and above the GraphMaxNodes/GraphMaxEdges bounds in
+# services/core-api/internal/research/graphrag.go, and writes the machine
+# readable report that docs/graph-benchmark.md quotes. It is the evidence behind
+# the Neo4j decision gate in IMPLEMENTATION_PLAN.md:1619-1646: that gate says
+# "add it only if measurements show PostgreSQL graph retrieval is becoming
+# limiting", and a gate nobody measures against is a gate nobody can open.
+#
+# What it does, for each of three synthetic public-source dependency graphs:
+#
+#   1. seeds a graph below the bounds, exactly at them, and six times above
+#      them, inside an isolated fixture schema that is dropped afterwards;
+#   2. times the recursive retrieval, the full operation, the Go-side community
+#      detection and the full community operation, reporting p50 and p95 by
+#      nearest rank plus bytes and allocations per call;
+#   3. captures EXPLAIN (ANALYZE, BUFFERS) of the exact SQL the service runs;
+#   4. runs the same traversal with no bounds at all, to show how much headroom
+#      is left above the bound rather than only what the bound returns;
+#   5. re-requests every graph and compares path id, input fingerprint, edge
+#      fingerprint and community partition fingerprint;
+#   6. writes docs/benchmarks/graph-source-dependency.json and fails if output
+#      ever left the bounds, if a graph at the bound reported truncation, or if
+#      a repeat request disagreed.
+#
+# It changes no production algorithm, adds no dependency, and needs no secret
+# and no personal data: every row it writes is a marker title in a schema that
+# no longer exists once the command finishes.
+#
+# It is not in `verify` or `verify-full`. A latency number on one machine is not
+# a release signal, and a gate that fails when the laptop is busy is a gate
+# people learn to skip. The bound assertions themselves ARE in the acceptance
+# suite - TestGraphSourceDependencyNeighborhoodStaysBoundedAcrossGraphSizes runs
+# the same three graphs and fails if the bounds stop holding.
+#
+#   COMPOSE_PROJECT_NAME=dawha make graph-benchmark
+#   DAWHA_GRAPH_BENCH_ITERATIONS=50 make graph-benchmark
+#   DAWHA_GRAPH_BENCH_REPORT=/tmp/graph.json make graph-benchmark
+#
+# COMPOSE_PROJECT_NAME and POSTGRES_DB mean what they mean everywhere else: the
+# first reuses the running db container, the second chooses which database the
+# fixture schemas are built in. The fixture schemas are created and dropped, so
+# the database it is pointed at is left as it was found.
+DAWHA_GRAPH_BENCH_REPORT ?= $(CURDIR)/docs/benchmarks/graph-source-dependency.json
+graph-benchmark:
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		DAWHA_GRAPH_BENCH=1 \
+		DAWHA_GRAPH_BENCH_ITERATIONS="$${DAWHA_GRAPH_BENCH_ITERATIONS:-20}" \
+		DAWHA_GRAPH_BENCH_REPORT="$(DAWHA_GRAPH_BENCH_REPORT)" \
+		go test ./internal/research -run '^TestGraphSourceDependency(Benchmark|NeighborhoodStaysBoundedAcrossGraphSizes)$$' -count=1 -v -timeout 30m
 
 # Security scanning: dependency advisories and committed secrets.
 #
