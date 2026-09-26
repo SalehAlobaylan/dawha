@@ -1124,10 +1124,8 @@ Candidates:
 
 Store:
 
-- PDFs
-- manuscripts
-- scans
-- OCR artifacts
+- text sources (`text/*`)
+- JSON and XML sources
 - extracted text
 - thumbnails
 - source images
@@ -1136,6 +1134,24 @@ Store:
 Metadata belongs in PostgreSQL.
 
 Binary files belong in object storage.
+
+## 23.1 What V1 actually accepts
+
+The store holds what the upload contract accepts, and the contract is narrower than
+this list used to imply. `services/core-api/internal/sourceprocessing/upload.go:153`
+declares the whole accepted set: `text/*`, `application/json` and
+`application/xml`. Anything else is refused with `415` before storage and before
+enqueue, and the declared type is checked against the bytes rather than trusted
+(`TestUploadRefusesAnUnsupportedFormatWithTheAcceptedList`,
+`TestValidateUploadInputSniffsContentAgainstTheDeclaredType`).
+
+So **PDFs, scans and OCR artifacts are not stored by this version.** They were
+listed here as intentions for a future ingestion pipeline, and a reader comparing
+this section with `IMPLEMENTATION_PLAN.md:682-697` would have found no
+disagreement in the plan and believed the product accepted them. It does not. A
+legacy queued binary file still fails deterministically rather than being silently
+skipped, which is the behaviour to keep if the accepted set ever widens.
+
 
 ---
 

@@ -82,14 +82,31 @@ REVIEWED_EXCEPTIONS: dict[tuple[str, str], str] = {
 LINK_PATTERN = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 # A backticked token that looks like a repository path, optionally with a line
-# or line range. Deliberately narrow: it must start with a known top-level
-# directory, so prose that happens to be in backticks is not mistaken for a
-# citation.
+# or line range. Deliberately narrow: it must start with a directory this
+# repository actually has at one of its roots, so prose that happens to be in
+# backticks is not mistaken for a citation.
+#
+# The prefixes span three roots because the documents use three conventions: a
+# status matrix writes `internal/research/graphrag.go:37-45` and a benchmark
+# writes `app/main.py`, neither of which resolves from the repository root.
 CITATION_PATTERN = re.compile(
-    r"`((?:apps|db|docs|infra|plans|services|tools)/[A-Za-z0-9_./-]+"
+    r"`((?:apps|db|docs|infra|plans|services|tools"
+    r"|internal|cmd|platform|generated"
+    r"|app|evaluation|tests)/[A-Za-z0-9_./-]+"
     r"(?::\d+(?:-\d+)?)?)`"
 )
 LINE_RANGE_PATTERN = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
+
+# ROOTS are the directories a citation may be relative to. A document's own
+# directory is tried first, because a Markdown link is relative to its document;
+# these are the fallbacks for an inline citation, which is relative to whichever
+# root the author had in mind.
+ROOTS = (
+    REPO_ROOT,
+    REPO_ROOT / "services" / "core-api",
+    REPO_ROOT / "services" / "ai-research",
+    REPO_ROOT / "apps" / "web",
+)
 
 # Text fenced as a command is a claim about something a reader can run; these are
 # the markers that fence it. Inline `code` is deliberately not skipped: an inline
@@ -144,17 +161,18 @@ def resolve(relative_to: Path, target: str) -> Path:
 
 
 def resolve_citation(relative_to: Path, target: str) -> Path | None:
-    """Resolve an inline citation, which may be document- or root-relative.
+    """Resolve an inline citation against every root the documents write from.
 
-    The repository's convention is mixed and both halves of the mix are
-    deliberate: a Markdown link is relative to the document that holds it, while
-    an inline `path` citation is relative to the repository root, so a status
-    matrix in docs/ can say `graphrag.go` and mean one file. Resolving against
-    the document first and the root second accepts either, and a path that only
-    resolves one way is a path that a reader could still have followed from the
-    other.
+    The repository's convention is mixed and all of the mix is deliberate: a
+    Markdown link is relative to the document that holds it, while an inline
+    `path` citation is written from whichever root the author was looking at -
+    the repository for `docs/`, the Go module for `internal/research/`, the
+    Python service for `app/main.py`. Trying each root in turn accepts all of
+    them, and a path that resolves under only one of them is a path a reader
+    could still have followed from another.
     """
-    for candidate in (resolve(relative_to, target), (REPO_ROOT / target).resolve()):
+    for base in (relative_to.parent, *ROOTS):
+        candidate = (base / target).resolve()
         if candidate.exists():
             return candidate
     return None
