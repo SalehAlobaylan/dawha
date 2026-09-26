@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitMerge, LoaderCircle, RefreshCw, ShieldCheck, Undo2 } from "lucide-react";
-import { useState } from "react";
-import { ApiError, fetchEntityResolutionCandidates, fetchEntityResolutionMerges, mergeEntityResolutionCandidate, reverseEntityResolutionMerge, reviewEntityResolutionCandidate, runEntityResolution } from "../lib/api";
+import { useEffect, useState } from "react";
+import { ApiError, fetchEntityResolutionCandidates, fetchEntityResolutionMerges, fetchEntityResolutionRun, mergeEntityResolutionCandidate, reverseEntityResolutionMerge, reviewEntityResolutionCandidate, runEntityResolution } from "../lib/api";
 import type { EntityResolutionCandidate, EntityResolutionEntityType, EntityResolutionMerge } from "../types";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
@@ -13,6 +13,33 @@ export function EntityResolutionPage() {
   const [status, setStatus] = useState("pending");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [runningId, setRunningId] = useState("");
+  // A scan is queued work, not a request that blocks. The button accepts a run and
+  // the page watches it from here, so the browser is never the thing holding a scan
+  // open - and closing the tab does not lose the run, because the run is a row the
+  // API and the worker both know about.
+  const runQuery = useQuery({
+    queryKey: ["entity-resolution-run", runningId],
+    queryFn: () => fetchEntityResolutionRun(runningId),
+    enabled: runningId !== "",
+    refetchInterval: (query) => {
+      const run = query.state.data;
+      return run?.status === "queued" || run?.status === "running" ? 1500 : false;
+    },
+  });
+  useEffect(() => {
+    const run = runQuery.data;
+    if (!run) return;
+    if (run.status === "succeeded") {
+      setMessage(`اكتمل الفحص ${run.algorithmVersion} ووجد ${run.candidateCount} مرشحاً.`);
+      setRunningId("");
+      void queryClient.invalidateQueries({ queryKey: ["entity-resolution-candidates"] });
+    } else if (run.status === "failed") {
+      setError(run.error || "تعذر إكمال فحص مطابقة الهوية.");
+      setRunningId("");
+    }
+  }, [runQuery.data, queryClient]);
+  const scanPending = runQuery.isFetching || runQuery.data?.status === "queued" || runQuery.data?.status === "running";
   const candidatesQuery = useQuery({
     queryKey: ["entity-resolution-candidates", status, entityType],
     queryFn: () => fetchEntityResolutionCandidates(status === "all" ? undefined : status, entityType === "all" ? undefined : entityType),
@@ -20,10 +47,10 @@ export function EntityResolutionPage() {
   const mergesQuery = useQuery({ queryKey: ["entity-resolution-merges"], queryFn: fetchEntityResolutionMerges });
   const runMutation = useMutation({
     mutationFn: () => runEntityResolution(entityType),
-    onSuccess: async (run) => {
-      setMessage(`اكتمل الفحص ${run.algorithmVersion} ووجد ${run.candidateCount} مرشحاً.`);
+    onSuccess: (run) => {
       setError("");
-      await queryClient.invalidateQueries({ queryKey: ["entity-resolution-candidates"] });
+      setRunningId(run.id);
+      setMessage("أُدرج الفحص في طابور العمل، والنتيجة تظهر هنا عند انتهائه.");
     },
     onError: (value) => setError(entityResolutionError(value)),
   });
@@ -62,7 +89,7 @@ export function EntityResolutionPage() {
       <section className="entity-resolution-toolbar">
         <div className="entity-resolution-toolbar-copy"><ShieldCheck size={18} /><span>قرار الدمج يتطلب موافقة بشرية، وسجلاً قابلاً للعكس.</span></div>
         <label className="composer-label">نوع الكيان<select value={entityType} onChange={(event) => setEntityType(event.target.value as EntityResolutionEntityType)}><option value="person">الأشخاص</option><option value="family">العائلات</option><option value="all">الكل</option></select></label>
-        <button className="primary-button" type="button" onClick={() => runMutation.mutate()} disabled={runMutation.isPending}>{runMutation.isPending ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} {runMutation.isPending ? "جارٍ الفحص…" : "فحص المرشحات"}</button>
+        <button className="primary-button" type="button" onClick={() => runMutation.mutate()} disabled={runMutation.isPending || scanPending}>{runMutation.isPending || scanPending ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} {runMutation.isPending || scanPending ? "جارٍ الفحص…" : "فحص المرشحات"}</button>
       </section>
       {message ? <div className="entity-resolution-message" role="status">{message}</div> : null}
       {error ? <div className="entity-resolution-error" role="alert">{error}</div> : null}

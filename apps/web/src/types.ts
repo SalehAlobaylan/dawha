@@ -1110,13 +1110,19 @@ export interface EntityResolutionRun {
   id: string;
   requestedBy: string;
   entityType: EntityResolutionEntityType;
-  status: "running" | "succeeded" | "failed";
+  // A run is queued work: "queued" means accepted and not finished, which is the
+  // state a client polls until it becomes one of the two terminal ones.
+  status: "queued" | "running" | "succeeded" | "failed";
   algorithmVersion: string;
   normalizationVersion: string;
   modelVersion?: string;
   candidateCount: number;
   error?: string;
+  jobId?: string;
+  stage?: string;
   createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
   updatedAt: string;
 }
 
@@ -2058,9 +2064,14 @@ export interface ResearchAgentRun {
   entityId: string;
   treeId?: string;
   treeVersionId?: string;
-  status: "running" | "succeeded" | "failed";
+  // "queued" means accepted and not finished. It is the state a client polls, and
+  // the reason a run is never reported as an answer before its stages have run.
+  status: "queued" | "running" | "succeeded" | "failed";
   resolution: "succeeded" | "unresolved";
-  executionMode: "synchronous";
+  // An investigation runs in a worker, so the mode the API reports is asynchronous.
+  executionMode: "synchronous" | "asynchronous";
+  jobId?: string;
+  stage?: string;
   plannerVersion: string;
   algorithmVersion: string;
   qualificationPolicyVersion: string;

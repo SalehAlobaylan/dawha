@@ -130,7 +130,19 @@ jobs:
         working-directory: services/core-api
         env:
           DATABASE_URL: postgres://dawha:dawha_local@localhost:55432/dawha
-        run: go test ./internal/temporalanalysis ./internal/geospatialintelligence ./internal/researchagent ./internal/contradiction ./internal/evidence ./internal/search
+        run: go test ./internal/temporalanalysis ./internal/geospatialintelligence ./internal/researchagent ./internal/contradiction ./internal/evidence ./internal/search ./internal/entityresolution
+      # The queue is only as real as the process that drains it, so this step starts
+      # the analysis worker the way a deployment does - as its own binary, against the
+      # same migrated database - accepts a run through the service the API uses, and
+      # waits for the run to reach a terminal state. It is the step that would fail
+      # if a deployment shipped the API without the worker, which is the failure no
+      # unit test can see.
+      - name: A consumer really drains the queue
+        working-directory: services/core-api
+        env:
+          DATABASE_URL: postgres://dawha:dawha_local@localhost:55432/dawha
+          AI_RESEARCH_URL: http://127.0.0.1:8000
+        run: go test ./internal/analysisworker -run TestTheAnalysisWorkerBinaryDrains -count=1 -v
       - name: The skip audit is an artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,7 +153,7 @@ jobs:
 
   # The browser acceptance suite, against the same deterministic stack `make e2e`
   # starts locally: PostgreSQL with postgis and vector, the AI service, core-api
-  # with its source-processing worker, and the built web app.
+  # with its source-processing and analysis workers, and the built web app.
   e2e:
     runs-on: ubuntu-latest
     env:

@@ -36,6 +36,7 @@ below and build first.
 | `ai-research` | 8182 | `services/ai-research/.venv`; no credentials, the provider is deterministic |
 | `core-api` | 8181 | `DATABASE_URL`, `AI_RESEARCH_URL`, `SOURCE_STORAGE_DIR`, `WEB_ORIGIN`, `CORE_API_PORT` |
 | source-processing worker | none | the same as `core-api`, plus `SOURCE_WORKER_POLL_INTERVAL`; supervised by the API process and started with it |
+| analysis worker | none | the same as `core-api`, plus `AI_RESEARCH_URL` and `ANALYSIS_WORKER_POLL_INTERVAL`; drains the identity-scan and research-investigation job types, and is supervised by the API process and started with it |
 | web (`vite preview`) | 4173 | `apps/web/dist` built with `VITE_API_URL=http://localhost:8181` |
 
 `WEB_ORIGIN` has to match the web origin exactly, or the browser is refused the

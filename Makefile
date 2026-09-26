@@ -109,6 +109,11 @@ ai-eval:
 # apps/web/playwright.config.ts for the ports and the environment each service
 # needs. Nothing here is required by `verify`.
 #
+# The stack starts both queue consumers next to the API - source processing and the
+# analysis worker - because a journey that waits for a run to finish is waiting for
+# something that claims its job. `apps/web/e2e/stack.mjs` owns that list, so the
+# Makefile does not repeat it and the two cannot disagree.
+#
 # A run removes its own rows on the way out: the Playwright global teardown
 # executes apps/web/e2e/cleanup.sql, which deletes exactly what the journeys
 # created and nothing else. `make e2e` therefore leaves the database as it found
@@ -133,6 +138,7 @@ e2e:
 		AI_RESEARCH_PORT="$(E2E_AI_PORT)" \
 		AI_RESEARCH_URL="http://localhost:$(E2E_AI_PORT)" \
 		WEB_E2E_PORT="$(E2E_PORT)" \
+		ANALYSIS_WORKER_POLL_INTERVAL="200ms" \
 		WEB_ORIGIN="http://localhost:$(E2E_PORT)" \
 		npx playwright test
 

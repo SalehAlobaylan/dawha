@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, ArrowLeft, BookOpen, BrainCircuit, Check, CheckCircle2, CircleHelp, ExternalLink, FileSearch, ListChecks, Plus, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, fetchLatestResearchAgentRun, fetchResearchQuestionCandidates, generateResearchQuestionCandidates, reviewResearchQuestionCandidate, startResearchAgent } from "../lib/api";
+import { ApiError, fetchLatestResearchAgentRun, fetchResearchAgentRun, fetchResearchQuestionCandidates, generateResearchQuestionCandidates, reviewResearchQuestionCandidate, startResearchAgent } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 import type { ResearchAgentEvidenceRef, ResearchAgentRun, ResearchQuestionCandidate, ResearchWorkspaceSnapshot, ReviewResearchQuestionCandidateInput, WorkspaceTreeContext } from "../types";
 
@@ -33,6 +33,31 @@ export function ResearchAgentPanel({ snapshot, canRun, canReview }: ResearchAgen
     staleTime: 60000,
     refetchOnWindowFocus: false,
   });
+  // An investigation is queued work, so the accepted run is watched from here rather
+  // than waited on. The panel reads the run's own status endpoint, which is the
+  // same one the panel already uses to restore the last package, so a run started in
+  // this tab and a run started in another arrive by the same path.
+  const [queuedRunId, setQueuedRunId] = useState("");
+  const queuedQuery = useQuery({
+    queryKey: ["research-agent-run", queuedRunId],
+    queryFn: () => fetchResearchAgentRun(queuedRunId),
+    enabled: queuedRunId !== "",
+    refetchInterval: (query) => {
+      const current = query.state.data;
+      return current?.status === "queued" || current?.status === "running" ? 1500 : false;
+    },
+  });
+  useEffect(() => {
+    const current = queuedQuery.data;
+    if (!current) return;
+    if (current.status === "succeeded" || current.status === "failed") {
+      setRun(current);
+      setMessage(runMessage(current));
+      setQueuedRunId("");
+      void queryClient.invalidateQueries({ queryKey: ["research-agent-latest", questionID, personID, treeContext?.treeVersionId] });
+      void queryClient.invalidateQueries({ queryKey: ["research-workspace", questionID] });
+    }
+  }, [queuedQuery.data, queryClient, questionID, personID, treeContext?.treeVersionId]);
   const startMutation = useMutation({
     mutationFn: async ({ requestScopeKey }: { requestScopeKey: string }) => {
       if (requestScopeKey !== scopeKey) throw new Error("تغير سياق التحقيق أثناء الطلب.");
@@ -41,10 +66,17 @@ export function ResearchAgentPanel({ snapshot, canRun, canReview }: ResearchAgen
     onMutate: ({ requestScopeKey }) => {
       if (scopeKeyRef.current !== requestScopeKey) return;
       setRun(null);
+      setQueuedRunId("");
       setMessage("جارٍ تفكيك السؤال وجمع الأدلة المؤهلة…");
     },
     onSuccess: (value, { requestScopeKey }) => {
       if (scopeKeyRef.current !== requestScopeKey) return;
+      // A run that came back finished needs no watching; a queued one does.
+      if (value.status === "queued" || value.status === "running") {
+        setQueuedRunId(value.id);
+        setMessage("أُدرج التحقيق في طابور العمل، والحزمة تظهر هنا عند انتهائه.");
+        return;
+      }
       setRun(value);
       setMessage(runMessage(value));
       void queryClient.invalidateQueries({ queryKey: ["research-agent-latest", questionID, personID, treeContext?.treeVersionId] });
@@ -57,6 +89,7 @@ export function ResearchAgentPanel({ snapshot, canRun, canReview }: ResearchAgen
   });
   useEffect(() => {
     setRun(null);
+    setQueuedRunId("");
     setMessage("");
   }, [scopeKey]);
   useEffect(() => {
@@ -66,9 +99,9 @@ export function ResearchAgentPanel({ snapshot, canRun, canReview }: ResearchAgen
     }
   }, [latestQuery.data]);
   const hint = eligibilityMessage(canRun, snapshot, treeContext, targetInTree);
-  const isLoading = startMutation.isPending || latestQuery.isFetching;
+  const isLoading = startMutation.isPending || latestQuery.isFetching || queuedQuery.isFetching;
   return <section className="research-agent-panel" aria-label="وكيل البحث" aria-busy={isLoading}>
-    <div className="research-agent-head"><div><div className="eyebrow">تحقيق متعدد المراحل</div><h3>حزمة بحث قابلة للتتبع</h3><p>يجمع الوكيل طبقات الأدلة، يعرض التعارض، ويقترح الخطوة التالية دون حسم تاريخي.</p></div><div className="research-agent-actions"><label className="research-agent-question"><Sparkles size={13} /><input value={question} onChange={(event) => setQuestion(event.target.value)} aria-label="سؤال التحقيق" /></label><button className="primary-button" type="button" onClick={() => startMutation.mutate({ requestScopeKey: scopeKey })} disabled={!canAnalyze || startMutation.isPending || question.trim().length < 3}><BrainCircuit size={14} /> {startMutation.isPending ? "جارٍ التحقيق…" : "شغّل وكيل البحث"}</button></div></div>
+    <div className="research-agent-head"><div><div className="eyebrow">تحقيق متعدد المراحل</div><h3>حزمة بحث قابلة للتتبع</h3><p>يجمع الوكيل طبقات الأدلة، يعرض التعارض، ويقترح الخطوة التالية دون حسم تاريخي.</p></div><div className="research-agent-actions"><label className="research-agent-question"><Sparkles size={13} /><input value={question} onChange={(event) => setQuestion(event.target.value)} aria-label="سؤال التحقيق" /></label><button className="primary-button" type="button" onClick={() => startMutation.mutate({ requestScopeKey: scopeKey })} disabled={!canAnalyze || startMutation.isPending || queuedRunId !== "" || question.trim().length < 3}><BrainCircuit size={14} /> {startMutation.isPending ? "جارٍ التحقيق…" : "شغّل وكيل البحث"}</button></div></div>
     {!canAnalyze ? <p className="research-agent-hint" id="research-agent-hint"><CircleHelp size={13} /> {hint}</p> : null}
     {latestQuery.isError ? <div className="research-agent-error" role="alert">{errorMessage(latestQuery.error)}</div> : null}
     {message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}

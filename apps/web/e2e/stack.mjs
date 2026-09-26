@@ -4,7 +4,7 @@
 //
 //   node e2e/stack.mjs ai    -> ai-research on AI_RESEARCH_PORT (8182)
 //   node e2e/stack.mjs api    -> core-api on CORE_API_PORT (8181), supervising
-//                               the source-processing worker
+//                               the source-processing and analysis workers
 //   node e2e/stack.mjs web    -> vite preview on WEB_E2E_PORT (4173)
 //
 // The environment each service needs is asserted before it starts, so a missing
@@ -105,8 +105,12 @@ if (!service || !services[service]) {
 }
 
 const plans = [services[service]()];
+// Every worker a job type needs, started next to the API that queues the work. A
+// stack that starts the API without its workers accepts runs and finishes none of
+// them, and the symptom is a journey that waits for a status that never changes - so
+// the workers are part of what "the API is up" means here, not an optional extra.
 if (service === "api" && process.env.E2E_START_WORKER !== "0") {
-  plans.push(sourceWorker());
+  plans.push(sourceWorker(), analysisWorker());
 }
 
 const children = plans.map((plan) =>
@@ -140,8 +144,29 @@ function sourceWorker() {
   };
 }
 
+function analysisWorker() {
+  const databaseURL = required(
+    "DATABASE_URL",
+    "Run `COMPOSE_PROJECT_NAME=dawha make db-migrate db-seed`, or point DATABASE_URL at a migrated database.",
+  );
+  return {
+    command: "go",
+    args: ["run", "./cmd/analysis-worker"],
+    cwd: join(repositoryRoot, "services", "core-api"),
+    env: {
+      DATABASE_URL: databaseURL,
+      // The scorer embeds entity names through the AI service. It has a local
+      // fallback, so this URL is about fidelity rather than about the worker
+      // running at all.
+      AI_RESEARCH_URL: process.env.AI_RESEARCH_URL ?? `http://localhost:${process.env.AI_RESEARCH_PORT ?? 8182}`,
+      ANALYSIS_WORKER_POLL_INTERVAL: "200ms",
+      ANALYSIS_WORKER_ID: "e2e-analysis-worker",
+    },
+  };
+}
+
 children.forEach((child, index) => {
-  const label = index === 0 ? service : "source-processing worker";
+  const label = index === 0 ? service : index === 1 ? "source-processing worker" : "analysis worker";
   child.on("exit", (code, signal) => {
     process.stderr.write(`stack.mjs: ${label} exited (code ${code}, signal ${signal})\n`);
     process.exit(code ?? 1);

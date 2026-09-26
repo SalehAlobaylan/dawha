@@ -12,11 +12,12 @@ import { defineConfig, devices } from "@playwright/test";
  *          AI-backed test skipped. Needs services/ai-research/.venv.
  *   8181   core-api. Needs DATABASE_URL, AI_RESEARCH_URL and SOURCE_STORAGE_DIR.
  *          WEB_ORIGIN is the web origin so the session cookie is not refused.
- *   -      the source-processing worker. It serves no port, so it is supervised
- *          by the API process (`node e2e/stack.mjs api` starts both and exits if
- *          either dies): an upload only reaches a terminal state because
- *          something claims its job, so leaving the worker out would make the
- *          attach-a-source journey wait forever.
+ *   -      the source-processing and analysis workers. They serve no port, so they
+ *          are supervised by the API process (`node e2e/stack.mjs api` starts all
+ *          three and exits if any dies): an upload, an identity scan and a research
+ *          investigation only reach a terminal state because something claims
+ *          their job, so leaving a worker out would make the journey that needs it
+ *          wait forever.
  *   4173   the built web app, served by `vite preview`. Preview rather than dev
  *          because it is the artefact CI would ship, and it needs no dev server
  *          restart between runs.
