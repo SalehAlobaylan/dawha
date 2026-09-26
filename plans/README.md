@@ -16,6 +16,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 008 | Harden migrations, verification, storage, security, and telemetry | P1 | L | 004 | DONE (merged `0c55995`) |
 | 009 | Document current state and benchmark graph limits | P2 | M | 004, 006 | DONE (merged `1777b9b`) |
 | 010 | Fix the V1 frontend defects the browser suite exposed | P1 | S | 004 | DONE (merged `3302f1e`) |
+| 011 | Prove the S3 adapter against MinIO, and record R2 as the production target | P2 | S | 008 | IN PROGRESS |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
