@@ -53,14 +53,44 @@ func (s *Service) RequeueRecovered(ctx context.Context, recovered []jobs.JobView
 	return nil
 }
 
-func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
-	if job.Type != SourceProcessJobType {
+// Claim is a job the worker holds: the row it claimed, and the lease that proves
+// the claim is still its own.
+//
+// The two travel together because the row alone is not a permission. `payload`
+// says what to process; the lease says this attempt is the one allowed to write
+// the result. A worker that took over a reclaimed job has a different row state
+// and a different token, and the processor is handed both so it can check the
+// second one at every point where the first one would have been enough before.
+type Claim struct {
+	Job   jobs.JobView
+	Lease jobs.Lease
+}
+
+// Process runs one claimed job to completion, or not at all.
+//
+// The lease, not the caller, decides how much of this function is allowed to
+// happen. The claim is renewed on a timer for the whole run, the work is given a
+// context that dies with the lease, and the transaction that writes passages and
+// candidates proves the lease again as its first statement. So a worker that lost
+// the job while it was embedding pages cannot reach the write at all, and the
+// attempt ends as a retry rather than as a second copy of records the review
+// queue would then show twice.
+func (s *Service) Process(ctx context.Context, claim Claim) error {
+	if claim.Job.Type != SourceProcessJobType {
 		return ErrValidation
 	}
 	if s == nil || s.Pool == nil || s.Store == nil || s.Extractor == nil {
 		return ErrDatabaseUnavailable
 	}
-	payload, err := parseJobPayload(job.Payload)
+	heartbeat, workCtx, err := s.startHeartbeat(ctx, claim)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = heartbeat.Stop() }()
+	// Everything below runs on the heartbeat's context, so a lost lease cancels
+	// the in-flight AI call rather than waiting for it to finish before noticing.
+	ctx = workCtx
+	payload, err := parseJobPayload(claim.Job.Payload)
 	if err != nil {
 		return err
 	}
@@ -78,16 +108,19 @@ func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
 	// it is claimed, read, or sent to the model: the outcome is the same on every
 	// attempt and the run can never reach a succeeded state.
 	if !IsSupportedContentType(file.MimeType) {
-		return s.failProcessing(ctx, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q (%s) uses a format that cannot be extracted", file.Filename, normalizeContentType(file.MimeType))))
+		return s.failProcessing(ctx, claim, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q (%s) uses a format that cannot be extracted", file.Filename, normalizeContentType(file.MimeType))))
 	}
 	if s.AI == nil {
 		return ErrAIUnavailable
+	}
+	if err := heartbeat.Check(); err != nil {
+		return err
 	}
 	claimTag, err := s.Pool.Exec(ctx, `
 		UPDATE source_processing_runs
 		SET status = 'running', stage = 'extracting', job_id = $1, started_at = COALESCE(started_at, now()), error = NULL, updated_at = now()
 		WHERE id = $2 AND (status IN ('queued', 'failed') OR (status = 'running' AND started_at < now() - interval '20 minutes'))
-	`, job.ID, file.RunID)
+	`, claim.Job.ID, file.RunID)
 	if err != nil {
 		return err
 	}
@@ -106,28 +139,68 @@ func (s *Service) Process(ctx context.Context, job jobs.JobView) error {
 	}
 	reader, object, err := s.Store.Get(ctx, file.StorageKey)
 	if err != nil {
-		return s.failProcessing(ctx, file.RunID, file.FileID, err)
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
 	}
 	defer reader.Close()
 	if object.Size != file.ByteSize {
-		return s.failProcessing(ctx, file.RunID, file.FileID, ErrValidation)
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, ErrValidation))
 	}
 	hash := sha256.New()
 	pages, err := s.Extractor.Extract(ctx, ExtractInput{Reader: io.TeeReader(reader, hash), ContentType: file.MimeType, Filename: file.Filename})
 	if err != nil {
-		return s.failProcessing(ctx, file.RunID, file.FileID, err)
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != file.Checksum {
-		return s.failProcessing(ctx, file.RunID, file.FileID, ErrValidation)
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, ErrValidation))
 	}
-	processedPages, err := s.buildPages(ctx, pages)
+	processedPages, err := s.buildPages(ctx, heartbeat, pages)
 	if err != nil {
-		return s.failProcessing(ctx, file.RunID, file.FileID, err)
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
 	}
-	if err := s.persistProcessedPages(ctx, file, processedPages); err != nil {
-		return s.failProcessing(ctx, file.RunID, file.FileID, err)
+	// The last check before the write. persistProcessedPages proves the lease again
+	// inside its own transaction, so this one is a fast path that turns an obvious
+	// "the lease is gone" into the same error the transaction would have produced
+	// without doing any of the work first.
+	if err := heartbeat.Check(); err != nil {
+		return err
+	}
+	if err := s.persistProcessedPages(ctx, claim, file, processedPages); err != nil {
+		return s.refuseIfLost(heartbeat, err)
 	}
 	return nil
+}
+
+// refuseIfLost replaces whatever the work reported with the lease loss, when the
+// lease was lost.
+//
+// A worker whose claim was taken over sees its context cancelled mid-call, and
+// the cancellation is what surfaces first - but the cancellation is a symptom.
+// Reporting it would send a worker down the "this document failed" path and spend
+// one of the job's attempts on a failure it had no right to record, while the
+// actual fact - somebody else owns this job now - is the one the caller needs in
+// order to stop rather than retry.
+func (s *Service) refuseIfLost(heartbeat *jobs.Heartbeat, err error) error {
+	if err == nil {
+		return nil
+	}
+	if lost := heartbeat.Check(); lost != nil {
+		return lost
+	}
+	return err
+}
+
+// startHeartbeat renews the claim for as long as the work runs. A processor
+// without a queue cannot prove a claim, and a processor that cannot prove a claim
+// must not be writing results, so the missing queue is a refusal rather than a
+// silent downgrade to "just process it".
+func (s *Service) startHeartbeat(ctx context.Context, claim Claim) (*jobs.Heartbeat, context.Context, error) {
+	if s.Jobs == nil {
+		return nil, nil, ErrQueueUnavailable
+	}
+	if !claim.Lease.Valid() {
+		return nil, nil, ErrLeaseRequired
+	}
+	return s.Jobs.StartHeartbeat(ctx, claim.Lease)
 }
 
 func (s *Service) fileForProcessing(ctx context.Context, fileID string) (sourceFileRecord, error) {
@@ -164,11 +237,18 @@ func (s *Service) fileForProcessing(ctx context.Context, fileID string) (sourceF
 	return file, nil
 }
 
-func (s *Service) buildPages(ctx context.Context, pages []Page) ([]processedPage, error) {
+func (s *Service) buildPages(ctx context.Context, heartbeat *jobs.Heartbeat, pages []Page) ([]processedPage, error) {
 	processed := make([]processedPage, 0, len(pages))
 	candidateTotal := 0
 	for _, page := range pages {
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Each page is three model calls and a few dozen row lookups, so a
+		// document with many pages can run for minutes between two checks. The
+		// heartbeat goroutine has been renewing the whole time; this is the read
+		// of its verdict at a point where acting on it is still free.
+		if err := heartbeat.Check(); err != nil {
 			return nil, err
 		}
 		normalized := identity.NormalizeArabicName(page.Text)
@@ -321,12 +401,32 @@ func (s *Service) entityReferences(ctx context.Context, value string) ([]entityR
 	return items, rows.Err()
 }
 
-func (s *Service) persistProcessedPages(ctx context.Context, file sourceFileRecord, pages []processedPage) error {
+// persistProcessedPages writes the accepted passages, statements and candidates
+// for one file, and marks the run complete.
+//
+// The lease is proved as the first statement, inside the same transaction as
+// everything that follows, so "I still own this job" and "these rows exist"
+// commit or roll back together. Checking it before opening the transaction would
+// leave a window in which the claim could be taken and this work applied anyway,
+// which is the duplicate the review queue would then show as two candidates for
+// one passage.
+//
+// Everything below the fence is unchanged and still idempotent in the sense the
+// schema already guarantees: passages get fresh sequence numbers, and candidates
+// carry the dedupe key built from their kind, normalised text and page, so a
+// retry that does get here cannot double a candidate either.
+func (s *Service) persistProcessedPages(ctx context.Context, claim Claim, file sourceFileRecord, pages []processedPage) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if s.Jobs == nil {
+		return ErrQueueUnavailable
+	}
+	if err := s.Jobs.HoldLease(ctx, tx, claim.Lease); err != nil {
+		return err
+	}
 	var lockedSource uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM sources WHERE id = $1 FOR UPDATE`, file.SourceID).Scan(&lockedSource); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -408,9 +508,24 @@ func (s *Service) persistProcessedPages(ctx context.Context, file sourceFileReco
 	return tx.Commit(ctx)
 }
 
-func (s *Service) failProcessing(ctx context.Context, runID, fileID uuid.UUID, cause error) error {
+// failProcessing records a refusal on the run and the file and hands the cause
+// back to the caller.
+//
+// The lease is checked here too, and for a sharper reason than in the success
+// path. Marking a run failed is a write like any other, but it is a write about
+// somebody else's work: a worker whose claim was taken over would be recording a
+// failure over the attempt that is now making progress. So a worker that has lost
+// the lease does not get to decide the run failed - the worker that owns it now
+// will, when it fails on its own terms.
+func (s *Service) failProcessing(ctx context.Context, claim Claim, runID, fileID uuid.UUID, cause error) error {
 	message := safeProcessingError(cause)
 	failures := make([]error, 0, 2)
+	if err := s.holdLease(ctx, claim); err != nil {
+		// A refused fence is not a failure of the job, it is the absence of the
+		// right to write one. The claim is returned as the reason so the worker
+		// stops rather than retrying a job it no longer holds.
+		return leaseRefusal{cause: cause, refusal: err}
+	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE source_processing_runs SET status = 'failed', stage = 'failed', error = $1, updated_at = now() WHERE id = $2`, message, runID); err != nil {
 		failures = append(failures, fmt.Errorf("mark the processing run failed: %w", err))
 	}
@@ -421,6 +536,43 @@ func (s *Service) failProcessing(ctx context.Context, runID, fileID uuid.UUID, c
 		return cause
 	}
 	return &unrecordedFailureError{cause: cause, failures: failures}
+}
+
+// holdLease proves the claim on the pool rather than inside a transaction. It is
+// the check failProcessing needs before it opens one, and it is deliberately the
+// same predicate HoldLease applies.
+func (s *Service) holdLease(ctx context.Context, claim Claim) error {
+	if s.Jobs == nil {
+		return ErrQueueUnavailable
+	}
+	if !claim.Lease.Valid() {
+		return ErrLeaseRequired
+	}
+	return s.Jobs.HoldLease(ctx, s.Pool, claim.Lease)
+}
+
+// leaseRefusal is a cause that could not be recorded because this attempt no
+// longer owns the job. It keeps both halves readable: the work really did fail,
+// and the failure really was not this worker's to write down. The shape mirrors
+// unrecordedFailureError, so a caller reads both the same way - Unwrap is what
+// stopped the write landing, Refusal is what went wrong with the document.
+type leaseRefusal struct {
+	cause   error
+	refusal error
+}
+
+func (e leaseRefusal) Error() string {
+	return fmt.Sprintf("%v was not recorded: %v", e.cause, e.refusal)
+}
+
+func (e leaseRefusal) Unwrap() error {
+	return e.refusal
+}
+
+// Refusal is the lease loss, kept off the error chain so errors.Is against the
+// original cause still answers "what went wrong with the document".
+func (e leaseRefusal) Refusal() error {
+	return e.cause
 }
 
 // unrecordedFailureError says the failure is known but could not be written

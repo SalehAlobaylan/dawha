@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
@@ -71,7 +72,7 @@ func TestResolveEntityUsesSeededAlias(t *testing.T) {
 func TestLegacyQueuedBinaryFileFailsDeterministically(t *testing.T) {
 	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
-	job := jobs.JobView{ID: fixture.jobID.String(), Type: SourceProcessJobType, Payload: fixture.payload, Status: "running", MaxAttempts: 1}
+	job := fixture.claim()
 
 	err := service.Process(context.Background(), job)
 	if !errors.Is(err, ErrUnsupportedContent) {
@@ -86,7 +87,7 @@ func TestLegacyQueuedBinaryFileFailsDeterministically(t *testing.T) {
 	}
 	fixture.assertRefused(t, retry.Error())
 
-	failed, failErr := jobs.NewService(fixture.pool).Fail(context.Background(), fixture.jobID.String(), jobs.FailInput{WorkerID: fixture.workerID, Error: err.Error()})
+	failed, failErr := jobs.NewService(fixture.pool).Fail(context.Background(), fixture.jobID.String(), jobs.FailInput{WorkerID: fixture.workerID, LeaseToken: job.Lease.Token, Error: err.Error()})
 	if failErr != nil {
 		t.Fatal(failErr)
 	}
@@ -113,12 +114,12 @@ func TestPersistProcessedPagesKeepsPageAndLocatorProvenance(t *testing.T) {
 	if len(pages) != 2 || pages[0].Number != 1 || pages[1].Number != 2 {
 		t.Fatalf("unexpected extracted pages: %+v", pages)
 	}
-	service := &Service{Pool: fixture.pool}
+	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	processed := make([]processedPage, 0, len(pages))
 	for _, page := range pages {
 		processed = append(processed, processedPage{Page: page, Normalized: strings.TrimSpace(page.Text), Embedding: testEmbedding(), Model: "test-model"})
 	}
-	if err := service.persistProcessedPages(context.Background(), fixture.record(), processed); err != nil {
+	if err := service.persistProcessedPages(context.Background(), fixture.claim(), fixture.record(), processed); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := fixture.pool.Query(context.Background(), `
@@ -171,6 +172,7 @@ func TestPersistProcessedPagesKeepsPageAndLocatorProvenance(t *testing.T) {
 }
 
 type legacyFileFixture struct {
+	t        *testing.T
 	pool     *pgxpool.Pool
 	store    *storage.LocalStore
 	userID   uuid.UUID
@@ -203,6 +205,7 @@ func newLegacyFileFixture(t *testing.T, mimeType, filename string, content []byt
 		t.Fatal(err)
 	}
 	fixture := &legacyFileFixture{
+		t:        t,
 		pool:     pool,
 		store:    store,
 		userID:   uuid.New(),
@@ -258,8 +261,8 @@ func newLegacyFileFixture(t *testing.T, mimeType, filename string, content []byt
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO jobs (id, type, payload, status, locked_by, max_attempts)
-		VALUES ($1, 'source_process', $2, 'running', $3, 1)
+		INSERT INTO jobs (id, type, payload, status, locked_by, lease_token, lease_expires_at, heartbeat_at, max_attempts)
+		VALUES ($1, 'source_process', $2, 'running', $3, gen_random_uuid(), now() + interval '90 seconds', now(), 1)
 	`, fixture.jobID, fixture.payload, fixture.workerID); err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +273,34 @@ func newLegacyFileFixture(t *testing.T, mimeType, filename string, content []byt
 		t.Fatal(err)
 	}
 	return fixture
+}
+
+// claim reads back the fixture's job row and hands it over as a real claim.
+//
+// The lease is read from the row rather than invented, because the whole point
+// of the tests that use this is that the processor only writes when the row says
+// it still may. A fixture that faked the token would let them pass without the
+// fence being there.
+func (f *legacyFileFixture) claim() Claim {
+	f.t.Helper()
+	var token string
+	var expiresAt time.Time
+	if err := f.pool.QueryRow(context.Background(), `SELECT lease_token::text, lease_expires_at FROM jobs WHERE id = $1`, f.jobID).Scan(&token, &expiresAt); err != nil {
+		f.t.Fatalf("read the fixture job lease: %v", err)
+	}
+	if token == "" {
+		f.t.Fatal("the fixture job has no lease token, so nothing downstream can be fenced")
+	}
+	deadline := expiresAt
+	return Claim{
+		Job: jobs.JobView{ID: f.jobID.String(), Type: SourceProcessJobType, Payload: f.payload, Status: "running", MaxAttempts: 1},
+		Lease: jobs.Lease{
+			JobID:     f.jobID.String(),
+			WorkerID:  f.workerID,
+			Token:     token,
+			ExpiresAt: &deadline,
+		},
+	}
 }
 
 func (f *legacyFileFixture) record() sourceFileRecord {
@@ -348,7 +379,7 @@ func TestProcessReportsAnUnrecordedFormatRefusal(t *testing.T) {
 	fixture := newLegacyFileFixture(t, "application/pdf", "unrecorded-marking.pdf", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
 	refuseFailureMarking(t, fixture.pool, fixture.filename)
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
-	job := jobs.JobView{ID: fixture.jobID.String(), Type: SourceProcessJobType, Payload: fixture.payload, Status: "running", MaxAttempts: 1}
+	job := fixture.claim()
 
 	err := service.Process(context.Background(), job)
 	if err == nil {
@@ -394,7 +425,7 @@ func TestFailProcessingReturnsTheCauseWhenTheMarkingWorks(t *testing.T) {
 	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	cause := unsupportedContent("a recorded refusal")
-	if err := service.failProcessing(context.Background(), fixture.runID, fixture.fileID, cause); err != cause {
+	if err := service.failProcessing(context.Background(), fixture.claim(), fixture.runID, fixture.fileID, cause); err != cause {
 		t.Fatalf("failProcessing = %v, want the cause unchanged", err)
 	}
 	var runStatus, runError, fileStatus, fileError string
@@ -406,25 +437,24 @@ func TestFailProcessingReturnsTheCauseWhenTheMarkingWorks(t *testing.T) {
 	}
 }
 
-// TestFailProcessingReportsAFailedMarkingWithoutADatabase covers the same guard
-// without the trigger: a cancelled context fails both statements, and the caller
-// gets the database error rather than a refusal nobody wrote down.
-func TestFailProcessingReportsAFailedMarkingWithoutADatabase(t *testing.T) {
+// TestFailProcessingReportsAFailedMarkingOnTheFile covers the same guard from
+// the other statement: the run is marked and the file marking is the one the
+// database rejects, so the caller gets a database error on the chain rather than
+// a refusal nobody wrote down. The two statements cannot be made to fail at once
+// any more - failProcessing proves the claim first, and a claim cannot be proved
+// without a working connection - so the half that can fail is failed on purpose.
+func TestFailProcessingReportsAFailedMarkingOnTheFile(t *testing.T) {
 	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	refuseFileMarking(t, fixture.pool, "will not record")
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	cause := unsupportedContent("a refusal that cannot be recorded")
+	cause := unsupportedContent("a refusal the file table will not record")
 
-	err := service.failProcessing(ctx, fixture.runID, fixture.fileID, cause)
+	err := service.failProcessing(context.Background(), fixture.claim(), fixture.runID, fixture.fileID, cause)
 	if err == nil {
 		t.Fatal("failProcessing returned nil, want the failure to be visible")
 	}
 	if errors.Is(err, ErrUnsupportedContent) {
 		t.Fatalf("error = %v, want it kept apart from a clean format refusal", err)
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("error = %v, want the database failure on the error chain", err)
 	}
 	var unrecorded *unrecordedFailureError
 	if !errors.As(err, &unrecorded) {
@@ -433,12 +463,90 @@ func TestFailProcessingReportsAFailedMarkingWithoutADatabase(t *testing.T) {
 	if !errors.Is(unrecorded.Refusal(), ErrUnsupportedContent) {
 		t.Fatalf("refusal = %v, want the original cause kept for the reader", unrecorded.Refusal())
 	}
-	var runStatus string
-	if err := fixture.pool.QueryRow(context.Background(), `SELECT status FROM source_processing_runs WHERE id = $1`, fixture.runID).Scan(&runStatus); err != nil {
+	var fileStatus string
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT processing_status FROM source_files WHERE id = $1`, fixture.fileID).Scan(&fileStatus); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus == "failed" {
-		t.Fatalf("run status = %s, want it left untouched by a cancelled marking", runStatus)
+	if fileStatus == "failed" {
+		t.Fatalf("file status = %s, want the refused marking left unrecorded", fileStatus)
+	}
+}
+
+// TestFailProcessingRefusesToRecordWithoutALiveClaim is the fencing half of the
+// same function. A worker that lost the lease does not get to decide the run
+// failed, and the error says so in a shape the caller can act on: the lease loss
+// is on the chain, the document's own failure is kept for the reader, and neither
+// is reported as a recorded refusal.
+func TestFailProcessingRefusesToRecordWithoutALiveClaim(t *testing.T) {
+	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
+	claim := fixture.claim()
+	// Somebody else owns the job now, under a live lease of their own.
+	if _, err := fixture.pool.Exec(context.Background(), `UPDATE jobs SET lease_token = gen_random_uuid(), locked_by = 'plan006-other-worker' WHERE id = $1`, claim.Lease.JobID); err != nil {
+		t.Fatal(err)
+	}
+	cause := unsupportedContent("a refusal this worker may not record")
+
+	err := service.failProcessing(context.Background(), claim, fixture.runID, fixture.fileID, cause)
+	if err == nil {
+		t.Fatal("failProcessing recorded a failure for a claim it no longer holds")
+	}
+	if !errors.Is(err, jobs.ErrLeaseLost) {
+		t.Fatalf("error = %v, want the lease loss on the chain so the worker stops", err)
+	}
+	if errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("error = %v, want the document failure kept off the chain", err)
+	}
+	var refused leaseRefusal
+	if !errors.As(err, &refused) {
+		t.Fatalf("error = %v, want a leaseRefusal", err)
+	}
+	if !errors.Is(refused.Refusal(), ErrUnsupportedContent) {
+		t.Fatalf("refusal = %v, want the original cause kept for the reader", refused.Refusal())
+	}
+	// Nothing was written: the run still reads as unfinished rather than as
+	// failed by an attempt that was not allowed to judge it.
+	var runStatus, fileStatus string
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT r.status, f.processing_status FROM source_processing_runs r JOIN source_files f ON f.id = r.source_file_id WHERE r.id = $1`, fixture.runID).Scan(&runStatus, &fileStatus); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus == "failed" || fileStatus == "failed" {
+		t.Fatalf("run/file = %s/%s, want both untouched by a worker without the claim", runStatus, fileStatus)
+	}
+}
+
+// refuseFileMarking makes the database reject the failure update of one source
+// file, and only that file, so a test can make the second of the two marking
+// statements fail while the first succeeds.
+func refuseFileMarking(t *testing.T, pool *pgxpool.Pool, marker string) {
+	t.Helper()
+	ctx := context.Background()
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS plan006_refuse_file_marking ON source_files`); err != nil {
+			t.Errorf("drop trigger: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS plan006_refuse_file_marking()`); err != nil {
+			t.Errorf("drop function: %v", err)
+		}
+	})
+	if _, err := pool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION plan006_refuse_file_marking() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.processing_error LIKE '%' || TG_ARGV[0] || '%' THEN
+				RAISE EXCEPTION 'source file failure marking refused by test';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TRIGGER plan006_refuse_file_marking
+		BEFORE UPDATE ON source_files
+		FOR EACH ROW EXECUTE FUNCTION plan006_refuse_file_marking(%s);
+	`, pgxQuoteLiteral(marker))); err != nil {
+		t.Fatal(err)
 	}
 }
 

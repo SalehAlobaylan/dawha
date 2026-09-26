@@ -32,6 +32,11 @@ var (
 	ErrForbidden           = errors.New("source processing access is forbidden")
 	ErrConflict            = errors.New("source processing state conflict")
 	ErrUnsupportedDocument = errors.New("source document format is not supported")
+	// ErrLeaseRequired is what a processor says when it was handed a job without
+	// the claim that says the job is its own. Processing it anyway would be
+	// processing it on the strength of a job id, which is a name rather than a
+	// permission.
+	ErrLeaseRequired = errors.New("source processing requires a job lease")
 )
 
 type JobPayload struct {
@@ -142,6 +147,17 @@ type TransactionalJobEnqueuer interface {
 	EnqueueTx(context.Context, pgx.Tx, jobs.EnqueueInput) (jobs.EnqueueResult, error)
 }
 
+// LeaseQueue is the part of the queue a processor needs in order to be allowed
+// to write. It is a separate interface from JobEnqueuer on purpose: enqueueing
+// needs a name and a key, while processing needs proof of ownership, and a
+// processor wired with only the first could still be handed work it may not
+// commit.
+type LeaseQueue interface {
+	JobEnqueuer
+	StartHeartbeat(context.Context, jobs.Lease) (*jobs.Heartbeat, context.Context, error)
+	HoldLease(context.Context, jobs.Executor, jobs.Lease) error
+}
+
 type Extractor interface {
 	Extract(context.Context, ExtractInput) ([]Page, error)
 }
@@ -160,9 +176,12 @@ type Page struct {
 }
 
 type Service struct {
-	Pool      *pgxpool.Pool
-	Store     storage.Store
-	Jobs      JobEnqueuer
+	Pool  *pgxpool.Pool
+	Store storage.Store
+	// Jobs enqueues work and fences the writes that finish it. A processor
+	// without it can accept uploads but cannot process them, which is the safe
+	// way round: an upload is recoverable, a duplicate extraction is not.
+	Jobs      LeaseQueue
 	AI        ai.Provider
 	Extractor Extractor
 }

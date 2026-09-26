@@ -115,7 +115,11 @@ type Service struct {
 	HeartbeatInterval time.Duration
 }
 
-type dbExecutor interface {
+// Executor is the slice of pgx the queue needs, exported because a processor
+// has to be able to prove its lease inside the same transaction as the rows it
+// is protecting, and naming the transaction type it can be handed is part of
+// that contract.
+type Executor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -139,7 +143,7 @@ func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, input EnqueueInput) 
 	return s.enqueue(ctx, tx, input)
 }
 
-func (s *Service) enqueue(ctx context.Context, q dbExecutor, input EnqueueInput) (EnqueueResult, error) {
+func (s *Service) enqueue(ctx context.Context, q Executor, input EnqueueInput) (EnqueueResult, error) {
 	input, err := validateEnqueue(input)
 	if err != nil {
 		return EnqueueResult{}, err
@@ -384,7 +388,23 @@ func nullableLeaseToken(token string) any {
 	return token
 }
 
+// RecoverStale hands abandoned work back to the queue, whichever type it is.
 func (s *Service) RecoverStale(ctx context.Context, olderThan time.Duration) (RecoverResult, error) {
+	return s.recoverStale(ctx, olderThan, "")
+}
+
+// RecoverStaleOfType is the same recovery narrowed to one job type.
+//
+// Once more than one consumer shares the queue, the unfiltered recovery belongs
+// to whichever process runs it first: it takes the job out of running, and
+// whoever gets there second never sees it. A consumer that owns the run row of
+// a job type therefore has to be the one that recovers that type, or the run row
+// is left reading as running work that nobody owns.
+func (s *Service) RecoverStaleOfType(ctx context.Context, olderThan time.Duration, jobType string) (RecoverResult, error) {
+	return s.recoverStale(ctx, olderThan, strings.TrimSpace(jobType))
+}
+
+func (s *Service) recoverStale(ctx context.Context, olderThan time.Duration, jobType string) (RecoverResult, error) {
 	if err := s.ready(); err != nil {
 		return RecoverResult{}, err
 	}
@@ -398,7 +418,7 @@ func (s *Service) RecoverStale(ctx context.Context, olderThan time.Duration) (Re
 	rows, err := s.Pool.Query(ctx, `
 		WITH stale AS (
 			SELECT id, attempts, max_attempts FROM jobs
-			WHERE status = 'running' AND locked_at < now() - ($1 * interval '1 second')
+			WHERE status = 'running' AND locked_at < now() - ($1 * interval '1 second') AND ($2 = '' OR type = $2)
 			FOR UPDATE SKIP LOCKED
 		)
 		UPDATE jobs AS j SET status = CASE WHEN j.attempts + 1 >= j.max_attempts THEN 'dead' ELSE 'queued' END,
@@ -408,7 +428,7 @@ func (s *Service) RecoverStale(ctx context.Context, olderThan time.Duration) (Re
 		       lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
 		       last_error = COALESCE(j.last_error, 'worker lock expired'), updated_at = now()
 		FROM stale AS s WHERE j.id = s.id
-		RETURNING `+prefixedJobColumns, seconds)
+		RETURNING `+prefixedJobColumns, seconds, jobType)
 	if err != nil {
 		return RecoverResult{}, err
 	}
@@ -483,6 +503,13 @@ const renewJobQuery = `
 	WHERE id = $1 AND status = 'running' AND locked_by = $2 AND lease_token = $4 AND lease_expires_at > now()
 	RETURNING ` + jobColumns
 
+// renewJobExec is the same update without the RETURNING, for the caller that
+// only needs the row count - a transaction that is about to write and wants to
+// know it is still allowed to.
+const renewJobExec = `
+	UPDATE jobs SET locked_at = now(), lease_expires_at = now() + ($3 * interval '1 second'), heartbeat_at = now(), updated_at = now()
+	WHERE id = $1 AND status = 'running' AND locked_by = $2 AND lease_token = $4 AND lease_expires_at > now()`
+
 const failJobQuery = `
 	UPDATE jobs SET status = $1, run_at = $2, last_error = $3, attempts = attempts + 1,
 	       locked_at = NULL, locked_by = NULL,
@@ -490,7 +517,7 @@ const failJobQuery = `
 	WHERE id = $4
 	RETURNING ` + jobColumns
 
-func (s *Service) byIdempotencyKey(ctx context.Context, q dbExecutor, key string) (JobView, error) {
+func (s *Service) byIdempotencyKey(ctx context.Context, q Executor, key string) (JobView, error) {
 	job, err := scanJob(q.QueryRow(ctx, jobSelect+` WHERE idempotency_key = $1`, key))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JobView{}, ErrNotFound

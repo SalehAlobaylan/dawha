@@ -24,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewService(pool *pgxpool.Pool, store storage.Store, queue JobEnqueuer, provider ai.Provider, extractor Extractor) *Service {
+func NewService(pool *pgxpool.Pool, store storage.Store, queue LeaseQueue, provider ai.Provider, extractor Extractor) *Service {
 	if extractor == nil {
 		extractor = NewTextExtractor()
 	}

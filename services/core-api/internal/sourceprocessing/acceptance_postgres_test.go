@@ -71,10 +71,11 @@ func TestUploadProcessAndReviewATextSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim the processing job: %v", err)
 	}
-	if err := service.Process(ctx, job); err != nil {
+	claim := Claim{Job: job, Lease: job.Lease("p004-source-worker")}
+	if err := service.Process(ctx, claim); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if _, err := queue.Complete(ctx, job.ID, jobs.CompleteInput{WorkerID: "p004-source-worker"}); err != nil {
+	if _, err := queue.Complete(ctx, job.ID, jobs.CompleteInput{WorkerID: "p004-source-worker", LeaseToken: claim.Lease.Token}); err != nil {
 		t.Fatalf("complete the processing job: %v", err)
 	}
 
@@ -94,7 +95,7 @@ func TestUploadProcessAndReviewATextSource(t *testing.T) {
 		t.Fatalf("succeeded files = %d, want 1", got)
 	}
 	// Processing the same job again is a no-op rather than a second extraction.
-	if err := service.Process(ctx, job); err != nil {
+	if err := service.Process(ctx, claim); err != nil {
 		t.Fatalf("reprocess: %v", err)
 	}
 	if got := fixture.Count(`SELECT count(*) FROM source_passages WHERE source_file_id = $1`, file.ID); got != 2 {

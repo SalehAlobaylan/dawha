@@ -108,6 +108,34 @@ func (s *Service) validateLease(lease Lease) (Lease, uuid.UUID, int, error) {
 	return lease, id, seconds, nil
 }
 
+// HoldLease proves - and extends - a claim from inside the caller's own
+// transaction.
+//
+// This is the check that has to happen at the point where a result is written,
+// not once at the start of the job. By the time a worker has embedded a
+// document's pages, resolved its entities, or waited on a model, minutes have
+// passed and the answer may have changed; renewing from a goroutine tells the
+// worker it lost the job, but only the transaction that is about to write can
+// refuse the write. Running it as the first statement of that transaction also
+// means the check and the rows it protects commit or roll back together.
+//
+// A refusal is ErrLeaseLost in every case, because from the writer's side the
+// only thing that matters is that it must not write.
+func (s *Service) HoldLease(ctx context.Context, q Executor, lease Lease) error {
+	lease, id, seconds, err := s.validateLease(lease)
+	if err != nil {
+		return err
+	}
+	tag, err := q.Exec(ctx, renewJobExec, id, lease.WorkerID, seconds, lease.Token)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeaseLost
+	}
+	return nil
+}
+
 // leaseError explains a refusal. The distinction that matters to a worker is
 // simple: anything other than ErrNotFound means it must not write, and
 // ErrLeaseLost is the one that means another worker may already be writing.
