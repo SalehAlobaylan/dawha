@@ -17,7 +17,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 009 | Document current state and benchmark graph limits | P2 | M | 004, 006 | DONE (merged `1777b9b`) |
 | 010 | Fix the V1 frontend defects the browser suite exposed | P1 | S | 004 | DONE (merged `3302f1e`) |
 | 011 | Prove the S3 adapter against MinIO, and record R2 as the production target | P2 | S | 008 | DONE (merged `2ddaa59`) |
-| 012 | Stop the test-data leak, and stop citing sources that do not answer | P1 | M | 004, 009 | IN PROGRESS |
+| 012 | Stop the test-data leak, and stop citing sources that do not answer | P1 | M | 004, 009 | DONE (merged `2314de1`) |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -48,3 +48,20 @@ Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 - Neo4j, Redis, OpenSearch, and Temporal introduction: not an immediate defect; `IMPLEMENTATION_PLAN.md:1619-1690` explicitly defers them behind measurement gates.
 - Further broad graph algorithm breadth: not prioritized before the privacy, provenance, and V1 acceptance gaps above; `PRODUCT.md:1138-1151` calls graph results structural, not authoritative.
 - Go toolchain upgrade: not included without verifying the repository's supported runtime policy and CI matrix first.
+
+## Verification standing
+
+- `make verify` — fast gate: lint, typecheck, unit tests, 34 pytest, doc-link check, build. No database, no browser.
+- `make verify-full` — acceptance gate: migrations, generated-code drift, the complete Go suite through `tools/dbtestguard`, and `make ai-eval`. Needs a database: `COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=<db> make verify-full`.
+- `make e2e` — 10 V1 journeys in a browser (28 specs), self-cleaning.
+- `make security-scan`, `make graph-benchmark`, `make migration-check`, `make storage-up` for the rest.
+- The database suite fails the build on a database-gated skip, on a leaked synthetic test user, and on a leaked fixture schema. `make db-sweep` removes residue a crashed run left behind.
+
+## Known residuals (all deliberate, all recorded)
+
+- `S3Store` is proven against MinIO, never against R2; see `docs/storage-backends.md` for the cutover checklist.
+- Rate limits are in-process and IP-keyed: no cross-replica enforcement, and one budget per address behind NAT.
+- No upload quarantine policy exists; no requirement in this repository specifies one.
+- GraphRAG has no labelled corpus, so "multi-hop beats vector-only RAG" has no evidence path.
+- The disputed-claims dictionary index cannot be searched by a name containing ة.
+- Candidate passage text is inline, and `sourceprocessing.files`/`runs` order by `created_at` with no tiebreak.
