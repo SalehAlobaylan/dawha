@@ -325,7 +325,10 @@ func seedLeakedFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *l
 	fixture.publicPlaceID = uuid.New()
 	fixture.privatePlaceID = uuid.New()
 	fixture.associationLessPlaceID = uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type) VALUES ($1, 'موضع التسريب العام', 'موضع التسريب العام', 'city'), ($2, 'موضع التسريب الخاص', 'موضع التسريب الخاص', 'city'), ($3, 'موضع التسريب بلا مصدر', 'موضع التسريب بلا مصدر', 'city')`, fixture.publicPlaceID, fixture.privatePlaceID, fixture.associationLessPlaceID); err != nil {
+	// The visibility is set explicitly because the column defaults to research-only
+	// since db/migrations/0039_reference_visibility.sql, and every case in this file
+	// is about a place that is published.
+	if _, err := pool.Exec(ctx, `INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, visibility) VALUES ($1, 'موضع التسريب العام', 'موضع التسريب العام', 'city', 'public'), ($2, 'موضع التسريب الخاص', 'موضع التسريب الخاص', 'city', 'public'), ($3, 'موضع التسريب بلا مصدر', 'موضع التسريب بلا مصدر', 'city', 'public')`, fixture.publicPlaceID, fixture.privatePlaceID, fixture.associationLessPlaceID); err != nil {
 		t.Fatal(err)
 	}
 	fixture.publicSourceID = uuid.New()

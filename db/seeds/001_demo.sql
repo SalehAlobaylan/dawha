@@ -22,28 +22,28 @@ VALUES
   ('10000000-0000-0000-0000-000000000005', 'عبدالله بن محمد', 'عبدالله بن محمد', 'source_spelling')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry)
+INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, visibility)
 VALUES
-  ('20000000-0000-0000-0000-000000000001', 'الرياض', 'الرياض', 'city', ST_SetSRID(ST_MakePoint(46.6753, 24.7136), 4326)),
-  ('20000000-0000-0000-0000-000000000002', 'الأحساء', 'الاحساء', 'region', ST_SetSRID(ST_MakePoint(49.5658, 25.3647), 4326)),
-  ('20000000-0000-0000-0000-000000000003', 'حجاز', 'حجاز', 'region', ST_SetSRID(ST_MakePoint(39.1925, 21.4858), 4326)),
-  ('20000000-0000-0000-0000-000000000004', 'العلا', 'العلا', 'historical_settlement', ST_SetSRID(ST_MakePoint(38.1333, 26.6084), 4326))
+  ('20000000-0000-0000-0000-000000000001', 'الرياض', 'الرياض', 'city', ST_SetSRID(ST_MakePoint(46.6753, 24.7136), 4326), 'public'),
+  ('20000000-0000-0000-0000-000000000002', 'الأحساء', 'الاحساء', 'region', ST_SetSRID(ST_MakePoint(49.5658, 25.3647), 4326), 'public'),
+  ('20000000-0000-0000-0000-000000000003', 'حجاز', 'حجاز', 'region', ST_SetSRID(ST_MakePoint(39.1925, 21.4858), 4326), 'public'),
+  ('20000000-0000-0000-0000-000000000004', 'العلا', 'العلا', 'historical_settlement', ST_SetSRID(ST_MakePoint(38.1333, 26.6084), 4326), 'public')
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO families (id, canonical_name_ar, normalized_name_ar, description_ar, origin_place_id, created_by)
+INSERT INTO families (id, canonical_name_ar, normalized_name_ar, description_ar, origin_place_id, created_by, visibility)
 VALUES
-  ('c0000000-0000-0000-0000-000000000001', 'عائلة العنبر', 'عائلة العنبر', 'عائلة تجريبية قابلة للمراجعة.', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
-  ('c0000000-0000-0000-0000-000000000002', 'عائلة العنبر', 'عائلة العنبر', 'سجل مكرر محتمل للاختبار.', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001')
+  ('c0000000-0000-0000-0000-000000000001', 'عائلة العنبر', 'عائلة العنبر', 'عائلة تجريبية قابلة للمراجعة.', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'public'),
+  ('c0000000-0000-0000-0000-000000000002', 'عائلة العنبر', 'عائلة العنبر', 'سجل مكرر محتمل للاختبار.', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'public')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO family_aliases (family_id, value_ar, normalized_value_ar)
 VALUES ('c0000000-0000-0000-0000-000000000002', 'بن عـنبر', 'بن عنبر')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO branches (id, family_id, canonical_name_ar, normalized_name_ar, created_by)
+INSERT INTO branches (id, family_id, canonical_name_ar, normalized_name_ar, created_by, visibility)
 VALUES
-  ('c1000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'الفرع الأول', 'الفرع الأول', '00000000-0000-0000-0000-000000000001'),
-  ('c1000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000002', 'الفرع الأول', 'الفرع الأول', '00000000-0000-0000-0000-000000000001')
+  ('c1000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'الفرع الأول', 'الفرع الأول', '00000000-0000-0000-0000-000000000001', 'public'),
+  ('c1000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000002', 'الفرع الأول', 'الفرع الأول', '00000000-0000-0000-0000-000000000001', 'public')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO sources (id, title_ar, author_ar, source_type, publication_date_from, citation_ar, location_ar, metadata)

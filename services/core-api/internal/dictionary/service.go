@@ -159,9 +159,20 @@ func (s *Service) Get(ctx context.Context, kind, id, actorID string) (Detail, er
 	}
 	// A person with no published public tree, and no actor scope, must not be
 	// readable by direct id either. A denied person answers exactly like a missing
-	// one so the endpoint cannot be used as an existence oracle.
+	// one so the endpoint cannot be used as an existence oracle. A family, tribe or
+	// place follows the same rule through the reference policy: a research-only row
+	// answers exactly like a row that does not exist.
 	if kind == "people" {
 		access, accessErr := policy.Person(ctx, s.Pool, resourceID)
+		if accessErr != nil {
+			return Detail{}, accessErr
+		}
+		if !access.Allowed() {
+			return Detail{}, ErrNotFound
+		}
+	}
+	if referenceKind, known := dictionaryReferenceKinds[kind]; known {
+		access, accessErr := policy.Reference(ctx, s.Pool, referenceKind, resourceID)
 		if accessErr != nil {
 			return Detail{}, accessErr
 		}
@@ -172,9 +183,9 @@ func (s *Service) Get(ctx context.Context, kind, id, actorID string) (Detail, er
 	var result Detail
 	switch kind {
 	case "families":
-		result, err = s.familyDetail(ctx, resourceID)
+		result, err = s.familyDetail(ctx, policy, resourceID)
 	case "tribes":
-		result, err = s.tribeDetail(ctx, resourceID)
+		result, err = s.tribeDetail(ctx, policy, resourceID)
 	case "people":
 		result, err = s.personDetail(ctx, policy, resourceID)
 	case "places":
@@ -222,7 +233,10 @@ func (s *Service) Get(ctx context.Context, kind, id, actorID string) (Detail, er
 	return result, nil
 }
 
-func (s *Service) familyDetail(ctx context.Context, id uuid.UUID) (Detail, error) {
+// familyDetail reads a family page. The rows it links out to are scoped by their
+// own visibility, not by the family's: a public family whose branches were never
+// published must not put those branch names on a public page.
+func (s *Service) familyDetail(ctx context.Context, policy visibility.Policy, id uuid.UUID) (Detail, error) {
 	var item Detail
 	var description pgtype.Text
 	if err := s.Pool.QueryRow(ctx, `SELECT id, canonical_name_ar, description_ar FROM families WHERE id = $1`, id).Scan(&item.ID, &item.NameAR, &description); err != nil {
@@ -234,16 +248,22 @@ func (s *Service) familyDetail(ctx context.Context, id uuid.UUID) (Detail, error
 	if item.Aliases, err = s.aliases(ctx, s.Pool, "family_aliases", "family_id", id); err != nil {
 		return Detail{}, err
 	}
-	if item.Branches, err = s.references(ctx, s.Pool, `SELECT b.id, b.canonical_name_ar, f.canonical_name_ar, NULL::text FROM branches b JOIN families f ON f.id = b.family_id WHERE b.family_id = $1 ORDER BY b.canonical_name_ar`, id); err != nil {
+	branchParams := visibility.NewParams()
+	branchIDRef := branchParams.Add(id)
+	branchPredicate := policy.ReferencePredicate(branchParams, "branch", "b.id")
+	if item.Branches, err = s.references(ctx, s.Pool, `SELECT b.id, b.canonical_name_ar, f.canonical_name_ar, NULL::text FROM branches b JOIN families f ON f.id = b.family_id WHERE b.family_id = `+branchIDRef+` AND `+branchPredicate+` ORDER BY b.canonical_name_ar`, branchParams.Args()...); err != nil {
 		return Detail{}, err
 	}
-	if item.Places, err = s.references(ctx, s.Pool, `SELECT p.id, p.canonical_name_ar, p.place_type, NULL::text FROM places p JOIN families f ON f.origin_place_id = p.id WHERE f.id = $1`, id); err != nil {
+	placeParams := visibility.NewParams()
+	familyIDRef := placeParams.Add(id)
+	placePredicate := policy.ReferencePredicate(placeParams, "place", "p.id")
+	if item.Places, err = s.references(ctx, s.Pool, `SELECT p.id, p.canonical_name_ar, p.place_type, NULL::text FROM places p JOIN families f ON f.origin_place_id = p.id WHERE f.id = `+familyIDRef+` AND `+placePredicate, placeParams.Args()...); err != nil {
 		return Detail{}, err
 	}
 	return item, nil
 }
 
-func (s *Service) tribeDetail(ctx context.Context, id uuid.UUID) (Detail, error) {
+func (s *Service) tribeDetail(ctx context.Context, policy visibility.Policy, id uuid.UUID) (Detail, error) {
 	var item Detail
 	var description pgtype.Text
 	if err := s.Pool.QueryRow(ctx, `SELECT id, canonical_name_ar, description_ar FROM tribes WHERE id = $1`, id).Scan(&item.ID, &item.NameAR, &description); err != nil {
@@ -280,14 +300,17 @@ func (s *Service) personDetail(ctx context.Context, policy visibility.Policy, id
 	personRef := placeParams.Add(id)
 	associationSource := policy.SourcePredicate(placeParams, "ga.source_id")
 	placeClaim := policy.ClaimPredicate(placeParams, "c.id")
+	// A place carries its own visibility, so a research-only place is kept off a
+	// person's page even when the association or the claim that links it is public.
+	placeVisible := policy.ReferencePredicate(placeParams, "place", "p.id")
 	if item.Places, err = s.references(ctx, s.Pool, `
 		SELECT DISTINCT p.id, p.canonical_name_ar, p.place_type, ga.status
 		FROM places p JOIN geographic_associations ga ON ga.place_id = p.id
-		WHERE ga.entity_type = 'person' AND ga.entity_id = `+personRef+` AND (ga.source_id IS NULL OR `+associationSource+`)
+		WHERE ga.entity_type = 'person' AND ga.entity_id = `+personRef+` AND `+placeVisible+` AND (ga.source_id IS NULL OR `+associationSource+`)
 		UNION
 		SELECT DISTINCT p.id, p.canonical_name_ar, p.place_type, c.status
 		FROM places p JOIN claims c ON c.place_id = p.id
-		WHERE `+placeClaim+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`))
+		WHERE `+placeVisible+` AND `+placeClaim+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`))
 		ORDER BY 2
 	`, placeParams.Args()...); err != nil {
 		return Detail{}, err
@@ -331,10 +354,18 @@ func (s *Service) placeDetail(ctx context.Context, policy visibility.Policy, id 
 	`, peopleParams.Args()...); err != nil {
 		return Detail{}, err
 	}
-	if item.Families, err = s.references(ctx, s.Pool, `SELECT f.id, f.canonical_name_ar, f.description_ar, NULL::text FROM families f WHERE f.origin_place_id = $1 ORDER BY f.canonical_name_ar`, id); err != nil {
+	// A family and a tribe carry their own visibility, so a public place page does
+	// not list the research-only ones attached to it.
+	originParams := visibility.NewParams()
+	originIDRef := originParams.Add(id)
+	originFamily := policy.ReferencePredicate(originParams, "family", "f.id")
+	if item.Families, err = s.references(ctx, s.Pool, `SELECT f.id, f.canonical_name_ar, f.description_ar, NULL::text FROM families f WHERE f.origin_place_id = `+originIDRef+` AND `+originFamily+` ORDER BY f.canonical_name_ar`, originParams.Args()...); err != nil {
 		return Detail{}, err
 	}
-	if item.Tribes, err = s.references(ctx, s.Pool, `SELECT DISTINCT t.id, t.canonical_name_ar, t.description_ar, ga.status FROM tribes t JOIN geographic_associations ga ON ga.entity_id = t.id WHERE ga.place_id = $1 AND ga.entity_type = 'tribe' ORDER BY 2`, id); err != nil {
+	tribeParams := visibility.NewParams()
+	placeTribeIDRef := tribeParams.Add(id)
+	tribeVisible := policy.ReferencePredicate(tribeParams, "tribe", "t.id")
+	if item.Tribes, err = s.references(ctx, s.Pool, `SELECT DISTINCT t.id, t.canonical_name_ar, t.description_ar, ga.status FROM tribes t JOIN geographic_associations ga ON ga.entity_id = t.id WHERE ga.place_id = `+placeTribeIDRef+` AND ga.entity_type = 'tribe' AND `+tribeVisible+` ORDER BY 2`, tribeParams.Args()...); err != nil {
 		return Detail{}, err
 	}
 	if item.Claims, err = s.placeClaims(ctx, s.Pool, policy, id); err != nil {
@@ -356,6 +387,18 @@ func (s *Service) placeDetail(ctx context.Context, policy visibility.Policy, id 
 	return item, nil
 }
 
+// dictionaryReferenceKinds maps a dictionary index kind to the reference family the
+// visibility policy names it by. The two vocabularies are both closed and the map is
+// written out rather than derived: "families" does not become "family" by dropping
+// its last letter, it is the dictionary kind for the "family" reference family, and
+// a string rule would quietly answer for a family that does not exist.
+var dictionaryReferenceKinds = map[string]string{
+	"families": "family",
+	"tribes":   "tribe",
+	"branches": "branch",
+	"places":   "place",
+}
+
 func (s *Service) ready() error {
 	if s == nil || s.Pool == nil {
 		return ErrDatabaseUnavailable
@@ -369,21 +412,30 @@ func validIndexKind(kind string) bool {
 
 // indexQuery builds the public index list. Every kind declares its public
 // membership rule here: people, claims, questions and sources join through the
-// central visibility policy, while families, tribes, branches and places have no
-// visibility column and stay public. Each case builds its own query so a predicate
-// never allocates a placeholder that the executed statement does not use.
+// central visibility policy, and so do families, tribes, branches and places, which
+// carry a visibility column since db/migrations/0039_reference_visibility.sql and
+// are research-only until they are published. Each case builds its own query so a
+// predicate never allocates a placeholder that the executed statement does not use.
 func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
 	params := visibility.NewParams()
 	term := params.Add(search)
 	switch kind {
 	case "families":
-		return `SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM branches b WHERE b.family_id = f.id) FROM families f WHERE (` + fmtCondition("f.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY f.canonical_name_ar LIMIT 100`, params.Args()
+		familyPredicate := policy.ReferencePredicate(params, "family", "f.id")
+		return `SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM branches b WHERE b.family_id = f.id) FROM families f WHERE ` + familyPredicate + ` AND (` + fmtCondition("f.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY f.canonical_name_ar LIMIT 100`, params.Args()
 	case "tribes":
-		return `SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM geographic_associations ga WHERE ga.entity_type = 'tribe' AND ga.entity_id = t.id) FROM tribes t WHERE (` + fmtCondition("t.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY t.canonical_name_ar LIMIT 100`, params.Args()
+		tribePredicate := policy.ReferencePredicate(params, "tribe", "t.id")
+		return `SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text, (SELECT count(*) FROM geographic_associations ga WHERE ga.entity_type = 'tribe' AND ga.entity_id = t.id) FROM tribes t WHERE ` + tribePredicate + ` AND (` + fmtCondition("t.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY t.canonical_name_ar LIMIT 100`, params.Args()
 	case "branches":
-		return `SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text, (SELECT count(*) FROM branches child WHERE child.parent_branch_id = b.id) FROM branches b JOIN families f ON f.id = b.family_id WHERE (` + fmtCondition("b.normalized_name_ar", term) + ` OR f.normalized_name_ar ILIKE '%' || ` + term + ` || '%') ORDER BY b.canonical_name_ar LIMIT 100`, params.Args()
+		// A branch is scoped by its own visibility column and by its family's: a
+		// research-only family must not leak its branch names through the public
+		// branch index, whichever of the two was published last by hand.
+		branchPredicate := policy.ReferencePredicate(params, "branch", "b.id")
+		familyPredicate := policy.ReferencePredicate(params, "family", "f.id")
+		return `SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text, (SELECT count(*) FROM branches child WHERE child.parent_branch_id = b.id) FROM branches b JOIN families f ON f.id = b.family_id WHERE ` + branchPredicate + ` AND ` + familyPredicate + ` AND (` + fmtCondition("b.normalized_name_ar", term) + ` OR f.normalized_name_ar ILIKE '%' || ` + term + ` || '%') ORDER BY b.canonical_name_ar LIMIT 100`, params.Args()
 	case "places":
-		return `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+		placePredicate := policy.ReferencePredicate(params, "place", "p.id")
+		return `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE ` + placePredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
 	case "sources":
 		sourcePredicate := policy.SourcePredicate(params, "s.id")
 		return `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE ` + sourcePredicate + ` AND (` + term + ` = '' OR s.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY s.title_ar LIMIT 100`, params.Args()
@@ -430,9 +482,11 @@ func scanIndex(row pgx.Row) (IndexItem, error) {
 }
 
 // aliases reads the aliases of a family or a tribe. Neither table carries a source
-// column, so there is nothing to scope and the rows stay public.
+// column, so there is nothing to scope and the rows follow their parent. Neither
+// carries an alias_type column either, so the type reported is the one that is true
+// of every row in both tables rather than a column that does not exist.
 func (s *Service) aliases(ctx context.Context, q dbExecutor, table, column string, id uuid.UUID) ([]AliasView, error) {
-	rows, err := q.Query(ctx, `SELECT value_ar, alias_type FROM `+table+` WHERE `+column+` = $1 ORDER BY created_at, id`, id)
+	rows, err := q.Query(ctx, `SELECT value_ar, 'alternative_name' FROM `+table+` WHERE `+column+` = $1 ORDER BY created_at, id`, id)
 	if err != nil {
 		return nil, err
 	}

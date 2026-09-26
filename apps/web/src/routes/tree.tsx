@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Focus, GitCompareArrows, GitFork, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, UserPlus } from "lucide-react";
+import { ArrowLeft, Focus, GitCompareArrows, GitFork, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, Tag, Trash2, UserPlus } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { addPerson, addRelationship, ApiError, createTree, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, publishTree, updateRelationship } from "../lib/api";
+import { addPerson, addPersonAlias, addRelationship, ApiError, createTree, deletePersonAlias, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, listPersonAliases, publishTree, updateRelationship } from "../lib/api";
 import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { CollaborationPanel } from "../components/CollaborationPanel";
@@ -10,7 +10,7 @@ import { ForkDiffPanel } from "../components/ForkDiffPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { SuggestionPanel } from "../components/SuggestionPanel";
 import { TopBar } from "../components/TopBar";
-import type { AddPersonInput, AddRelationshipInput, RelationshipStatus, TreeDetail, TreeNode, TreeVersionRecord, UpdateRelationshipInput } from "../types";
+import type { AddPersonInput, AddRelationshipInput, PersonAlias, PersonAliasInput, PersonAliasType, RelationshipStatus, TreeDetail, TreeNode, TreeVersionRecord, UpdateRelationshipInput } from "../types";
 
 export type TreePageProps = {
   routeTreeId?: string;
@@ -42,6 +42,10 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const [childNodeId, setChildNodeId] = useState("");
   const [relationshipStatus, setRelationshipStatus] = useState<RelationshipStatus>("interpreted");
   const [relationshipEdits, setRelationshipEdits] = useState<Record<string, { status: RelationshipStatus; reason: string }>>({});
+  const [aliasPersonId, setAliasPersonId] = useState("");
+  const [aliasValue, setAliasValue] = useState("");
+  const [aliasType, setAliasType] = useState<PersonAliasType>("alternative_name");
+  const [aliasReason, setAliasReason] = useState("");
   const [message, setMessage] = useState("");
 
   const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
@@ -85,6 +89,14 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const canPublish = versionReady && currentDraft && detail.permissions.canPublish;
   const canFork = versionReady && selectedVersion.state === "published" && detail.tree.id !== "tree-demo";
   const canCompareWithUpstream = versionReady && Boolean(detail.tree.parentTreeId && detail.tree.parentVersionId);
+  // The aliases of the selected person, read through the identity API. The query
+  // is enabled only when there is a person and only inside the draft editor: an
+  // alias is a global identity record, and the draft panel is where this workspace
+  // already does its recording.
+  const aliasPerson = detail.nodes.find((node) => node.personId === aliasPersonId) ?? detail.nodes[0];
+  const aliasPersonKey = aliasPerson?.personId ?? "";
+  const aliasesQuery = useQuery({ queryKey: ["person-aliases", aliasPersonKey], queryFn: () => listPersonAliases(aliasPersonKey), enabled: Boolean(aliasPersonKey && editOpen && canEdit) });
+  const personAliasesQuery = useQuery({ queryKey: ["person-aliases", selected?.personId ?? ""], queryFn: () => listPersonAliases(selected?.personId ?? ""), enabled: Boolean(selected && canEdit) });
   const queryError = resourceError;
   const showResource = !resourcePending && !resourceError && !emptyResource && loadedDetail !== undefined;
 
@@ -178,6 +190,31 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
     onError: (error) => setMessage(authMessage(error)),
   });
 
+  const addAliasMutation = useMutation({
+    mutationFn: (input: { personId: string; alias: PersonAliasInput }) => addPersonAlias(input.personId, input.alias),
+    onSuccess: async (_created, input) => {
+      // The alias is a person record rather than a tree record, so the tree detail
+      // does not change; the alias list and the dictionary entry that counts and
+      // shows the names are what has to be re-read.
+      await queryClient.invalidateQueries({ queryKey: ["person-aliases", input.personId] });
+      await queryClient.invalidateQueries({ queryKey: ["dictionary"] });
+      setAliasValue("");
+      setAliasReason("");
+      setMessage("سُجّل اللقب على سجل الهوية، خارج تفسير هذه الشجرة.");
+    },
+    onError: (error) => setMessage(authMessage(error)),
+  });
+
+  const deleteAliasMutation = useMutation({
+    mutationFn: (input: { aliasId: string; personId: string; reasonAr: string }) => deletePersonAlias(input.aliasId, input.reasonAr),
+    onSuccess: async (_deleted, input) => {
+      await queryClient.invalidateQueries({ queryKey: ["person-aliases", input.personId] });
+      await queryClient.invalidateQueries({ queryKey: ["dictionary"] });
+      setMessage("حُذف اللقب من سجل الهوية.");
+    },
+    onError: (error) => setMessage(authMessage(error)),
+  });
+
   const publishMutation = useMutation({
     mutationFn: () => publishTree(detail.tree.id, "نشر نسخة جديدة من التفسير"),
     onSuccess: async (published) => {
@@ -241,6 +278,16 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
       relationshipId,
       input: { status: edit.status, expected_version_id: selectedVersion.id, reason_ar: edit.reason },
     });
+  };
+
+  const submitAlias = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!aliasPersonKey) {
+      setMessage("أضف شخصاً إلى المسودة أولاً حتى تسجل له لقباً.");
+      return;
+    }
+    setMessage("");
+    addAliasMutation.mutate({ personId: aliasPersonKey, alias: { value_ar: aliasValue, alias_type: aliasType, reason_ar: aliasReason || undefined } });
   };
 
   const selectTree = (nextTreeId: string) => {
@@ -326,6 +373,23 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
                 </div>}
                 <div className="tree-edit-actions"><button className="primary-button" type="submit" disabled={addRelationshipMutation.isPending || detail.nodes.length < 2}>{addRelationshipMutation.isPending ? "جارٍ الربط…" : "أضف العلاقة"}<Link2 size={15} /></button></div>
               </form>
+
+              <form className="tree-edit-form" onSubmit={submitAlias}>
+                <div className="tree-edit-form-head"><div><h3>تسجيل لقب أو اسم آخر</h3><p>اللقب يُحفظ على سجل الهوية نفسه، لا على تفسير هذه الشجرة، ويظهر في صفحة القاموس.</p></div><Tag size={17} /></div>
+                {detail.nodes.length < 1 ? <p className="tree-edit-note">أضف شخصاً أولاً حتى تسجل له لقباً.</p> : <div className="tree-edit-fields">
+                  <label className="composer-label">الشخص<select value={aliasPersonKey} onChange={(event) => setAliasPersonId(event.target.value)}>{detail.nodes.map((node) => <option key={node.id} value={node.personId}>{node.displayName}</option>)}</select></label>
+                  <label className="composer-label">اللقب بالعربية<input required value={aliasValue} onChange={(event) => setAliasValue(event.target.value)} placeholder="مثال: أبو بكر" /></label>
+                  <label className="composer-label">نوع اللقب<select value={aliasType} onChange={(event) => setAliasType(event.target.value as PersonAliasType)}><option value="alternative_name">اسم آخر</option><option value="kunyah">كنية</option><option value="laqab">لقب</option><option value="nisbah">نسبة</option><option value="source_spelling">رسم من مصدر</option></select></label>
+                  <label className="composer-label">سبب التسجيل<input value={aliasReason} onChange={(event) => setAliasReason(event.target.value)} placeholder="مثال: ورد في السجل المختلط" /></label>
+                </div>}
+                {aliasesQuery.isError ? <p className="tree-edit-note">تعذر قراءة الألقاب المسجلة لهذا الشخص.</p> : null}
+                <AliasChipList
+                  aliases={aliasPersonKey === selected?.personId ? personAliasesQuery.data ?? [] : aliasesQuery.data ?? []}
+                  onDelete={(alias) => deleteAliasMutation.mutate({ aliasId: alias.id, personId: aliasPersonKey, reasonAr: aliasReason || "حذف لقب" })}
+                  disabled={deleteAliasMutation.isPending}
+                />
+                <div className="tree-edit-actions"><button className="primary-button" type="submit" disabled={addAliasMutation.isPending || detail.nodes.length < 1}>{addAliasMutation.isPending ? "جارٍ الحفظ…" : "سجّل اللقب"}<Tag size={15} /></button></div>
+              </form>
             </div>
           )}
         </section>
@@ -373,6 +437,11 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
                 </form>;
               }) : <p className="relationship-empty">لا توجد علاقات مرتبطة بهذا الشخص في النسخة المختارة.</p>}
             </div>
+            {canEdit ? <div className="detail-block"><div className="detail-label">الألقاب المسجلة على الهوية</div><AliasChipList
+              aliases={personAliasesQuery.data ?? []}
+              onDelete={(alias) => deleteAliasMutation.mutate({ aliasId: alias.id, personId: selected.personId, reasonAr: aliasReason || "حذف لقب" })}
+              disabled={deleteAliasMutation.isPending}
+            /></div> : null}
             <div className="detail-block"><div className="detail-label">ملاحظة الباحث</div><p>{selected.note}</p></div>
             <div className="detail-block"><div className="detail-label">ما تمثله هذه الشجرة</div><p>تضع هذه النسخة {selected.name} داخل تفسيرها، مع إبقاء الخلافات طبقة كما هي.</p></div>
             <div className="detail-block"><div className="detail-label">المصادر القريبة</div><EvidenceMiniList sourceCount={selected.sourceCount} /></div>
@@ -436,6 +505,27 @@ function toGraphNodes(detail: TreeDetail): TreeNode[] {
   }));
 }
 
+/**
+ * The recorded names of a person, with a delete button each. It is read-only
+ * markup on purpose: this workspace has no identity admin surface, and the only
+ * identity write it offers is the one a researcher actually reaches for - a name
+ * the same person appears under in another record.
+ */
+function AliasChipList({ aliases, onDelete, disabled }: { aliases: PersonAlias[]; onDelete: (alias: PersonAlias) => void; disabled: boolean }) {
+  if (aliases.length === 0) {
+    return <p className="tree-edit-note">لا توجد ألقاب مسجلة على هذا الشخص بعد.</p>;
+  }
+  return <div className="dictionary-tag-row">{aliases.map((alias) => <span className="dictionary-tag" key={alias.id}>{alias.valueAr}<small>{aliasTypeLabel(alias.aliasType)}</small><button className="icon-button" type="button" aria-label={`حذف اللقب ${alias.valueAr}`} disabled={disabled} onClick={() => onDelete(alias)}><Trash2 size={12} /></button></span>)}</div>;
+}
+
+function aliasTypeLabel(aliasType: PersonAliasType): string {
+  if (aliasType === "kunyah") return "كنية";
+  if (aliasType === "laqab") return "لقب";
+  if (aliasType === "nisbah") return "نسبة";
+  if (aliasType === "source_spelling") return "رسم من مصدر";
+  return "اسم آخر";
+}
+
 function relationshipStatusLabel(status: RelationshipStatus): string {
   if (status === "disputed") return "متنازع عليه";
   if (status === "unresolved") return "غير محسوم";
@@ -453,7 +543,10 @@ function authMessage(error: unknown): string {
     return "سجّل الدخول أولًا لإنشاء أو تعديل أو نشر شجرة.";
   }
   if (error instanceof ApiError && error.status === 409) {
-    return "تغيرت نسخة الشجرة. حدّث الصفحة ثم أعد المحاولة.";
+    return error.message || "تغيرت نسخة الشجرة. حدّث الصفحة ثم أعد المحاولة.";
+  }
+  if (error instanceof ApiError && error.status === 403) {
+    return "هذا الإجراء على سجل الهوية يحتاج دور باحث أو متعامل أو مشرف.";
   }
   return error instanceof Error ? error.message : "تعذر إكمال العملية.";
 }

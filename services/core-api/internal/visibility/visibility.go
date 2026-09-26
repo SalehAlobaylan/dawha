@@ -11,6 +11,12 @@
 //   - research-only data visible to authorized roles: researcher, moderator and
 //     admin roles reach research records, but never through a blanket bypass of
 //     global people rows.
+//   - reference families: a family, tribe, branch or place is public when its
+//     visibility column says so, and research-only otherwise, in which case it is
+//     readable by the identity write role set alone. These four tables had no
+//     visibility column before db/migrations/0039_reference_visibility.sql, so
+//     every row of them was public; the backfill preserved that and the write
+//     surface no longer adds to it.
 //   - missing or deleted records: reported as AccessMissing so direct-ID reads can
 //     answer with one status that does not leak existence.
 package visibility
@@ -64,6 +70,13 @@ type Executor interface {
 type Policy struct {
 	actorID  uuid.UUID
 	research bool
+	// referenceWrite is the platform role set internal/auth calls IdentityWrite.
+	// It is resolved separately from research because the research flag is
+	// deliberately narrower - it excludes the platform collaborator role - and
+	// widening it would change every existing source, claim and question
+	// predicate at once. The reference families get their own flag so they can be
+	// scoped by exactly the role their write surface requires, and no other.
+	referenceWrite bool
 }
 
 // Anonymous returns the policy for a caller without a session.
@@ -109,10 +122,12 @@ func Load(ctx context.Context, executor Executor, actorID string) (Policy, error
 	if policy.Anonymous() {
 		return policy, nil
 	}
-	policy.research, err = hasResearchRole(ctx, executor, policy.actorID)
+	roles, err := resolveRoles(ctx, executor, policy.actorID)
 	if err != nil {
 		return Policy{}, err
 	}
+	policy.research = roles.research
+	policy.referenceWrite = roles.referenceWrite
 	return policy, nil
 }
 
@@ -137,10 +152,30 @@ func (p Policy) Research() bool {
 	return p.research
 }
 
-func hasResearchRole(ctx context.Context, executor Executor, actorID uuid.UUID) (bool, error) {
-	var allowed bool
-	err := executor.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND ur.role IN ('researcher', 'moderator', 'admin'))`, actorID).Scan(&allowed)
-	return allowed, err
+// CanWriteReferences reports whether the policy holds the role set the identity
+// write surface requires. It is the read-side twin of that gate: a reference row
+// that has not been published is research, and the people who may write research
+// are the people who may read it.
+func (p Policy) CanWriteReferences() bool {
+	return p.referenceWrite
+}
+
+// roleScopes is the two role answers Load needs, read in one round trip so the
+// policy costs the same number of queries as it did before the reference families
+// were scoped.
+type roleScopes struct {
+	research       bool
+	referenceWrite bool
+}
+
+func resolveRoles(ctx context.Context, executor Executor, actorID uuid.UUID) (roleScopes, error) {
+	var scopes roleScopes
+	err := executor.QueryRow(ctx, `
+		SELECT
+			EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND ur.role IN ('researcher', 'moderator', 'admin')),
+			EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin'))
+	`, actorID).Scan(&scopes.research, &scopes.referenceWrite)
+	return scopes, err
 }
 
 // grant is one named reason a record may be read. The same fragments build the
@@ -236,6 +271,56 @@ func (p Policy) Tree(ctx context.Context, executor Executor, treeID uuid.UUID) (
 	return resolve(ctx, executor, params, "trees", reference, grants)
 }
 
+// referenceTables is the closed set of reference families. A caller names a kind
+// and the policy looks the table up here, so no statement in this package is ever
+// assembled from a caller string and an unknown kind is refused rather than
+// interpolated.
+var referenceTables = map[string]string{
+	"family": "families",
+	"tribe":  "tribes",
+	"branch": "branches",
+	"place":  "places",
+}
+
+// ReferenceTable reports the table backing a reference kind. It is exported so the
+// services that read a reference family can ask the policy which table the kind
+// means instead of repeating the map.
+func ReferenceTable(kind string) (string, bool) {
+	table, ok := referenceTables[strings.ToLower(strings.TrimSpace(kind))]
+	return table, ok
+}
+
+// Reference reports whether the policy may read a reference row: a family, a
+// tribe, a branch or a place.
+//
+// A published reference row is public, exactly as it was before it had a
+// visibility column. A research-only one is not: it is readable by an actor who
+// holds the identity write role, because that is the role whose write surface
+// produces it, and by nobody else. A caller that cannot name the kind gets the
+// anonymous answer, so an unknown kind can never widen the scope.
+func (p Policy) Reference(ctx context.Context, executor Executor, kind string, id uuid.UUID) (Access, error) {
+	table, known := ReferenceTable(kind)
+	if id == uuid.Nil || !known {
+		return AccessMissing, nil
+	}
+	params := &Params{}
+	reference := params.Add(id)
+	return resolve(ctx, executor, params, table, reference, referenceGrants(table, reference, p.referenceWrite))
+}
+
+// ReferencePredicate returns a SQL boolean expression that is true when a row of
+// the named reference family is readable under the policy. kindReference is a SQL
+// expression yielding the row id, for example "f.id".
+func (p Policy) ReferencePredicate(params *Params, kind, kindReference string) string {
+	table, known := ReferenceTable(kind)
+	if !known {
+		// An unknown family reads as nothing rather than as everything. The safe
+		// direction has to be the one a typo lands in.
+		return "FALSE"
+	}
+	return combine(referenceGrants(table, kindReference, p.referenceWrite), false)
+}
+
 // PersonPredicate returns a SQL boolean expression that is true when a person row
 // is readable under the policy. personReference is a SQL expression yielding a
 // person id, for example "p.id".
@@ -314,6 +399,24 @@ func personGrants(personReference, actorReference string) []grant {
 			JOIN tree_collaborators vis_collaborator ON vis_collaborator.tree_id = vis_tree.id
 			WHERE vis_node.person_id = %s AND vis_collaborator.user_id = %s)`, personReference, actorReference)},
 	}
+}
+
+// referenceGrants is the published-version rule for the reference families. It is
+// the same two-value rule sources use, and the table name comes from the closed
+// map above rather than from a request. The privileged grant is the identity write
+// role set: a research-only reference row is readable by the people whose write
+// surface produces it, and by nobody else. There is deliberately no owner or
+// collaborator grant - a reference row belongs to no single interpretation, and a
+// right over one tree says nothing about it.
+func referenceGrants(table, reference string, privileged bool) []grant {
+	grants := []grant{{
+		access: AccessPublic,
+		sql:    fmt.Sprintf(`EXISTS (SELECT 1 FROM %s vis_reference WHERE vis_reference.id = %s AND vis_reference.visibility = 'public')`, table, reference),
+	}}
+	if privileged {
+		grants = append(grants, grant{access: AccessResearch, sql: "TRUE"})
+	}
+	return grants
 }
 
 func publicSourceGrant(sourceReference string) grant {

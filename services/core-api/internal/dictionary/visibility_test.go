@@ -279,7 +279,10 @@ func seedVisibilityFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	}
 
 	fixture.placeID = uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type) VALUES ($1, 'موضع اختبار القاموس', 'موضع اختبار القاموس', 'city')`, fixture.placeID); err != nil {
+	// Published explicitly: the column default is research-only since
+	// db/migrations/0039_reference_visibility.sql and this fixture reads a public
+	// place page.
+	if _, err := pool.Exec(ctx, `INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, visibility) VALUES ($1, 'موضع اختبار القاموس', 'موضع اختبار القاموس', 'city', 'public')`, fixture.placeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO geographic_associations (entity_type, entity_id, place_id, relation_type, created_by) VALUES ('person', $1, $2, 'documented_in', $3), ('person', $4, $2, 'documented_in', $3)`, fixture.draftPersonID, fixture.placeID, fixture.ownerID, fixture.publishedPersonID); err != nil {

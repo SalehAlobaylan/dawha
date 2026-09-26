@@ -498,3 +498,137 @@ func cleanupPolicyFixture(t *testing.T, pool *pgxpool.Pool, fixture *policyFixtu
 		t.Errorf("cleanup failed for source passages: %v", err)
 	}
 }
+
+// TestReferenceFamiliesAreScopedByVisibility pins the rule the reference families
+// were given in db/migrations/0039_reference_visibility.sql. A published row is
+// public exactly as it was before the column existed; a research-only row is
+// readable by the identity write role set and by nobody else - including an actor
+// who merely registered.
+func TestReferenceFamiliesAreScopedByVisibility(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := db.NewPool(ctx, db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	t.Cleanup(pool.Close)
+
+	researcherID := uuid.New()
+	collaboratorID := uuid.New()
+	registeredID := uuid.New()
+	// A unique address per run, so a rerun with -count=N does not collide with the
+	// accounts an earlier run left behind.
+	tag := strings.ReplaceAll(researcherID.String(), "-", "")[:12]
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name_ar) VALUES
+			($1, $4, 'باحث'),
+			($2, $5, 'متعامل'),
+			($3, $6, 'مسجل')
+	`, researcherID, collaboratorID, registeredID,
+		"reference-researcher-"+tag+"@example.test",
+		"reference-collaborator-"+tag+"@example.test",
+		"reference-registered-"+tag+"@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher'), ($2, 'collaborator'), ($3, 'registered')`, researcherID, collaboratorID, registeredID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup := context.Background()
+		for _, statement := range []string{
+			`DELETE FROM places WHERE created_by IN ($1, $2, $3)`,
+			`DELETE FROM families WHERE created_by IN ($1, $2, $3)`,
+			`DELETE FROM audit_log WHERE actor_id IN ($1, $2, $3)`,
+			`DELETE FROM user_roles WHERE user_id IN ($1, $2, $3)`,
+			`DELETE FROM users WHERE id IN ($1, $2, $3)`,
+		} {
+			if _, err := pool.Exec(cleanup, statement, researcherID, collaboratorID, registeredID); err != nil {
+				t.Errorf("cleanup failed for %q: %v", statement, err)
+			}
+		}
+	})
+
+	publicPlaceID := uuid.New()
+	researchPlaceID := uuid.New()
+	publicFamilyID := uuid.New()
+	researchFamilyID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, visibility, created_by) VALUES
+			($1, 'مكان منشور', 'مكان منشور', 'city', 'public', $3),
+			($2, 'مكان بحثي', 'مكان بحثي', 'city', 'private', $3)
+	`, publicPlaceID, researchPlaceID, researcherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO families (id, canonical_name_ar, normalized_name_ar, visibility, created_by) VALUES
+			($1, 'عائلة منشورة', 'عائلة منشورة', 'public', $3),
+			($2, 'عائلة بحثية', 'عائلة بحثية', 'private', $3)
+	`, publicFamilyID, researchFamilyID, researcherID); err != nil {
+		t.Fatal(err)
+	}
+
+	policies := map[string]Policy{}
+	policies["anonymous"] = Anonymous()
+	for name, id := range map[string]uuid.UUID{"researcher": researcherID, "collaborator": collaboratorID, "registered": registeredID} {
+		policy, err := Load(ctx, pool, id.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		policies[name] = policy
+	}
+	// The privileged flag is the identity write role set and nothing wider: a
+	// registered account does not hold it even though it is a real account.
+	if !policies["researcher"].CanWriteReferences() || !policies["collaborator"].CanWriteReferences() {
+		t.Fatal("a research or collaborator role does not hold the identity write role set")
+	}
+	if policies["registered"].CanWriteReferences() || policies["anonymous"].CanWriteReferences() {
+		t.Fatal("a registered or anonymous reader holds the identity write role set")
+	}
+
+	cases := []struct {
+		kind     string
+		public   uuid.UUID
+		research uuid.UUID
+	}{
+		{kind: "place", public: publicPlaceID, research: researchPlaceID},
+		{kind: "family", public: publicFamilyID, research: researchFamilyID},
+	}
+	for _, testCase := range cases {
+		for _, actor := range []string{"anonymous", "registered"} {
+			access, err := policies[actor].Reference(ctx, pool, testCase.kind, testCase.public)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if access != AccessPublic {
+				t.Fatalf("%s read of a published %s = %q, want %q", actor, testCase.kind, access, AccessPublic)
+			}
+			access, err = policies[actor].Reference(ctx, pool, testCase.kind, testCase.research)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if access != AccessHidden {
+				t.Fatalf("%s read of a research-only %s = %q, want %q", actor, testCase.kind, access, AccessHidden)
+			}
+		}
+		for _, actor := range []string{"researcher", "collaborator"} {
+			access, err := policies[actor].Reference(ctx, pool, testCase.kind, testCase.research)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !access.Allowed() {
+				t.Fatalf("%s could not read a research-only %s: %q", actor, testCase.kind, access)
+			}
+		}
+		// A missing row and an unknown family both answer as missing, so neither can
+		// be used to find out what exists.
+		if access, err := policies["researcher"].Reference(ctx, pool, testCase.kind, uuid.New()); err != nil || access != AccessMissing {
+			t.Fatalf("a missing %s = (%q, %v), want (%q, nil)", testCase.kind, access, err, AccessMissing)
+		}
+		if access, err := policies["researcher"].Reference(ctx, pool, "source", publicPlaceID); err != nil || access != AccessMissing {
+			t.Fatalf("an unknown reference family = (%q, %v), want (%q, nil)", access, err, AccessMissing)
+		}
+	}
+}

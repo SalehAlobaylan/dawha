@@ -2376,6 +2376,28 @@ export interface AddRelationshipInput {
   status: RelationshipStatus;
 }
 
+/**
+ * The one identity write the workspace needs a form for: a name a person is also
+ * known by. The alias type is the closed set the API accepts, and a source is not
+ * offered here - a source-backed spelling has to name a source the researcher may
+ * read, which is a decision made in the source library, not in the tree.
+ */
+export type PersonAliasType = "alternative_name" | "kunyah" | "laqab" | "nisbah" | "source_spelling";
+
+export interface PersonAliasInput {
+  value_ar: string;
+  alias_type: PersonAliasType;
+  reason_ar?: string;
+}
+
+export interface PersonAlias {
+  id: string;
+  personId: string;
+  valueAr: string;
+  aliasType: PersonAliasType;
+  sourceId?: string;
+}
+
 export interface UpdateRelationshipInput {
   status: RelationshipStatus;
   expected_version_id: string;

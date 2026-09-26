@@ -35,6 +35,8 @@ import type {
   JobView,
   MapResponse,
   OpenQuestionRecord,
+  PersonAlias,
+  PersonAliasInput,
   QuestionClaimInput,
   QuestionDetail,
   QuestionDisputeInput,
@@ -678,6 +680,52 @@ export async function addPerson(treeId: string, input: AddPersonInput): Promise<
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as TreeDetail;
+}
+
+/**
+ * listPersonAliases reads the names a person is also known by, through the same
+ * identity API that records them. The endpoint is gated on the identity role and
+ * scopes every alias by the source it was taken from, exactly as the dictionary
+ * page does, so the workspace never shows a spelling the public page would hide.
+ */
+export async function listPersonAliases(personId: string): Promise<PersonAlias[]> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/people/${personId}/aliases`, { credentials: "include" });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { items?: PersonAlias[] };
+  return payload.items ?? [];
+}
+
+/**
+ * addPersonAlias records another name for a person. The API refuses it for a
+ * person a published tree version already rests on, and refuses it for an account
+ * without the identity role, so both refusals arrive here as an ApiError with the
+ * server's own wording rather than as a silent no-op.
+ */
+export async function addPersonAlias(personId: string, input: PersonAliasInput): Promise<PersonAlias> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/people/${personId}/aliases`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PersonAlias;
+}
+
+export async function deletePersonAlias(aliasId: string, reasonAr: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/person-aliases/${aliasId}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason_ar: reasonAr }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
 }
 
 export async function addRelationship(treeId: string, input: AddRelationshipInput): Promise<TreeDetail> {

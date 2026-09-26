@@ -173,10 +173,11 @@ func (s *Service) Search(ctx context.Context, input Input) (Response, error) {
 	return Response{Query: strings.TrimSpace(input.Query), NormalizedQuery: normalized, Groups: groups, Total: total, EmbeddingModel: embeddingModel}, nil
 }
 
-// searchNames ranks people, families, tribes, branches and places. Families,
-// tribes, branches and places have no visibility column and stay public; people
-// join through the central person policy so a private-draft person cannot surface
-// in an anonymous query.
+// searchNames ranks people, families, tribes, branches and places. Every family
+// joins through the central policy: people through the person grant, and families,
+// tribes, branches and places through the reference grant, so a research-only
+// reference row cannot surface in an anonymous query either. A branch is scoped by
+// its own column and by its family's, for the same reason the branch index is.
 func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, query string, input Input) ([]Result, error) {
 	params := visibility.NewParams()
 	personPredicate := policy.PersonPredicate(params, "p.id")
@@ -185,6 +186,11 @@ func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, que
 	// source is not searchable and not shown.
 	aliasSource := policy.SourcePredicate(params, "pa.source_id")
 	visibleAlias := `(pa.source_id IS NULL OR ` + aliasSource + `)`
+	familyPredicate := policy.ReferencePredicate(params, "family", "f.id")
+	tribePredicate := policy.ReferencePredicate(params, "tribe", "t.id")
+	branchPredicate := policy.ReferencePredicate(params, "branch", "b.id")
+	branchFamilyPredicate := policy.ReferencePredicate(params, "family", "f.id")
+	placePredicate := policy.ReferencePredicate(params, "place", "p.id")
 	personRef := params.Add(input.EntityID)
 	placeRef := params.Add(input.PlaceID)
 	termRef := params.Add(query)
@@ -204,19 +210,19 @@ func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, que
 			UNION ALL
 			SELECT f.id, 'family', f.canonical_name_ar, COALESCE((SELECT fa.value_ar FROM family_aliases fa WHERE fa.family_id = f.id ORDER BY fa.created_at LIMIT 1), ''), NULL::text,
 			       GREATEST(CASE WHEN f.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM family_aliases fa WHERE fa.family_id = f.id AND fa.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END, similarity(f.normalized_name_ar, `+termRef+`) * 70)
-			FROM families f WHERE (`+personRef+` = '' OR f.id = `+personRef+`::uuid)
+			FROM families f WHERE `+familyPredicate+` AND (`+personRef+` = '' OR f.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT t.id, 'tribe', t.canonical_name_ar, COALESCE((SELECT ta.value_ar FROM tribe_aliases ta WHERE ta.tribe_id = t.id ORDER BY ta.created_at LIMIT 1), ''), NULL::text,
 			       GREATEST(CASE WHEN t.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM tribe_aliases ta WHERE ta.tribe_id = t.id AND ta.normalized_value_ar = `+termRef+`) THEN 90 ELSE 0 END, similarity(t.normalized_name_ar, `+termRef+`) * 70)
-			FROM tribes t WHERE (`+personRef+` = '' OR t.id = `+personRef+`::uuid)
+			FROM tribes t WHERE `+tribePredicate+` AND (`+personRef+` = '' OR t.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text,
 			       GREATEST(CASE WHEN b.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, similarity(b.normalized_name_ar, `+termRef+`) * 70)
-			FROM branches b JOIN families f ON f.id = b.family_id WHERE (`+personRef+` = '' OR b.id = `+personRef+`::uuid)
+			FROM branches b JOIN families f ON f.id = b.family_id WHERE `+branchPredicate+` AND `+branchFamilyPredicate+` AND (`+personRef+` = '' OR b.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type,
 			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || `+termRef+` || '%') THEN 85 ELSE 0 END, similarity(p.normalized_name_ar, `+termRef+`) * 70)
-			FROM places p WHERE (`+personRef+` = '' OR p.id = `+personRef+`::uuid) AND (`+placeRef+` = '' OR p.id = `+placeRef+`::uuid)
+			FROM places p WHERE `+placePredicate+` AND (`+personRef+` = '' OR p.id = `+personRef+`::uuid) AND (`+placeRef+` = '' OR p.id = `+placeRef+`::uuid)
 		)
 		SELECT id, kind, name, secondary, status, score FROM results WHERE score > 0 ORDER BY score DESC, name LIMIT `+limitRef+`
 	`, params.Args()...)

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -20,6 +21,11 @@ var (
 )
 
 type MapInput struct {
+	// ActorID is the reader the map is rendered for. The map is a public read path,
+	// so an empty actor is the anonymous reader and sees only published rows; the
+	// field exists so a research-only place is still reachable by the role that
+	// wrote it, on the same map, instead of only through the dictionary.
+	ActorID  string
 	FromYear int
 	ToYear   int
 	Status   string
@@ -81,15 +87,19 @@ func (s *Service) List(ctx context.Context, input MapInput) (MapResponse, error)
 	if err != nil {
 		return MapResponse{}, err
 	}
-	features, err := s.placeFeatures(ctx)
+	policy, err := visibility.Load(ctx, s.Pool, input.ActorID)
 	if err != nil {
 		return MapResponse{}, err
 	}
-	associations, err := s.associationFeatures(ctx)
+	features, err := s.placeFeatures(ctx, policy)
 	if err != nil {
 		return MapResponse{}, err
 	}
-	migrations, err := s.migrationFeatures(ctx)
+	associations, err := s.associationFeatures(ctx, policy)
+	if err != nil {
+		return MapResponse{}, err
+	}
+	migrations, err := s.migrationFeatures(ctx, policy)
 	if err != nil {
 		return MapResponse{}, err
 	}
@@ -109,11 +119,26 @@ func (s *Service) List(ctx context.Context, input MapInput) (MapResponse, error)
 	return MapResponse{FromYear: input.FromYear, ToYear: input.ToYear, Status: input.Status, Features: filtered}, nil
 }
 
+// GetPlace renders the map around one place. A research-only place answers exactly
+// like a place that does not exist, so the endpoint cannot be used to discover one
+// or to read its geometry through the map.
 func (s *Service) GetPlace(ctx context.Context, placeID string, input MapInput) (MapResponse, error) {
-	if _, err := uuid.Parse(strings.TrimSpace(placeID)); err != nil {
+	parsed, err := uuid.Parse(strings.TrimSpace(placeID))
+	if err != nil {
 		return MapResponse{}, ErrNotFound
 	}
-	input.PlaceID = strings.TrimSpace(placeID)
+	input.PlaceID = parsed.String()
+	policy, err := visibility.Load(ctx, s.Pool, input.ActorID)
+	if err != nil {
+		return MapResponse{}, err
+	}
+	access, err := policy.Reference(ctx, s.Pool, "place", parsed)
+	if err != nil {
+		return MapResponse{}, err
+	}
+	if !access.Allowed() {
+		return MapResponse{}, ErrNotFound
+	}
 	return s.List(ctx, input)
 }
 
@@ -124,15 +149,20 @@ func (s *Service) ready() error {
 	return nil
 }
 
-func (s *Service) placeFeatures(ctx context.Context) ([]Feature, error) {
+// placeFeatures lists the places on the map. A place carries its own visibility
+// since db/migrations/0039_reference_visibility.sql, so a research-only place is
+// off the anonymous map and on the map of the role that wrote it.
+func (s *Service) placeFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
+	params := visibility.NewParams()
+	predicate := policy.ReferencePredicate(params, "place", "p.id")
 	rows, err := s.Pool.Query(ctx, `
 		SELECT p.id, 'place', p.id, p.canonical_name_ar, NULL::text, NULL::uuid, NULL::text,
 		       'place', 'documented', NULL::text, NULL::date, NULL::date, NULL::uuid, NULL::text,
 		       NULL::uuid, NULL::text, NULL::text, ST_X(p.geometry), ST_Y(p.geometry), NULL::float8, NULL::float8, NULL::float8, NULL::float8
 		FROM places p
-		WHERE p.geometry IS NOT NULL
+		WHERE p.geometry IS NOT NULL AND `+predicate+`
 		ORDER BY p.canonical_name_ar
-	`)
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +170,28 @@ func (s *Service) placeFeatures(ctx context.Context) ([]Feature, error) {
 	return scanFeatures(rows)
 }
 
-func (s *Service) associationFeatures(ctx context.Context) ([]Feature, error) {
+// associationFeatures lists the associations drawn on the map.
+//
+// Every endpoint is scoped by the policy that governs it, and an association whose
+// endpoint the reader may not see is dropped rather than drawn with a blank subject.
+// That is the same rule internal/dictionary already applies to the identical rows -
+// a hidden person's places contribute nothing to a page, and a hidden person
+// contributes nothing to a place's people - and it is the only one of the two
+// choices that cannot disclose anything: the feature's subject *is* the entity, so a
+// row whose entity is hidden still asserts that the platform holds a geographic
+// record about that entity, and an id or a "somebody" marker is a disclosure with
+// the name removed. Dropping it means the public map says nothing at all about a
+// person the policy says is not public, and a privileged actor still sees the row.
+func (s *Service) associationFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
+	params := visibility.NewParams()
+	placePredicate := policy.ReferencePredicate(params, "place", "p.id")
+	familyPredicate := policy.ReferencePredicate(params, "family", "ef.id")
+	tribePredicate := policy.ReferencePredicate(params, "tribe", "et.id")
+	branchPredicate := policy.ReferencePredicate(params, "branch", "eb.id")
+	// The person predicate is asked about the joined person row, so the fallback to
+	// ga.entity_id::text can only be reached for a person the reader may see, and
+	// only for an endpoint that is not a person at all.
+	personPredicate := policy.PersonPredicate(params, "ep.id")
 	rows, err := s.Pool.Query(ctx, `
 		SELECT ga.id, 'association', ga.place_id, p.canonical_name_ar, ga.entity_type, ga.entity_id,
 		       COALESCE(ep.canonical_name_ar, ef.canonical_name_ar, et.canonical_name_ar, ga.entity_id::text),
@@ -151,11 +202,17 @@ func (s *Service) associationFeatures(ctx context.Context) ([]Feature, error) {
 		LEFT JOIN people ep ON ga.entity_type = 'person' AND ep.id = ga.entity_id
 		LEFT JOIN families ef ON ga.entity_type = 'family' AND ef.id = ga.entity_id
 		LEFT JOIN tribes et ON ga.entity_type = 'tribe' AND et.id = ga.entity_id
+		LEFT JOIN branches eb ON ga.entity_type = 'branch' AND eb.id = ga.entity_id
 		LEFT JOIN sources s ON s.id = ga.source_id
 		LEFT JOIN spatial_evidence se ON se.geographic_association_id = ga.id
-		WHERE p.geometry IS NOT NULL AND (s.id IS NULL OR s.visibility = 'public')
+		WHERE p.geometry IS NOT NULL AND `+placePredicate+`
+		  AND (ga.entity_type <> 'person' OR `+personPredicate+`)
+		  AND (ga.entity_type <> 'family' OR `+familyPredicate+`)
+		  AND (ga.entity_type <> 'tribe' OR `+tribePredicate+`)
+		  AND (ga.entity_type <> 'branch' OR `+branchPredicate+`)
+		  AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY ga.time_from NULLS LAST, ga.created_at DESC
-	`)
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +220,19 @@ func (s *Service) associationFeatures(ctx context.Context) ([]Feature, error) {
 	return scanFeatures(rows)
 }
 
-func (s *Service) migrationFeatures(ctx context.Context) ([]Feature, error) {
+// migrationFeatures lists the migration arrows on the map. Both endpoints are places
+// and the subject is an entity, so each is scoped by the policy that governs it and
+// an arrow whose subject the reader may not see is dropped on the same terms as an
+// association. The fallback to m.subject_id::text is therefore only reachable for a
+// visible subject.
+func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
+	params := visibility.NewParams()
+	fromPredicate := policy.ReferencePredicate(params, "place", "pf.id")
+	toPredicate := policy.ReferencePredicate(params, "place", "pt.id")
+	subjectPerson := policy.PersonPredicate(params, "ep.id")
+	subjectFamily := policy.ReferencePredicate(params, "family", "ef.id")
+	subjectTribe := policy.ReferencePredicate(params, "tribe", "et.id")
+	subjectBranch := policy.ReferencePredicate(params, "branch", "eb.id")
 	rows, err := s.Pool.Query(ctx, `
 		SELECT m.id, 'migration', COALESCE(m.to_place_id, m.from_place_id), COALESCE(pt.canonical_name_ar, pf.canonical_name_ar),
 		       m.subject_type, m.subject_id, COALESCE(ep.canonical_name_ar, m.subject_id::text), 'migration', m.status, m.certainty,
@@ -173,11 +242,21 @@ func (s *Service) migrationFeatures(ctx context.Context) ([]Feature, error) {
 		LEFT JOIN places pf ON pf.id = m.from_place_id
 		LEFT JOIN places pt ON pt.id = m.to_place_id
 		LEFT JOIN people ep ON m.subject_type = 'person' AND ep.id = m.subject_id
+		LEFT JOIN families ef ON m.subject_type = 'family' AND ef.id = m.subject_id
+		LEFT JOIN tribes et ON m.subject_type = 'tribe' AND et.id = m.subject_id
+		LEFT JOIN branches eb ON m.subject_type = 'branch' AND eb.id = m.subject_id
 		LEFT JOIN sources s ON s.id = m.source_id
 		LEFT JOIN spatial_evidence se ON se.migration_event_id = m.id
-		WHERE (pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL) AND (s.id IS NULL OR s.visibility = 'public')
+		WHERE (pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL)
+		  AND (pf.id IS NULL OR `+fromPredicate+`)
+		  AND (pt.id IS NULL OR `+toPredicate+`)
+		  AND (m.subject_type <> 'person' OR `+subjectPerson+`)
+		  AND (m.subject_type <> 'family' OR `+subjectFamily+`)
+		  AND (m.subject_type <> 'tribe' OR `+subjectTribe+`)
+		  AND (m.subject_type <> 'branch' OR `+subjectBranch+`)
+		  AND (s.id IS NULL OR s.visibility = 'public')
 		ORDER BY m.time_from NULLS LAST, m.created_at DESC
-	`)
+	`, params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +329,7 @@ func validateInput(input MapInput) (MapInput, error) {
 		}
 		input.PlaceID = strings.TrimSpace(input.PlaceID)
 	}
+	input.ActorID = strings.TrimSpace(input.ActorID)
 	return input, nil
 }
 

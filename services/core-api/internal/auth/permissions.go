@@ -26,6 +26,13 @@ const (
 	SourceReview     Permission = "source.review"
 	QuestionManage   Permission = "question.manage"
 	ModerationReview Permission = "moderation.review"
+	// IdentityWrite gates every read and every write of a global identity row:
+	// people, person aliases, families, tribes, branches, places and generic
+	// entity relationships. The rows are shared by every tree, so the gate is a
+	// platform role rather than a relationship to one interpretation. It is also
+	// the gate on the reads, so the identity API cannot become a new public read
+	// path for rows the dictionary only publishes selectively.
+	IdentityWrite Permission = "identity.write"
 )
 
 type Actor struct {
@@ -98,6 +105,18 @@ func Can(actor Actor, permission Permission, resource Resource) bool {
 	}
 	if permission == ModerationReview {
 		return hasModerationRole
+	}
+	if permission == IdentityWrite {
+		// A global identity row belongs to no single interpretation. Owning a tree,
+		// or being a collaborator on one, is a right over that tree's draft and
+		// says nothing about the shared rows every other tree reads, so neither
+		// ownership nor collaboration reaches this gate. The role set is exactly the
+		// one the suggestions change set already requires for the same tables
+		// (person aliases and entity relationships), so this API cannot open a write
+		// path that service would refuse. A research role is not a blanket bypass
+		// either: it authorises the write, never the publication of a person, which
+		// stays with a published tree version.
+		return actor.hasRole(RoleCollaborator) || hasResearchRole
 	}
 	return false
 }
