@@ -25,10 +25,16 @@ func main() {
 		log.Fatal("source processing worker requires DATABASE_URL")
 	}
 	defer pool.Close()
-	store, err := storage.NewLocal(environmentValue("SOURCE_STORAGE_DIR", "../../.data/source-storage"))
+	// The SAME store resolution the API does, from the same environment. The two
+	// used to each call storage.NewLocal, which meant a deployment that configured
+	// a bucket had a worker reading from a directory the API was not writing to.
+	storeConfig := storage.ConfigFromEnvironment(os.Getenv)
+	storeConfig.LocalRoot = environmentValue("SOURCE_STORAGE_DIR", "../../.data/source-storage")
+	store, err := storage.New(ctx, storeConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("source storage: driver=%s", storageDriverName(store))
 	provider := ai.NewHTTPClient(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 	jobService := jobs.NewService(pool)
 	jobService.HeartbeatInterval = durationEnvironment("SOURCE_WORKER_HEARTBEAT_INTERVAL", jobs.DefaultHeartbeatInterval)
@@ -94,6 +100,19 @@ func main() {
 // lease: the lease is how fast a worker learns it lost the job, and this is how
 // fast the queue gets the job back from a process that is gone without saying so.
 const StaleRecoveryWindow = 15 * time.Minute
+
+// storageDriverName names the adapter for a log line. Storage configuration, not
+// content: it says which bucket or which directory, and never a key.
+func storageDriverName(store storage.Store) string {
+	switch store.(type) {
+	case *storage.S3Store:
+		return storage.DriverS3
+	case *storage.LocalStore:
+		return storage.DriverLocal
+	default:
+		return "unknown"
+	}
+}
 
 func environmentValue(name, fallback string) string {
 	value := os.Getenv(name)

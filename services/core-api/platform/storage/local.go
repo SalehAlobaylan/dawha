@@ -11,14 +11,18 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidKey = errors.New("storage key is invalid")
-	ErrNotFound   = errors.New("storage object was not found")
-	ErrReadOnly   = errors.New("local storage does not support signed URLs")
-)
-
+// LocalStore is the DEVELOPMENT adapter: bytes in a directory.
+//
+// It is an explicit adapter, not the absence of one. `npm run dev`, the CI
+// database job and the browser suite all run against it, and the production
+// adapter is chosen by configuration rather than by which process happens to be
+// running. What it is NOT is a fallback: nothing silently degrades to it.
 type LocalStore struct {
 	Root string
+	// signer, when set, is what SignedURL mints with. Without it the store holds
+	// and serves bytes and refuses to mint links, which is a different thing from
+	// not having a store at all.
+	signer *LocalSigner
 }
 
 func NewLocal(root string) (*LocalStore, error) {
@@ -37,6 +41,28 @@ func NewLocal(root string) (*LocalStore, error) {
 		return nil, err
 	}
 	return &LocalStore{Root: resolved}, nil
+}
+
+// WithSigner returns the same store, able to mint signed URLs that point back at
+// this service's object route. It is a separate call rather than a constructor
+// argument because most callers of a local store only ever Put and Get, and
+// making them supply a secret they do not use would be a worse trade than one
+// line here.
+func (s *LocalStore) WithSigner(signer *LocalSigner) *LocalStore {
+	if s == nil {
+		return nil
+	}
+	s.signer = signer
+	return s
+}
+
+// Signer exposes the configured signer, which the object route needs in order to
+// verify what SignedURL minted.
+func (s *LocalStore) Signer() *LocalSigner {
+	if s == nil {
+		return nil
+	}
+	return s.signer
 }
 
 func (s *LocalStore) Put(ctx context.Context, key string, body io.Reader, contentType string) (Object, error) {
@@ -93,8 +119,18 @@ func (s *LocalStore) Get(ctx context.Context, key string) (io.ReadCloser, Object
 	return file, Object{Key: key, Size: info.Size()}, nil
 }
 
-func (s *LocalStore) SignedURL(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", ErrReadOnly
+// SignedURL mints an expiring, HMAC-signed link to this service's own object
+// route. It used to return ErrReadOnly: "the development adapter cannot do signed
+// access" was true of the old runner and stopped being true here, and an adapter
+// that refuses is an adapter the local stack quietly routes around.
+func (s *LocalStore) SignedURL(_ context.Context, key string, expires time.Duration) (string, error) {
+	if s == nil {
+		return "", ErrNotFound
+	}
+	if s.signer == nil {
+		return "", ErrSignerNotConfigured
+	}
+	return s.signer.Sign(key, expires)
 }
 
 func (s *LocalStore) Delete(_ context.Context, key string) error {
@@ -109,7 +145,12 @@ func (s *LocalStore) Delete(_ context.Context, key string) error {
 }
 
 func (s *LocalStore) path(key string) (string, error) {
-	if s == nil || strings.TrimSpace(s.Root) == "" || strings.TrimSpace(key) == "" || filepath.IsAbs(key) {
+	if s == nil || strings.TrimSpace(s.Root) == "" {
+		return "", ErrInvalidKey
+	}
+	// The shared key rule first, so a key this store refuses is a key the S3
+	// adapter refuses too and the two cannot drift apart on what a key may be.
+	if !ValidKey(key) {
 		return "", ErrInvalidKey
 	}
 	clean := filepath.Clean(filepath.FromSlash(key))

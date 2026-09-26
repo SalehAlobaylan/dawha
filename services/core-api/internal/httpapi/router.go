@@ -171,6 +171,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/dependencies/detect", evidenceHandler.detectDependencies)
 	mux.HandleFunc("PATCH /api/v1/source-dependencies/{dependencyID}/review", evidenceHandler.reviewDependency)
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/files", sourceProcessingHandler.uploadFile)
+	// Minting a download link is an authorized action on its own, which is why
+	// it is a separate route rather than a query parameter on the file view: the
+	// list a reviewer sees must not hand out capabilities to everything in it.
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/download", sourceProcessingHandler.downloadFile)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}/processing", sourceProcessingHandler.getProcessing)
 	mux.HandleFunc("PATCH /api/v1/source-candidates/{candidateID}/review", sourceProcessingHandler.reviewCandidate)
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/passages", evidenceHandler.createPassage)
@@ -264,6 +268,14 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.HandleFunc("GET /api/v1/auth/me", authHandler.Me)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
+
+	// The local adapter's object route, outside /api/v1 and outside CORS: a
+	// signed link is fetched by the browser as a plain navigation or a plain GET,
+	// carries no credentials, and needs no origin. Its whole authority is the
+	// signature in its own query string.
+	if local, ok := storage.LocalStoreFor(dependencies.SourceStorage); ok && local.Signer() != nil {
+		mux.HandleFunc("GET "+storage.ObjectPath+"{key...}", sourceProcessingHandler.serveSignedObject)
+	}
 
 	return withRequestID(withCORS(mux, dependencies.WebOrigin))
 }

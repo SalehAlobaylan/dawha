@@ -31,11 +31,24 @@ func main() {
 		defer pool.Close()
 	}
 	jobsService := jobs.NewService(pool)
-	sourceStore, err := storage.NewLocal(environmentValue("SOURCE_STORAGE_DIR", "../../.data/source-storage"))
+	// One resolution of the storage configuration, shared with the workers. The
+	// driver is chosen by configuration and fails closed: STORAGE_DRIVER=s3 with
+	// no bucket stops the process here rather than quietly writing uploads to a
+	// directory inside the container.
+	storeConfig := storage.ConfigFromEnvironment(os.Getenv)
+	storeConfig.LocalRoot = environmentValue("SOURCE_STORAGE_DIR", "../../.data/source-storage")
+	// The local driver's signed URLs point back at this service, so it needs to
+	// know its own external address. Unset means signed access is unavailable,
+	// which is a different thing from storage being unavailable.
+	if storeConfig.SigningBaseURL == "" {
+		storeConfig.SigningBaseURL = environmentValue("PUBLIC_BASE_URL", "")
+	}
+	sourceStore, err := storage.New(ctx, storeConfig)
 	if err != nil {
 		logger.Error("source storage initialization failed", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("source storage configured", "driver", storageDriverName(sourceStore))
 	aiClient := ai.NewHTTPClient(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 
 	port := os.Getenv("CORE_API_PORT")
@@ -83,6 +96,19 @@ func environment() string {
 		return "development"
 	}
 	return value
+}
+
+// storageDriverName names the adapter for a log line. Storage configuration, not
+// content: it says which bucket or which directory, and never a key.
+func storageDriverName(store storage.Store) string {
+	switch store.(type) {
+	case *storage.S3Store:
+		return storage.DriverS3
+	case *storage.LocalStore:
+		return storage.DriverLocal
+	default:
+		return "unknown"
+	}
 }
 
 func environmentValue(name, fallback string) string {

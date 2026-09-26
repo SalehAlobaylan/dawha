@@ -32,6 +32,14 @@ var (
 	ErrForbidden           = errors.New("source processing access is forbidden")
 	ErrConflict            = errors.New("source processing state conflict")
 	ErrUnsupportedDocument = errors.New("source document format is not supported")
+	// ErrLinkExpired and ErrLinkNotAuthorized are what a signed object URL says
+	// when it is presented late or altered. They are separate errors because a
+	// client can act on them differently - a retry for one, a re-request for the
+	// other - and because collapsing them into "forbidden" would make a clock
+	// problem look like an access-control problem in every log that records it.
+	ErrLinkExpired       = errors.New("the signed link has expired")
+	ErrLinkNotAuthorized = errors.New("the signed link is not valid")
+
 	// ErrLeaseRequired is what a processor says when it was handed a job without
 	// the claim that says the job is its own. Processing it anyway would be
 	// processing it on the strength of a job id, which is a name rather than a
