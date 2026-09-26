@@ -3,7 +3,6 @@ package geography
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
@@ -20,6 +19,17 @@ var (
 	ErrValidation          = errors.New("geography input is invalid")
 )
 
+const (
+	// MaxMapFeatures bounds one map response. The map used to return every visible
+	// row of four tables, so its size grew with the dataset; a bounded response is
+	// what lets a caller plan for it, and the response says when it was cut.
+	MaxMapFeatures = 5000
+	// maxPlaceFeatureRows bounds the geometry read that answers a viewport
+	// question. It is deliberately far above MaxMapFeatures so a viewport never
+	// truncates a response that is already inside the bound.
+	maxPlaceFeatureRows = 20000
+)
+
 type MapInput struct {
 	// ActorID is the reader the map is rendered for. The map is a public read path,
 	// so an empty actor is the anonymous reader and sees only published rows; the
@@ -30,6 +40,23 @@ type MapInput struct {
 	ToYear   int
 	Status   string
 	PlaceID  string
+	// Viewport is the bounding box the caller is drawing. It is a filter the
+	// database applies, not a post-hoc crop: a feature outside the box is never
+	// built, joined or shipped.
+	Viewport *Viewport
+	// Limit bounds the response. Zero means MaxMapFeatures.
+	Limit int
+}
+
+// Viewport is a longitude/latitude bounding box. It is all-or-nothing on purpose: a
+// half-specified box is a filter whose meaning depends on which half was sent, and
+// a map that guessed the other half would show a different world than the caller
+// asked for.
+type Viewport struct {
+	MinLongitude float64
+	MinLatitude  float64
+	MaxLongitude float64
+	MaxLatitude  float64
 }
 
 type Feature struct {
@@ -63,6 +90,13 @@ type MapResponse struct {
 	ToYear   int       `json:"toYear,omitempty"`
 	Status   string    `json:"status,omitempty"`
 	Features []Feature `json:"features"`
+	// Limit is the bound that was applied, so a caller can tell a short map from a
+	// map it asked to be short.
+	Limit int `json:"limit,omitempty"`
+	// Truncated reports that the map holds more features than Limit allowed. It is
+	// the difference between "this is everything" and "this is what fitted", and a
+	// map that cannot say which one it is cannot be drawn correctly.
+	Truncated bool `json:"truncated"`
 }
 
 type Service struct {
@@ -79,6 +113,101 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{Pool: pool}
 }
 
+// mapFilters is the one set of predicates every feature query carries, built once
+// from one input.
+//
+// It exists so the four queries cannot drift: each one asks for the same status,
+// place, year and viewport conditions, and a change to the rule is a change in one
+// place rather than four. The parameters live on the same visibility.Params the
+// policy predicates use, so the visibility fragments and the map fragments
+// interleave without renumbering each other.
+type mapFilters struct {
+	status   string
+	placeID  string
+	fromYear int
+	toYear   int
+	viewport *Viewport
+	params   *visibility.Params
+}
+
+func newMapFilters(input MapInput, params *visibility.Params) mapFilters {
+	return mapFilters{
+		status:   input.Status,
+		placeID:  input.PlaceID,
+		fromYear: input.FromYear,
+		toYear:   input.ToYear,
+		viewport: input.Viewport,
+		params:   params,
+	}
+}
+
+// statusPredicate compares against the status the feature is *drawn* with, which is
+// not always a column.
+//
+// A region is drawn as 'disputed' or 'interpreted' depending on its certainty, so
+// a filter that compared the column would answer a different question from the one
+// the caller asked: status=interpreted would return nothing, because a region's
+// column holds 'approximate' or 'precise'. Passing the drawn-status expression is
+// what keeps the inferred/documented/disputed layers separate and findable.
+func (f mapFilters) statusPredicate(drawnStatus string) string {
+	reference := f.params.Add(f.status)
+	return "(" + reference + " = '' OR " + drawnStatus + " = " + reference + ")"
+}
+
+// placePredicate scopes to one place. A layer that has no place of its own - a
+// historical region - is excluded by this filter exactly as it was before, because
+// its place reference is NULL and no uuid compares equal to NULL.
+func (f mapFilters) placePredicate(placeReference string) string {
+	reference := f.params.Add(f.placeID)
+	return "(" + reference + " = '' OR " + placeReference + " = " + reference + "::uuid)"
+}
+
+// timePredicate is the year filter, in SQL, with the same edge case the Go filter
+// had.
+//
+// A feature carrying no dates at all is kept under any year filter, because a
+// platform does not know when a place was. A plain `time_from <= to_year` would
+// quietly drop those rows instead, so the expression checks for "no dates" first
+// and only then applies the overlap test. This is the kind of narrowing a
+// "same filter, faster" change is not allowed to make silently.
+func (f mapFilters) timePredicate(fromReference, toReference string) string {
+	fromYear := "COALESCE(EXTRACT(YEAR FROM " + fromReference + "), 0)"
+	toYear := "COALESCE(EXTRACT(YEAR FROM " + toReference + "), 0)"
+	fromFilter := f.params.Add(f.fromYear)
+	toFilter := f.params.Add(f.toYear)
+	return "((" + fromYear + " = 0 AND " + toYear + " = 0) OR ((" + toFilter + " = 0 OR " + fromYear + " <= " + toFilter + ") AND (" +
+		fromFilter + " = 0 OR " + toYear + " = 0 OR " + toYear + " >= " + fromFilter + ")))"
+}
+
+// viewportPredicate keeps the features inside the box the caller is drawing. A
+// feature with no position cannot be inside any box, so it is excluded rather than
+// kept, and every layer's own WHERE already requires a geometry.
+func (f mapFilters) viewportPredicate(longitudeReference, latitudeReference string) string {
+	if f.viewport == nil {
+		return "TRUE"
+	}
+	west := f.params.Add(f.viewport.MinLongitude)
+	south := f.params.Add(f.viewport.MinLatitude)
+	east := f.params.Add(f.viewport.MaxLongitude)
+	north := f.params.Add(f.viewport.MaxLatitude)
+	return "(" + longitudeReference + " IS NOT NULL AND " + latitudeReference + " IS NOT NULL AND " +
+		longitudeReference + " >= " + west + " AND " + longitudeReference + " <= " + east + " AND " +
+		latitudeReference + " >= " + south + " AND " + latitudeReference + " <= " + north + ")"
+}
+
+// list reads the map for one input.
+//
+// The four feature queries used to return every visible row of their table and the
+// filters were applied afterwards, in Go, which meant the database built, joined and
+// shipped rows the caller had already decided not to see. Each query now carries the
+// same status, place, year and viewport predicates, and each carries its own bound:
+// the response is assembled in the order it always was - places, then associations,
+// then migrations, then regions - and the first Limit features of that sequence are
+// what the caller gets, with Truncated saying whether the sequence continued.
+//
+// The order the four layers are concatenated in is part of the response contract, so
+// the limit is applied across the concatenation rather than per layer: a per-layer
+// limit would let the last layer push the response past the bound.
 func (s *Service) List(ctx context.Context, input MapInput) (MapResponse, error) {
 	if err := s.ready(); err != nil {
 		return MapResponse{}, err
@@ -91,32 +220,69 @@ func (s *Service) List(ctx context.Context, input MapInput) (MapResponse, error)
 	if err != nil {
 		return MapResponse{}, err
 	}
-	features, err := s.placeFeatures(ctx, policy)
-	if err != nil {
-		return MapResponse{}, err
-	}
-	associations, err := s.associationFeatures(ctx, policy)
-	if err != nil {
-		return MapResponse{}, err
-	}
-	migrations, err := s.migrationFeatures(ctx, policy)
-	if err != nil {
-		return MapResponse{}, err
-	}
-	regions, err := s.regionFeatures(ctx)
-	if err != nil {
-		return MapResponse{}, err
-	}
-	features = append(features, associations...)
-	features = append(features, migrations...)
-	features = append(features, regions...)
-	filtered := make([]Feature, 0, len(features))
-	for _, feature := range features {
-		if matches(feature, input) {
-			filtered = append(filtered, feature)
+	features := make([]Feature, 0, 64)
+	truncated := false
+	for _, layer := range s.featureLayers() {
+		remaining := input.Limit - len(features)
+		if remaining <= 0 {
+			// The bound is spent, but "the bound is spent" is not the same answer as
+			// "there is nothing left". The next layer is asked for a single row, so
+			// the map can say which of the two it is instead of guessing.
+			probe, probeErr := layer.fetch(ctx, s, policy, newMapFilters(input, visibility.NewParams()), 1)
+			if probeErr != nil {
+				return MapResponse{}, probeErr
+			}
+			if len(probe) > 0 {
+				truncated = true
+				break
+			}
+			continue
 		}
+		// One row beyond what fits, which is how the layer says "there are more"
+		// without the response ever having to count the whole table.
+		rows, fetchErr := layer.fetch(ctx, s, policy, newMapFilters(input, visibility.NewParams()), remaining+1)
+		if fetchErr != nil {
+			return MapResponse{}, fetchErr
+		}
+		if len(rows) > remaining {
+			features = append(features, rows[:remaining]...)
+			truncated = true
+			break
+		}
+		features = append(features, rows...)
 	}
-	return MapResponse{FromYear: input.FromYear, ToYear: input.ToYear, Status: input.Status, Features: filtered}, nil
+	return MapResponse{
+		FromYear:  input.FromYear,
+		ToYear:    input.ToYear,
+		Status:    input.Status,
+		Features:  features,
+		Limit:     input.Limit,
+		Truncated: truncated,
+	}, nil
+}
+
+// featureLayer is one of the four kinds of feature on the map, in the order the
+// response concatenates them.
+type featureLayer struct {
+	name  string
+	fetch func(context.Context, *Service, visibility.Policy, mapFilters, int) ([]Feature, error)
+}
+
+func (s *Service) featureLayers() []featureLayer {
+	return []featureLayer{
+		{name: "places", fetch: func(ctx context.Context, service *Service, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+			return service.placeFeatures(ctx, policy, filters, limit)
+		}},
+		{name: "associations", fetch: func(ctx context.Context, service *Service, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+			return service.associationFeatures(ctx, policy, filters, limit)
+		}},
+		{name: "migrations", fetch: func(ctx context.Context, service *Service, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+			return service.migrationFeatures(ctx, policy, filters, limit)
+		}},
+		{name: "regions", fetch: func(ctx context.Context, service *Service, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+			return service.regionFeatures(ctx, policy, filters, limit)
+		}},
+	}
 }
 
 // GetPlace renders the map around one place. A research-only place answers exactly
@@ -152,17 +318,27 @@ func (s *Service) ready() error {
 // placeFeatures lists the places on the map. A place carries its own visibility
 // since db/migrations/0039_reference_visibility.sql, so a research-only place is
 // off the anonymous map and on the map of the role that wrote it.
-func (s *Service) placeFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
-	params := visibility.NewParams()
-	predicate := policy.ReferencePredicate(params, "place", "p.id")
+//
+// The ordering ends in the id, which makes it a total order. That is not tidiness:
+// the response is bounded, and a bound over an order with ties picks an arbitrary
+// subset, so a repeated request could show a different place each time.
+func (s *Service) placeFeatures(ctx context.Context, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+	limitReference := filters.params.Add(limit)
+	longitude := "ST_X(p.geometry)"
+	latitude := "ST_Y(p.geometry)"
 	rows, err := s.Pool.Query(ctx, `
 		SELECT p.id, 'place', p.id, p.canonical_name_ar, NULL::text, NULL::uuid, NULL::text,
 		       'place', 'documented', NULL::text, NULL::date, NULL::date, NULL::uuid, NULL::text,
-		       NULL::uuid, NULL::text, NULL::text, ST_X(p.geometry), ST_Y(p.geometry), NULL::float8, NULL::float8, NULL::float8, NULL::float8
+		       NULL::uuid, NULL::text, NULL::text, `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8
 		FROM places p
-		WHERE p.geometry IS NOT NULL AND `+predicate+`
-		ORDER BY p.canonical_name_ar
-	`, params.Args()...)
+		WHERE p.geometry IS NOT NULL AND `+policy.ReferencePredicate(filters.params, "place", "p.id")+`
+		  AND `+filters.statusPredicate("'documented'")+`
+		  AND `+filters.placePredicate("p.id")+`
+		  AND `+filters.timePredicate("NULL::date", "NULL::date")+`
+		  AND `+filters.viewportPredicate(longitude, latitude)+`
+		ORDER BY p.canonical_name_ar, p.id
+		LIMIT `+limitReference,
+		filters.params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -182,21 +358,15 @@ func (s *Service) placeFeatures(ctx context.Context, policy visibility.Policy) (
 // record about that entity, and an id or a "somebody" marker is a disclosure with
 // the name removed. Dropping it means the public map says nothing at all about a
 // person the policy says is not public, and a privileged actor still sees the row.
-func (s *Service) associationFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
-	params := visibility.NewParams()
-	placePredicate := policy.ReferencePredicate(params, "place", "p.id")
-	familyPredicate := policy.ReferencePredicate(params, "family", "ef.id")
-	tribePredicate := policy.ReferencePredicate(params, "tribe", "et.id")
-	branchPredicate := policy.ReferencePredicate(params, "branch", "eb.id")
-	// The person predicate is asked about the joined person row, so the fallback to
-	// ga.entity_id::text can only be reached for a person the reader may see, and
-	// only for an endpoint that is not a person at all.
-	personPredicate := policy.PersonPredicate(params, "ep.id")
+func (s *Service) associationFeatures(ctx context.Context, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+	limitReference := filters.params.Add(limit)
+	longitude := "ST_X(p.geometry)"
+	latitude := "ST_Y(p.geometry)"
 	rows, err := s.Pool.Query(ctx, `
 		SELECT ga.id, 'association', ga.place_id, p.canonical_name_ar, ga.entity_type, ga.entity_id,
 		       COALESCE(ep.canonical_name_ar, ef.canonical_name_ar, et.canonical_name_ar, ga.entity_id::text),
 		       ga.relation_type, ga.status, ga.certainty, ga.time_from, ga.time_to, ga.source_id, s.title_ar,
-		       se.id, se.evidence_text_ar, se.review_status, ST_X(p.geometry), ST_Y(p.geometry), NULL::float8, NULL::float8, NULL::float8, NULL::float8
+		       se.id, se.evidence_text_ar, se.review_status, `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8
 		FROM geographic_associations ga
 		JOIN places p ON p.id = ga.place_id
 		LEFT JOIN people ep ON ga.entity_type = 'person' AND ep.id = ga.entity_id
@@ -205,14 +375,19 @@ func (s *Service) associationFeatures(ctx context.Context, policy visibility.Pol
 		LEFT JOIN branches eb ON ga.entity_type = 'branch' AND eb.id = ga.entity_id
 		LEFT JOIN sources s ON s.id = ga.source_id
 		LEFT JOIN spatial_evidence se ON se.geographic_association_id = ga.id
-		WHERE p.geometry IS NOT NULL AND `+placePredicate+`
-		  AND (ga.entity_type <> 'person' OR `+personPredicate+`)
-		  AND (ga.entity_type <> 'family' OR `+familyPredicate+`)
-		  AND (ga.entity_type <> 'tribe' OR `+tribePredicate+`)
-		  AND (ga.entity_type <> 'branch' OR `+branchPredicate+`)
+		WHERE p.geometry IS NOT NULL AND `+policy.ReferencePredicate(filters.params, "place", "p.id")+`
+		  AND (ga.entity_type <> 'person' OR `+policy.PersonPredicate(filters.params, "ep.id")+`)
+		  AND (ga.entity_type <> 'family' OR `+policy.ReferencePredicate(filters.params, "family", "ef.id")+`)
+		  AND (ga.entity_type <> 'tribe' OR `+policy.ReferencePredicate(filters.params, "tribe", "et.id")+`)
+		  AND (ga.entity_type <> 'branch' OR `+policy.ReferencePredicate(filters.params, "branch", "eb.id")+`)
 		  AND (s.id IS NULL OR s.visibility = 'public')
-		ORDER BY ga.time_from NULLS LAST, ga.created_at DESC
-	`, params.Args()...)
+		  AND `+filters.statusPredicate("ga.status")+`
+		  AND `+filters.placePredicate("ga.place_id")+`
+		  AND `+filters.timePredicate("ga.time_from", "ga.time_to")+`
+		  AND `+filters.viewportPredicate(longitude, latitude)+`
+		ORDER BY ga.time_from NULLS LAST, ga.created_at DESC, ga.id
+		LIMIT `+limitReference,
+		filters.params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,19 +400,16 @@ func (s *Service) associationFeatures(ctx context.Context, policy visibility.Pol
 // an arrow whose subject the reader may not see is dropped on the same terms as an
 // association. The fallback to m.subject_id::text is therefore only reachable for a
 // visible subject.
-func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Policy) ([]Feature, error) {
-	params := visibility.NewParams()
-	fromPredicate := policy.ReferencePredicate(params, "place", "pf.id")
-	toPredicate := policy.ReferencePredicate(params, "place", "pt.id")
-	subjectPerson := policy.PersonPredicate(params, "ep.id")
-	subjectFamily := policy.ReferencePredicate(params, "family", "ef.id")
-	subjectTribe := policy.ReferencePredicate(params, "tribe", "et.id")
-	subjectBranch := policy.ReferencePredicate(params, "branch", "eb.id")
+func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+	limitReference := filters.params.Add(limit)
+	geometry := "COALESCE(pt.geometry, pf.geometry)"
+	longitude := "ST_X(" + geometry + ")"
+	latitude := "ST_Y(" + geometry + ")"
 	rows, err := s.Pool.Query(ctx, `
 		SELECT m.id, 'migration', COALESCE(m.to_place_id, m.from_place_id), COALESCE(pt.canonical_name_ar, pf.canonical_name_ar),
 		       m.subject_type, m.subject_id, COALESCE(ep.canonical_name_ar, m.subject_id::text), 'migration', m.status, m.certainty,
 		       m.time_from, m.time_to, m.source_id, s.title_ar, se.id, se.evidence_text_ar, se.review_status,
-		       ST_X(COALESCE(pt.geometry, pf.geometry)), ST_Y(COALESCE(pt.geometry, pf.geometry)), ST_X(pf.geometry), ST_Y(pf.geometry), ST_X(pt.geometry), ST_Y(pt.geometry)
+		       `+longitude+`, `+latitude+`, ST_X(pf.geometry), ST_Y(pf.geometry), ST_X(pt.geometry), ST_Y(pt.geometry)
 		FROM migration_events m
 		LEFT JOIN places pf ON pf.id = m.from_place_id
 		LEFT JOIN places pt ON pt.id = m.to_place_id
@@ -248,15 +420,20 @@ func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Polic
 		LEFT JOIN sources s ON s.id = m.source_id
 		LEFT JOIN spatial_evidence se ON se.migration_event_id = m.id
 		WHERE (pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL)
-		  AND (pf.id IS NULL OR `+fromPredicate+`)
-		  AND (pt.id IS NULL OR `+toPredicate+`)
-		  AND (m.subject_type <> 'person' OR `+subjectPerson+`)
-		  AND (m.subject_type <> 'family' OR `+subjectFamily+`)
-		  AND (m.subject_type <> 'tribe' OR `+subjectTribe+`)
-		  AND (m.subject_type <> 'branch' OR `+subjectBranch+`)
+		  AND (pf.id IS NULL OR `+policy.ReferencePredicate(filters.params, "place", "pf.id")+`)
+		  AND (pt.id IS NULL OR `+policy.ReferencePredicate(filters.params, "place", "pt.id")+`)
+		  AND (m.subject_type <> 'person' OR `+policy.PersonPredicate(filters.params, "ep.id")+`)
+		  AND (m.subject_type <> 'family' OR `+policy.ReferencePredicate(filters.params, "family", "ef.id")+`)
+		  AND (m.subject_type <> 'tribe' OR `+policy.ReferencePredicate(filters.params, "tribe", "et.id")+`)
+		  AND (m.subject_type <> 'branch' OR `+policy.ReferencePredicate(filters.params, "branch", "eb.id")+`)
 		  AND (s.id IS NULL OR s.visibility = 'public')
-		ORDER BY m.time_from NULLS LAST, m.created_at DESC
-	`, params.Args()...)
+		  AND `+filters.statusPredicate("m.status")+`
+		  AND `+filters.placePredicate("COALESCE(m.to_place_id, m.from_place_id)")+`
+		  AND `+filters.timePredicate("m.time_from", "m.time_to")+`
+		  AND `+filters.viewportPredicate(longitude, latitude)+`
+		ORDER BY m.time_from NULLS LAST, m.created_at DESC, m.id
+		LIMIT `+limitReference,
+		filters.params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -264,17 +441,34 @@ func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Polic
 	return scanFeatures(rows)
 }
 
-func (s *Service) regionFeatures(ctx context.Context) ([]Feature, error) {
+// regionFeatures lists the historical regions.
+//
+// A region is the one layer the platform drew rather than a source documented, so
+// its drawn status is derived from its certainty: a disputed region is 'disputed'
+// and every other one is 'interpreted'. The status filter compares that derived
+// value, which is what keeps the inferred and the disputed layers addressable
+// instead of collapsing them into the certainty column.
+func (s *Service) regionFeatures(ctx context.Context, policy visibility.Policy, filters mapFilters, limit int) ([]Feature, error) {
+	limitReference := filters.params.Add(limit)
+	centroid := "ST_Centroid(r.geometry)"
+	longitude := "ST_X(" + centroid + ")"
+	latitude := "ST_Y(" + centroid + ")"
+	drawnStatus := "(CASE WHEN r.certainty = 'disputed' THEN 'disputed' ELSE 'interpreted' END)"
 	rows, err := s.Pool.Query(ctx, `
 		SELECT r.id, 'region', NULL::uuid, r.name_ar, NULL::text, NULL::uuid, NULL::text, 'historical_region',
-		       CASE WHEN r.certainty = 'disputed' THEN 'disputed' ELSE 'interpreted' END, r.certainty, r.valid_from, r.valid_to,
+		       `+drawnStatus+`, r.certainty, r.valid_from, r.valid_to,
 		       r.source_id, s.title_ar, NULL::uuid, NULL::text, NULL::text,
-		       ST_X(ST_Centroid(r.geometry)), ST_Y(ST_Centroid(r.geometry)), NULL::float8, NULL::float8, NULL::float8, NULL::float8
+		       `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8
 		FROM historical_regions r
 		LEFT JOIN sources s ON s.id = r.source_id
 		WHERE r.geometry IS NOT NULL AND (s.id IS NULL OR s.visibility = 'public')
-		ORDER BY r.name_ar
-	`)
+		  AND `+filters.statusPredicate(drawnStatus)+`
+		  AND `+filters.placePredicate("NULL::uuid")+`
+		  AND `+filters.timePredicate("r.valid_from", "r.valid_to")+`
+		  AND `+filters.viewportPredicate(longitude, latitude)+`
+		ORDER BY r.name_ar, r.id
+		LIMIT `+limitReference,
+		filters.params.Args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,46 +523,36 @@ func validateInput(input MapInput) (MapInput, error) {
 		}
 		input.PlaceID = strings.TrimSpace(input.PlaceID)
 	}
+	if input.Limit < 0 || input.Limit > MaxMapFeatures {
+		return MapInput{}, ErrValidation
+	}
+	if input.Limit == 0 {
+		input.Limit = MaxMapFeatures
+	}
+	if input.Viewport != nil {
+		if err := validateViewport(*input.Viewport); err != nil {
+			return MapInput{}, err
+		}
+	}
 	input.ActorID = strings.TrimSpace(input.ActorID)
 	return input, nil
 }
 
+// validateViewport refuses a box that cannot describe an area. An inverted or
+// out-of-range box would otherwise be a filter that silently returns nothing, and
+// "nothing" is indistinguishable from "the map is empty because of the policy".
+func validateViewport(viewport Viewport) error {
+	if viewport.MinLongitude < -180 || viewport.MaxLongitude > 180 || viewport.MinLatitude < -90 || viewport.MaxLatitude > 90 {
+		return ErrValidation
+	}
+	if viewport.MinLongitude > viewport.MaxLongitude || viewport.MinLatitude > viewport.MaxLatitude {
+		return ErrValidation
+	}
+	return nil
+}
+
 func validStatus(status string) bool {
 	return status == "" || status == "documented" || status == "interpreted" || status == "platform_inferred" || status == "disputed" || status == "unresolved"
-}
-
-func matches(feature Feature, input MapInput) bool {
-	if input.Status != "" && feature.Status != input.Status {
-		return false
-	}
-	if input.PlaceID != "" && feature.PlaceID != input.PlaceID {
-		return false
-	}
-	if input.FromYear == 0 && input.ToYear == 0 {
-		return true
-	}
-	from, to := yearFromDate(feature.TimeFrom), yearFromDate(feature.TimeTo)
-	if from == 0 && to == 0 {
-		return true
-	}
-	if input.ToYear > 0 && from > input.ToYear {
-		return false
-	}
-	if input.FromYear > 0 && to > 0 && to < input.FromYear {
-		return false
-	}
-	return true
-}
-
-func yearFromDate(value string) int {
-	if len(value) < 4 {
-		return 0
-	}
-	year, err := strconv.Atoi(value[:4])
-	if err != nil {
-		return 0
-	}
-	return year
 }
 
 func textValue(value pgtype.Text) string {

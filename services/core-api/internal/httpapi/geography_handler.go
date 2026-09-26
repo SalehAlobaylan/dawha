@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
@@ -43,24 +44,78 @@ func (h geographyHandler) placeMap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// mapInput reads the map's filters from the query string. An absent parameter means
+// "no filter", which is why the viewport is four parameters rather than one: a
+// half-sent box would be a rectangle whose meaning depends on which half arrived.
 func (h geographyHandler) mapInput(w http.ResponseWriter, r *http.Request) (geography.MapInput, bool) {
 	input := geography.MapInput{ActorID: h.optionalUserID(r), Status: r.URL.Query().Get("status"), PlaceID: r.URL.Query().Get("place_id")}
+	query := r.URL.Query()
 	var err error
-	if value := r.URL.Query().Get("from_year"); value != "" {
+	if value := query.Get("from_year"); value != "" {
 		input.FromYear, err = strconv.Atoi(value)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_year must be a number"})
 			return geography.MapInput{}, false
 		}
 	}
-	if value := r.URL.Query().Get("to_year"); value != "" {
+	if value := query.Get("to_year"); value != "" {
 		input.ToYear, err = strconv.Atoi(value)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to_year must be a number"})
 			return geography.MapInput{}, false
 		}
 	}
+	if value := query.Get("limit"); value != "" {
+		input.Limit, err = strconv.Atoi(value)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a number"})
+			return geography.MapInput{}, false
+		}
+	}
+	viewport, ok := mapViewport(w, query)
+	if !ok {
+		return geography.MapInput{}, false
+	}
+	input.Viewport = viewport
 	return input, true
+}
+
+// mapViewport reads the bounding box. Any one of the four edges is enough to ask
+// for a viewport, and all four are then required: a box missing an edge is refused
+// rather than completed with a guess, because a guessed edge moves the map's horizon.
+func mapViewport(w http.ResponseWriter, query url.Values) (*geography.Viewport, bool) {
+	viewport := &geography.Viewport{}
+	targets := []struct {
+		name  string
+		value *float64
+	}{
+		{"min_longitude", &viewport.MinLongitude},
+		{"min_latitude", &viewport.MinLatitude},
+		{"max_longitude", &viewport.MaxLongitude},
+		{"max_latitude", &viewport.MaxLatitude},
+	}
+	present := 0
+	for _, target := range targets {
+		raw := query.Get(target.name)
+		if raw == "" {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": target.name + " must be a number"})
+			return nil, false
+		}
+		*target.value = parsed
+		present++
+	}
+	if present == 0 {
+		return nil, true
+	}
+	if present != len(targets) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "a viewport needs min_longitude, min_latitude, max_longitude and max_latitude together"})
+		return nil, false
+	}
+	return viewport, true
 }
 
 // optionalUserID resolves the session when there is one. A caller without a session

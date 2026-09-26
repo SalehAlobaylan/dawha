@@ -26,6 +26,7 @@ import (
 type QueryCounter struct {
 	mu    sync.Mutex
 	stmts []string
+	rows  int64
 }
 
 // TraceQueryStart records the statement. The record happens here because the
@@ -38,17 +39,32 @@ func (c *QueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pg
 	return ctx
 }
 
-// TraceQueryEnd satisfies the rest of pgx.QueryTracer. The counter reads nothing
-// from it.
-func (c *QueryCounter) TraceQueryEnd(_ context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
+// TraceQueryEnd records how many rows the statement shipped. A statement count
+// says how many round trips a call cost; this says how much the database built and
+// sent for it, which is the half that a filter moved into the query changes.
+func (c *QueryCounter) TraceQueryEnd(_ context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	if data.Err != nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rows += data.CommandTag.RowsAffected()
 }
 
-// Reset forgets the statements recorded so far, so a test can measure a warm-up
-// or a setup phase separately from the call it is about.
+// Rows is how many rows every statement recorded since the last Reset shipped.
+func (c *QueryCounter) Rows() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rows
+}
+
+// Reset forgets the statements and rows recorded so far, so a test can measure a
+// warm-up or a setup phase separately from the call it is about.
 func (c *QueryCounter) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stmts = nil
+	c.rows = 0
 }
 
 // Count is how many statements have been recorded since the last Reset.
