@@ -9,8 +9,52 @@ import { SectionHeading } from "../components/SectionHeading";
 import { TopBar } from "../components/TopBar";
 import { TreeWorkspace } from "../components/TreeWorkspace";
 
+/**
+ * The landing page.
+ *
+ * Two states, and the difference between them is the whole point of this
+ * component:
+ *
+ *  - `mode: "demo"` - the numbers are synthetic, and a banner says so on screen
+ *    before any of them is read. The data is still rendered, because a demo you
+ *    cannot look at teaches nobody anything; it is labelled, so nobody mistakes it
+ *    for a workspace.
+ *  - a failure - no numbers at all, and a panel that says the dashboard is
+ *    unavailable. NOT the demo. A deployment whose database is down must not show
+ *    a confident invented workspace, and the previous version of this page did
+ *    exactly that, because `useQuery({ data = demoDashboard })` substituted a
+ *    default for an error the user was never told about.
+ */
 export function HomePage() {
-  const { data = demoDashboard } = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
+  const { data, isError, error, isPending } = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
+
+  if (isError) {
+    return (
+      <div className="page-stack">
+        <TopBar
+          eyebrow="الثلاثاء، ١٦ ربيع الآخر ١٤٤٨هـ"
+          title="صباح البحث، نجم"
+          description="من هنا تبدأ مساحة العمل التي تحفظ الأدلة، والخلافات، وما لم يُحسم بعد."
+        />
+        <section className="panel dashboard-unavailable" role="alert">
+          <div className="dashboard-unavailable-mark" aria-hidden="true">؟</div>
+          <h2>لوحة المساحة غير متاحة</h2>
+          <p>
+            لم نتمكن من قراءة بيانات المساحة، ولم نعرض بيانات توضيحية مكانها. رقم لا
+            يأتي من قاعدة البيانات ليس رقماً عن بحثك.
+          </p>
+          <p className="dashboard-unavailable-detail">
+            {error instanceof Error ? error.message : "تعذر الاتصال بالخدمة."}
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  // Pending shows the demo only when there is no data at all yet, and it is
+  // labelled exactly as the demo is everywhere else.
+  const dashboard = data ?? demoDashboard;
+  const isDemo = isPending || dashboard.mode === "demo";
 
   return (
     <div className="page-stack">
@@ -19,6 +63,16 @@ export function HomePage() {
         title="صباح البحث، نجم"
         description="من هنا تبدأ مساحة العمل التي تحفظ الأدلة، والخلافات، وما لم يُحسم بعد."
       />
+
+      {isDemo ? (
+        <section className="demo-banner" role="status" data-testid="demo-banner">
+          <strong>بيانات توضيحية</strong>
+          <span>
+            هذه أرقام من مساحة نموذج، وليست من بحثك. اضبط <code>DEMO_MODE=false</code>{" "}
+            لإخفاءها.
+          </span>
+        </section>
+      ) : null}
 
       <section className="home-hero">
         <div className="hero-copy">
@@ -53,7 +107,7 @@ export function HomePage() {
       </section>
 
       <section className="metrics-grid" aria-label="مؤشرات المساحة">
-        {data.metrics.map((metric, index) => (
+        {dashboard.metrics.map((metric, index) => (
           <article className={`metric-card metric-card-${metric.tone}${index === 0 ? " metric-card-featured" : ""}`} key={metric.label}>
             <div className="metric-card-top"><span>{metric.label}</span><span className="metric-index">٠{index + 1}</span></div>
             <strong>{metric.value}</strong>
@@ -65,14 +119,14 @@ export function HomePage() {
       <section className="home-grid home-grid-primary">
         <div className="panel activity-panel">
           <SectionHeading eyebrow="نبض البحث" title="آخر ما يستحق النظر" description="مواد جديدة، أو قديمة، لكنها تفتح سؤالاً جديداً." action="كل النشاط" />
-          <ActivityFeed activities={data.activity} />
+          <ActivityFeed activities={dashboard.activity} />
         </div>
-        <LayerStack data={data} />
+        <LayerStack data={dashboard} />
       </section>
 
-      <OpenQuestionsPreview data={data} />
+      <OpenQuestionsPreview data={dashboard} />
 
-      <TreeWorkspace data={data} />
+      <TreeWorkspace data={dashboard} />
 
       <MapPreview places={places} />
 

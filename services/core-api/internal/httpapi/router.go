@@ -11,7 +11,6 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/contradiction"
-	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dashboard"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
@@ -51,6 +50,10 @@ type Dependencies struct {
 	// the default everywhere in this repository: `make verify` and `make e2e` must
 	// not be changed by the existence of this field.
 	Metrics *telemetry.Metrics
+	// DemoMode decides whether the static dashboard may be served. The zero value
+	// is OFF, which is the production posture: a deployment that has not been told
+	// to serve synthetic data is not served synthetic data.
+	DemoMode bool
 }
 
 type normalizeNameRequest struct {
@@ -78,7 +81,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	authService := auth.NewService(dependencies.DB)
 	authHandler := auth.Handler{Service: authService, SecureCookies: dependencies.SecureCookies}
 	treeService := trees.NewService(dependencies.DB)
-	treeHandler := treeHandler{Service: treeService, Auth: authService}
+	treeHandler := treeHandler{Service: treeService, Auth: authService, Demo: dependencies.DemoMode}
 	collaborationService := collaboration.NewService(dependencies.DB)
 	collaborationHandler := collaborationHandler{Service: collaborationService, Auth: authService}
 	evidenceService := evidence.NewService(dependencies.DB)
@@ -110,9 +113,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
 	mux.HandleFunc("GET /healthz", healthHandler.Live)
 	mux.HandleFunc("GET /readyz", healthHandler.Ready)
-	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, dashboard.Demo())
-	})
+	// The dashboard is a static payload, and a static payload that looks like real
+	// data is the failure this gate exists to stop. DEMO_MODE off means the route
+	// answers a dependency error instead of a confident number; DEMO_MODE on means
+	// the demo, labelled as demo in the header and in the body. See demo_mode.go.
+	mux.HandleFunc("GET /api/v1/dashboard", dashboardHandler{demo: dependencies.DemoMode}.dashboard)
 	mux.HandleFunc("GET /api/v1/trees", treeHandler.list)
 	mux.HandleFunc("POST /api/v1/trees", treeHandler.create)
 	mux.HandleFunc("GET /api/v1/trees/{treeID}", treeHandler.get)

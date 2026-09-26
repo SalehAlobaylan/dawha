@@ -89,6 +89,12 @@ const services = {
         // platform/ratelimit are what prove the limits work; the CI database job
         // runs the same API with the limits ON.
         RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? "false",
+        // Demo mode ON, explicitly, for the same reason rate limits are off
+        // explicitly: the setting has a default and the default is off, so a
+        // stack that wanted the demo would have to say so. It says so here, and
+        // the API's answer is labelled as demo in the header and the body, so the
+        // browser suite never sees an unlabelled static payload.
+        DEMO_MODE: process.env.DEMO_MODE ?? "true",
       },
     };
   },

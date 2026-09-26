@@ -264,6 +264,12 @@ jobs:
       # budget. The limits are proved by platform/ratelimit and by the database
       # job, which runs the same API with them on.
       RATE_LIMIT_ENABLED: "false"
+      # Demo mode is ON and explicit, matching the local development stack: the
+      # dashboard route answers a dependency error when it is off, and the web
+      # app's landing page is part of what a reader sees. The API labels the
+      # response as demo in a header and in the body, so nothing here can mistake
+      # it for real data.
+      DEMO_MODE: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

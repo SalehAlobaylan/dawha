@@ -2,6 +2,7 @@ import type { DashboardData, PlaceRecord, SourceRecord, TreeNode } from "../type
 
 export const demoDashboard: DashboardData = {
   mode: "demo",
+  demo: true,
   workspaceName: "مساحة نجم",
   metrics: [
     { label: "المصادر المفهرسة", value: "1,248", detail: "+18 هذا الشهر", tone: "source" },

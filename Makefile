@@ -313,6 +313,7 @@ e2e:
 		ANALYSIS_WORKER_POLL_INTERVAL="200ms" \
 		WEB_ORIGIN="http://localhost:$(E2E_PORT)" \
 		RATE_LIMIT_ENABLED="$${RATE_LIMIT_ENABLED:-false}" \
+		DEMO_MODE="$${DEMO_MODE:-true}" \
 		npx playwright test
 
 # e2e-clean removes the synthetic rows a browser run created, through the same

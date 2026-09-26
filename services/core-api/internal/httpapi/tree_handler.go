@@ -13,6 +13,12 @@ import (
 type treeHandler struct {
 	Service *trees.Service
 	Auth    *auth.Service
+	// demo is the DEMO_MODE setting. It decides one thing only: whether the tree
+	// LIST may answer with a synthetic tree when there is no database. Every other
+	// tree route has always been an error when the database is missing, and this
+	// one was the exception - the exception being that a reader saw a published
+	// tree that nobody had published.
+	Demo bool
 }
 
 type publishTreeRequest struct {
@@ -22,16 +28,28 @@ type publishTreeRequest struct {
 func (h treeHandler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.Service.ListAccessibleTrees(r.Context(), h.optionalUserID(r))
 	if err != nil {
-		if err == trees.ErrDatabaseUnavailable {
+		if err == trees.ErrDatabaseUnavailable && h.Demo {
+			// The demo tree, labelled as demo, and only when DEMO_MODE says the
+			// synthetic answer is allowed. The label travels in the body AND in a
+			// header, because a client that renders this list should not be able to
+			// reach the row without having been able to see that it is invented.
+			w.Header().Set("X-Data-Source", "demo")
+			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]any{
 				"mode":  "demo",
+				"demo":  true,
 				"items": []map[string]any{{"id": "tree-demo", "name": "شجرة بيت العنبر", "latestState": "published", "latestVersionNumber": 3}},
 			})
 			return
 		}
+		// Everything else, including a missing database with demo mode off, is the
+		// 503 every other unavailable dependency answers. A list route is where a
+		// reader is most likely to believe what they see, which is exactly why it
+		// is the route that must not improvise.
 		writeTreeError(w, err)
 		return
 	}
+	w.Header().Set("X-Data-Source", "api")
 	writeJSON(w, http.StatusOK, map[string]any{"mode": "api", "items": items})
 }
 

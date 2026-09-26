@@ -1,7 +1,12 @@
 package dashboard
 
 type Dashboard struct {
-	Mode          string      `json:"mode"`
+	Mode string `json:"mode"`
+	// Demo states that what follows is synthetic, in the payload as well as in
+	// the response. A client that renders this without reading `mode` still has
+	// the word "demo" in the data it is holding, which is the difference between
+	// a labelled fixture and an unlabelled one.
+	Demo          bool        `json:"demo"`
 	WorkspaceName string      `json:"workspaceName"`
 	Metrics       []Metric    `json:"metrics"`
 	Activity      []Activity  `json:"activity"`
@@ -54,6 +59,7 @@ type Layer struct {
 func Demo() Dashboard {
 	return Dashboard{
 		Mode:          "demo",
+		Demo:          true,
 		WorkspaceName: "مساحة نجم",
 		Metrics: []Metric{
 			{Label: "المصادر المفهرسة", Value: "1,248", Detail: "+18 هذا الشهر", Tone: "source"},

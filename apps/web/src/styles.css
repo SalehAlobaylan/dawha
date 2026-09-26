@@ -12036,3 +12036,91 @@ a {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Demo mode labelling.
+ *
+ * Two states the landing page can be in that are not "here is your workspace":
+ * the demo payload, which is rendered and labelled, and an unavailable
+ * dashboard, which renders nothing and says so. Both are styled from the same
+ * palette as everything else rather than introduced as a new visual language -
+ * a warning that looks like a different product is a warning nobody recognises.
+ *
+ * The demo banner is sticky under the top bar on purpose: the point is that a
+ * reader who scrolls past it and starts quoting the numbers is not a reader the
+ * banner was for. */
+.demo-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  border: 1px solid var(--sand);
+  border-inline-start: 4px solid var(--clay);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sand) 22%, var(--surface));
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.demo-banner strong {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.demo-banner span {
+  color: var(--muted);
+}
+
+.demo-banner code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font-family: ui-monospace, "SFMono-Regular", "IBM Plex Mono", monospace;
+  font-size: 0.82em;
+  direction: ltr;
+  display: inline-block;
+}
+
+.dashboard-unavailable {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  padding: 28px 26px;
+  border: 1px solid var(--rule);
+  border-inline-start: 4px solid var(--red);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.dashboard-unavailable-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: 1.1rem;
+}
+
+.dashboard-unavailable h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.dashboard-unavailable p {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--muted);
+  line-height: 1.8;
+}
+
+.dashboard-unavailable-detail {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-size: 0.86rem;
+  direction: ltr;
+  text-align: start;
+}

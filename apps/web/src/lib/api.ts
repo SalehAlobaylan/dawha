@@ -182,20 +182,36 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Fetches the dashboard.
+ *
+ * Two rules, and the second one is the reason this function changed:
+ *
+ *  1. With no API configured at all - `npm run dev` in the web workspace on its
+ *     own, or a static preview - the bundled demo IS the answer, and it is
+ *     returned with `mode: "demo"` so the shell can label it.
+ *  2. With an API configured, a failure is a FAILURE. It is thrown, not turned
+ *     into demo data. The API answers this route with a 503 unless DEMO_MODE is
+ *     on, and returning the demo instead would turn a deployment whose dashboard
+ *     is unavailable into a deployment showing confident numbers nobody can tell
+ *     are invented - which is the exact failure this endpoint's gate exists to
+ *     prevent. A caller that wants to show something during an outage shows an
+ *     error state, and the state says the data is missing.
+ */
 export async function fetchDashboard(): Promise<DashboardData> {
   if (!apiBaseUrl) {
     return demoDashboard;
   }
 
-  try {
-    const response = await fetch(`${apiBaseUrl}/api/v1/dashboard`, { signal: AbortSignal.timeout(2500) });
-    if (!response.ok) {
-      throw new Error(`Dashboard request failed with ${response.status}`);
-    }
-    return (await response.json()) as DashboardData;
-  } catch {
-    return { ...demoDashboard, mode: "demo" };
+  const response = await fetch(`${apiBaseUrl}/api/v1/dashboard`, { signal: AbortSignal.timeout(2500) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
   }
+  const payload = (await response.json()) as DashboardData;
+  // Whatever the API says it is, the client believes it. A payload that arrives
+  // without a mode is treated as demo rather than as api, because the safe
+  // misreading of an unlabelled payload is the one that shows the warning.
+  return { ...payload, mode: payload.mode === "api" ? "api" : "demo" };
 }
 
 export async function queryResearch(input: ResearchQueryInput): Promise<ResearchQueryResult> {

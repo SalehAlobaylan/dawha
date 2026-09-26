@@ -28,6 +28,23 @@ COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=dawha_e2e make e2e
 `npx playwright test`. To run the suite without the Makefile, set the variables
 below and build first.
 
+## Demo mode is on here, explicitly
+
+`DEMO_MODE=true` is exported to the stack by `make e2e` and defaulted to `"true"`
+in `e2e/stack.mjs`. The setting decides whether the API may serve a static
+dashboard and a static tree list at all; with it off, both answer a 503 rather
+than a workspace nobody created. The browser suite runs with it on for the same
+reason the local development stack does - the app's landing page is part of what a
+reader sees - and it is set explicitly rather than relied on, because the default
+is off and a suite that quietly depended on it would break the moment anybody
+tightened the default.
+
+Every demo response is labelled three ways - an `X-Data-Source: demo` header, a
+`mode: "demo"` field and a `demo: true` field - and the web app renders a banner
+above the numbers. No journey asserts on the dashboard; journey coverage for demo
+mode is in `services/core-api/internal/httpapi/demo_mode_test.go` and in
+`apps/web/src/lib/api.test.ts`.
+
 ## Rate limits are off here, explicitly
 
 `RATE_LIMIT_ENABLED=false` is exported to the stack by `make e2e` and defaulted to
@@ -50,7 +67,7 @@ runs the same API with the limits on.
 | --- | --- | --- |
 | PostgreSQL | 55432 | migrated and seeded by `make db-migrate db-seed`; postgis, pg_trgm, pgcrypto and vector must be present |
 | `ai-research` | 8182 | `services/ai-research/.venv`; no credentials, the provider is deterministic |
-| `core-api` | 8181 | `DATABASE_URL`, `AI_RESEARCH_URL`, `SOURCE_STORAGE_DIR`, `WEB_ORIGIN`, `CORE_API_PORT`, `RATE_LIMIT_ENABLED` |
+| `core-api` | 8181 | `DATABASE_URL`, `AI_RESEARCH_URL`, `SOURCE_STORAGE_DIR`, `WEB_ORIGIN`, `CORE_API_PORT`, `RATE_LIMIT_ENABLED`, `DEMO_MODE` |
 | source-processing worker | none | the same as `core-api`, plus `SOURCE_WORKER_POLL_INTERVAL`; supervised by the API process and started with it |
 | analysis worker | none | the same as `core-api`, plus `AI_RESEARCH_URL` and `ANALYSIS_WORKER_POLL_INTERVAL`; drains the identity-scan and research-investigation job types, and is supervised by the API process and started with it |
 | web (`vite preview`) | 4173 | `apps/web/dist` built with `VITE_API_URL=http://localhost:8181` |

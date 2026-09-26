@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,6 +78,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("rate limits configured", "configuration", rateLimits.Describe())
+	logger.Info("demo mode configured", "enabled", demoMode())
 
 	port := os.Getenv("CORE_API_PORT")
 	if port == "" {
@@ -94,6 +96,10 @@ func main() {
 			SourceStorage: sourceStore,
 			RateLimits:    rateLimits,
 			Metrics:       metrics,
+			// Off unless DEMO_MODE says otherwise. The local stack and the browser
+			// acceptance stack set it explicitly; a deployment that has not been told
+			// to serve synthetic data is not served synthetic data.
+			DemoMode: demoMode(),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -125,6 +131,18 @@ func environment() string {
 		return "development"
 	}
 	return value
+}
+
+// demoMode reads DEMO_MODE. Off unless it is set to something that reads as true,
+// because the two mistakes available here are not symmetric: a deployment serving
+// synthetic data believing it is real is worse than a deployment refusing a
+// convenience.
+func demoMode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEMO_MODE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // storageDriverName names the adapter for a log line. Storage configuration, not

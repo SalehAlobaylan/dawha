@@ -10,18 +10,43 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
 )
 
-func TestTreeListFallsBackToDemoWithoutDatabase(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/trees", nil)
+// The tree list used to answer 200 with a synthetic published tree whenever the
+// database was missing, which is the same failure as an unlabelled dashboard: a
+// reader sees a published tree that nobody published. It is now behind DEMO_MODE,
+// and with the setting off a missing database is the 503 every other dependency
+// answers. Both branches are asserted, because "it no longer does the bad thing"
+// is only half a test.
+func TestTreeListServesTheDemoTreeOnlyWhenDemoModeIsOn(t *testing.T) {
+	t.Run("demo mode off answers a dependency error", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/trees", nil)
 
-	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+		NewRouter(Dependencies{}).ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
-	}
-	if !strings.Contains(recorder.Body.String(), `"mode":"demo"`) {
-		t.Fatalf("unexpected response: %s", recorder.Body.String())
-	}
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, recorder.Code)
+		}
+		if strings.Contains(recorder.Body.String(), "بيت العنبر") {
+			t.Fatalf("a refused tree list still carried the demo tree: %s", recorder.Body.String())
+		}
+	})
+
+	t.Run("demo mode on answers the demo, labelled", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/trees", nil)
+
+		NewRouter(Dependencies{DemoMode: true}).ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+		}
+		if !strings.Contains(recorder.Body.String(), `"mode":"demo"`) {
+			t.Fatalf("unexpected response: %s", recorder.Body.String())
+		}
+		if got := recorder.Header().Get("X-Data-Source"); got != "demo" {
+			t.Fatalf("X-Data-Source = %q, want demo", got)
+		}
+	})
 }
 
 func TestCreateTreeRequiresAuthentication(t *testing.T) {

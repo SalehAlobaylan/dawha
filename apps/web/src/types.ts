@@ -42,7 +42,12 @@ export interface Layer {
 }
 
 export interface DashboardData {
+  // mode is the label, not a detail. "demo" means every number below is
+  // synthetic and the shell says so on screen; "api" means the API said it was
+  // real. Nothing else in the app is allowed to decide which of the two it is
+  // showing.
   mode: "demo" | "api";
+  demo: boolean;
   workspaceName: string;
   metrics: Metric[];
   activity: Activity[];
