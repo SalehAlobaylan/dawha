@@ -204,10 +204,21 @@ db-verify:
 	cd services/core-api && go run ./tools/dbtestguard -- ./...
 
 # ai-eval prints every configured AI quality group (routing, retrieval,
-# extraction, resolution, contradiction), writes the machine-readable report,
-# and exits 0 when each group's thresholds hold. There is no vector-only
-# baseline in this repository, so the report says so rather than claiming a
-# GraphRAG or embedding improvement.
+# extraction, resolution, contradiction, citations), writes the machine-readable
+# report, and exits 0 when each group's thresholds hold. The thresholds live in
+# services/ai-research/evaluation/thresholds.py under one version, which the
+# report records, so two reports are only comparable when their thresholds are.
+#
+# Two things the report says that this comment repeats on purpose:
+#
+#   * There is no vector-only baseline in this repository, so the report says so
+#     rather than claiming a GraphRAG or embedding improvement. A group that
+#     cannot be measured honestly is reported unavailable, with the reason; it is
+#     never filled with an estimated number.
+#   * "All groups hold their baselines" does NOT mean the provider is good. It
+#     means nothing got worse since the thresholds were set at the measured
+#     values. Four metrics are recorded as KNOWN_DEFECTS and printed next to the
+#     pass, so the sentence cannot be quoted without them.
 #
 #   AI_EVAL_REPORT=/tmp/dawha-eval.json make ai-eval
 #
