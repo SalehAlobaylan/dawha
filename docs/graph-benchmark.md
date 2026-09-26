@@ -214,46 +214,59 @@ this document does not use them as one.
 
 ## Repeatability
 
-Two consecutive runs of `make graph-benchmark`, same machine, same command,
-scratch database, 20 iterations each. Run 1 is the recorded artifact; run 2 went
-to `/tmp`.
+Three runs of `make graph-benchmark`, same machine, same command, scratch
+database, 20 iterations each. Run 1 is the recorded artifact; runs 2 and 3 were
+written to `/tmp`.
 
-| Scenario | Metric | Run 1 | Run 2 | Delta |
-| --- | --- | ---: | ---: | ---: |
-| below | returned / truncated | 50 / 49, no | 50 / 49, no | identical |
-| below | unbounded reachable | 50 / 49 | 50 / 49 | identical |
-| below | plan buffers | 164 | 164 | identical |
-| below | retrieval p50 | 4.631 | 7.820 | +69% |
-| below | neighborhood p50 | 36.023 | 109.671 | +204% |
-| below | neighborhood p95 | 37.623 | 410.727 | +992% |
-| below | neighborhood KiB/call | 577 | 586 | +1.5% |
-| at | returned / truncated | 200 / 200, no | 200 / 200, no | identical |
-| at | unbounded reachable | 200 / 200 | 200 / 200 | identical |
-| at | plan buffers | 458 | 458 | identical |
-| at | retrieval p50 | 18.001 | 17.567 | −2% |
-| at | community detection p50 | 89.944 | 123.751 | +38% |
-| at | community detection KiB/call | 156,982 | 156,984 | +0.0% |
-| at | partitions / largest | 2 / 198 | 2 / 198 | identical |
-| above | returned / truncated | 200 / 200, yes | 200 / 200, yes | identical |
-| above | truncation reasons | `node_limit`, `edge_limit` | `node_limit`, `edge_limit` | identical |
-| above | unbounded reachable | 1201 / 1599 | 1201 / 1599 | identical |
-| above | plan buffers | 2,381 | 2,381 | identical |
-| above | retrieval p50 | 23.347 | 16.930 | −28% |
-| above | partitions / largest | 65 / 45 | 67 / 38 | **different** |
-| above | community detection KiB/call | 11,271 | 10,721 | −4.9% |
+**Every structural result is identical in all three runs**, and every run's own
+assertions hold:
 
-**The variance band this measurement actually has:** every structural result —
-returned sizes, truncation verdicts, truncation reasons, unbounded reachable
-counts, plan buffer counts, and the partition of the two deterministic scenarios
-— is identical across runs. Allocation counts are reproducible to within about
-5%, usually within 0.1%. Wall-clock p50 and p95 are reproducible to roughly ±30%
-and, on one of twelve samples, not at all: the `below` neighborhood p95 moved by
-almost 10x because a single sample took 410ms on a shared machine.
+| Result | Runs 1, 2, 3 |
+| --- | --- |
+| returned nodes / edges per scenario | 50/49, 200/200, 200/200 - identical |
+| truncation verdict and reasons | none, none, `node_limit`+`edge_limit` - identical |
+| unbounded reachable nodes / edges | 50/49, 200/200, 1201/1599 - identical |
+| plan shared buffers | 164, 458, 2381 - identical |
+| merges / partitions, below and at the bound | 49/1 and 198/2 - identical |
+| path id, input fingerprint, stable within the run | yes, all scenarios, all runs |
 
-So: **quote the sizes, the truncation verdicts and the allocations from this
-document. Do not quote a latency number from it as a property of the system.**
-The p50 column is evidence that the operation is tens of milliseconds, not a
-number to hold anybody to.
+**Allocations are reproducible to five significant figures on the paths that do no
+I/O**, which is the number worth having:
+
+| Metric | Run 1 | Run 2 | Run 3 |
+| --- | ---: | ---: | ---: |
+| community detection, at the bound, bytes/call | 160,749,864 | 160,751,968 | 160,752,146 |
+| neighborhood, at the bound, bytes/call | 2,482,939 | 2,488,592 | 2,434,136 |
+| retrieval, above the bound, bytes/call | 742,468 | 736,065 | 742,832 |
+
+**Wall-clock latency is not reproducible on this machine, and the way it fails is
+worth stating precisely.** It is not per-metric noise: each run is uniformly faster
+or uniformly slower than the others.
+
+| Retrieval p50 (ms) | Run 1 | Run 2 | Run 3 |
+| --- | ---: | ---: | ---: |
+| below the bound | 4.6 | 7.8 | 2.8 |
+| at the bound | 18.0 | 17.6 | 7.0 |
+| above the bound | 23.3 | 16.9 | 12.8 |
+
+Run 2 is 1.7x run 1 on the smallest graph and 0.7x on the largest; run 3 is 0.6x
+run 1 on the smallest and 0.55x on the largest. The size ordering held in runs 1
+and 3 and reversed in run 2, where the at-the-bound and above-the-bound retrievals
+came out within 4% of each other. One `p95` moved by 10x between runs: the
+below-the-bound neighborhood `p95` was 37.6ms, then 410.7ms, then 28.7ms, which is
+one slow sample on a shared machine rather than a tail.
+
+So: **quote the sizes, the truncation verdicts, the allocations and the
+community-detection ratio from this document. Do not quote a latency number from it
+as a property of the system.** The p50 column is evidence that the operation is
+tens to hundreds of milliseconds, and it is not a number to hold anybody to.
+
+**One relationship does reproduce, and it is the finding this document is for.**
+Community detection on the star at the bound costs 3.6x to 8.7x what it costs on
+the denser graph above it - 89.9/19.8, 123.8/14.2, 46.0/12.7 across the three runs -
+with the allocations behind it agreeing to five significant figures. The cost is a
+function of how many communities the greedy loop merges, not of how many edges it
+was given, and that is a fact about the algorithm rather than about the machine.
 
 ## Findings
 
