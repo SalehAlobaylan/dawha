@@ -10,8 +10,8 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 002 | Make provenance mutations and suggestion application atomic | P1 | M | 001 | DONE (merged `ff20c2c`) |
 | 003 | Align the V1 source upload and extraction contract | P1 | M | — | DONE (merged `fac52ed`) |
 | 004 | Add real PostgreSQL/V1 acceptance coverage | P1 | L | 001, 002, 003 | DONE (merged `e8fc542`) |
-| 005 | Complete the Phase 2 identity CRUD surface | P1 | L | 001 | TODO |
-| 006 | Add job lease fencing and asynchronous long analyses | P1 | L | 003, 004 | TODO |
+| 005 | Complete the Phase 2 identity CRUD surface | P1 | L | 001 | DONE (merged `04b79aa`) |
+| 006 | Add job lease fencing and asynchronous long analyses | P1 | L | 003, 004 | DONE (merged `a53026a`) |
 | 007 | Batch list hydration and bound map queries | P2 | L | 001, 002 | TODO |
 | 008 | Harden migrations, verification, storage, security, and telemetry | P1 | L | 004 | TODO |
 | 009 | Document current state and benchmark graph limits | P2 | M | 004, 006 | TODO |
@@ -25,8 +25,8 @@ Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 - Non-atomic provenance/audit writes and accepted-suggestion domain application: plan 002 (done). Applying a typed change set requires a global write role (`collaborator`/`researcher`/`moderator`/`admin`), the same set `evidence.AddEvidence` uses; tree-review rights alone still allow reject/convert/accept-without-change-set. The shipped review panel sends no change set, so the UI cannot compose one yet and an acceptance still produces the open-question artifact.
 - Upload formats versus text-only extraction: plan 003 (done). V1 accepts `text/*`, `application/json`, `application/xml` from one shared matrix; anything else is refused with `415` before storage or enqueue, content is sniffed rather than trusted, and a legacy queued binary file fails deterministically. `ARCHITECTURE.md:1127` still lists PDFs among stored object types — plan 009 should reconcile that line.
 - Database integration, browser E2E, and AI quality baselines: plan 004 (done). `make verify` stays the fast gate; `make verify-full` is the acceptance gate and runs the complete Go suite through `tools/dbtestguard`, which refuses to run without `DATABASE_URL` and fails on a database-gated skip. `make e2e` runs 9 of the 10 declared V1 journeys in a browser; the invitation-acceptance journey is a recorded `test.fixme` until plan 010. The Python packaging fix in this plan also un-breaks `make install` and the `ai-research` CI job, which were failing on `main`.
-- Phase 2 identity CRUD gap: plan 005.
-- Job leases, stale recovery, synchronous entity resolution/research agent: plan 006.
+- Phase 2 identity CRUD gap: plan 005 (done). People, person aliases, families, tribes, branches, places and generic entity relationships are writable through permission-checked routes; every mutation authorizes in-transaction and commits with its audit event. A created row is research-only, and `db/migrations/0039_reference_visibility.sql` gives the four reference families the visibility column they lacked (existing rows backfilled public). Merging/resolution, `family_aliases`/`tribe_aliases` writes and any living-person policy remain out of scope.
+- Job leases, stale recovery, synchronous entity resolution/research agent: plan 006 (done). Claims carry a lease token and expiry, `Complete`/`Fail`/`Renew` and every persisting transaction are owner-checked, a 30s heartbeat cancels work that loses its lease, and entity resolution plus the research agent run as queued jobs consumed by `cmd/analysis-worker`. Known follow-ups: `researchagent/stages.go` `search_sources` cannot match a NULL source id, and a step can report one more evidence item than it wrote.
 - N+1 source-review/history/map queries and payload sizes: plan 007.
 - Migration atomicity, `make verify`, S3/signed access, rate/abuse controls, dependency scanning, observability: plan 008.
 - README/status matrix, environment truthfulness, GraphRAG/Neo4j measurement: plan 009.
