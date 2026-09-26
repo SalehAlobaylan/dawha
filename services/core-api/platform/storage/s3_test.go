@@ -330,7 +330,7 @@ func TestConfigFromEnvironmentReadsTheDocumentedNamesOnly(t *testing.T) {
 		"S3_REGION":                "eu-west-1",
 		"S3_ENDPOINT":              "https://objects.example.invalid",
 		"S3_ACCESS_KEY_ID":         "an-id",
-		"S3_SECRET_ACCESS_KEY":     "a-secret",
+		"S3_SECRET_ACCESS_KEY":     "not-a-real-credential",
 		"S3_USE_PATH_STYLE":        "true",
 		"STORAGE_SIGNING_BASE_URL": "https://dawha.example.invalid",
 		"STORAGE_SIGNING_SECRET":   "0123456789abcdef0123456789abcdef",

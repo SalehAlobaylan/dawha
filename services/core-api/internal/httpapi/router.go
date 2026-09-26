@@ -29,6 +29,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/temporalanalysis"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
+	"github.com/SalehAlobaylan/dawha/services/core-api/platform/ratelimit"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,6 +42,11 @@ type Dependencies struct {
 	Jobs          *jobs.Service
 	AI            ai.Provider
 	SourceStorage storage.Store
+	// RateLimits is the abuse-control configuration. The zero value is NOT the
+	// default: NewRouter calls ratelimit.DefaultConfig when it is zero, so a
+	// caller that forgets is protected, and a caller that wants them off says so
+	// through ratelimit.Disabled.
+	RateLimits ratelimit.Config
 }
 
 type normalizeNameRequest struct {
@@ -277,7 +283,29 @@ func NewRouter(dependencies Dependencies) http.Handler {
 		mux.HandleFunc("GET "+storage.ObjectPath+"{key...}", sourceProcessingHandler.serveSignedObject)
 	}
 
-	return withRequestID(withCORS(mux, dependencies.WebOrigin))
+	// The order is deliberate and is the order the properties have:
+	//
+	//   CORS       decides whether this origin may read the response at all, and
+	//              it answers preflights without touching the limiter, so a
+	//              browser's preflight is not charged to the caller's budget.
+	//   rate limit counts the request, and a throttled one never reaches a
+	//              handler, so a flood costs a map insert rather than a database
+	//              query. Inside CORS, so a 429 still carries the CORS headers the
+	//              browser needs to read the error at all.
+	//   request id gives every log line the limiter writes - and any handler that
+	//              runs - the same id.
+	rateLimits := dependencies.RateLimits
+	if len(rateLimits.PerMinute) == 0 {
+		rateLimits = ratelimit.DefaultConfig()
+	}
+	limiter, err := ratelimit.New(rateLimits)
+	if err != nil {
+		// A router that cannot be built is a process that should not be serving:
+		// returning a handler that ignores the error would be a limiter that
+		// admits everything with a log line somebody reads once.
+		panic("httpapi: the rate limit configuration is invalid: " + err.Error())
+	}
+	return withRequestID(ratelimit.Middleware(limiter, withCORS(mux, dependencies.WebOrigin)))
 }
 
 func normalizeName(w http.ResponseWriter, r *http.Request) {

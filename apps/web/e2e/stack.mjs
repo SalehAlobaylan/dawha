@@ -80,6 +80,15 @@ const services = {
         // the API has to be told which origin the browser will use.
         WEB_ORIGIN: process.env.WEB_ORIGIN ?? `http://localhost:${process.env.WEB_E2E_PORT ?? 4173}`,
         APP_ENV: "development",
+        // Abuse controls are OFF for the browser suite, and off EXPLICITLY. The
+        // journeys share one API and one client address, so the auth budget of 30
+        // a minute is spent by the register journey alone. Setting it here rather
+        // than relying on a default means a change that made a journey depend on
+        // being unthrottled shows up in this diff, and it means the E2E stack is
+        // never the reason a rate limit was quietly widened. The unit tests in
+        // platform/ratelimit are what prove the limits work; the CI database job
+        // runs the same API with the limits ON.
+        RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? "false",
       },
     };
   },

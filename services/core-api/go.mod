@@ -1,6 +1,8 @@
 module github.com/SalehAlobaylan/dawha/services/core-api
 
-go 1.24
+go 1.25.0
+
+toolchain go1.25.13
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.1
@@ -8,10 +10,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.7.2
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgvector/pgvector-go v0.3.0
 	golang.org/x/crypto v0.36.0
-	golang.org/x/text v0.23.0
+	golang.org/x/text v0.39.0
 )
 
 require (
@@ -32,5 +34,5 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
 )

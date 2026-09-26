@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25.13"
           cache-dependency-path: go.sum
       - run: go test ./...
       - run: go vet ./...
@@ -54,9 +54,68 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25.13"
       - run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
       - run: make generated-check
+
+  # Dependency advisories and committed secrets. One job, because the four
+  # scanners share one thing: they all need the network, and a gate that needs
+  # the network does not belong in a job that also needs a database.
+  #
+  # The failure policy is in infra/security/scanner-exceptions.md, and every
+  # finding these scanners reported when the gate was added is written down
+  # there with what was done about it. There are no open exceptions.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The history is not scanned on every push: this repository has never
+          # had a credential committed, and a full-history scan on every event
+          # costs more than it finds. gitleaks-action scans the whole history of
+          # the default branch once a week, which is where a historical secret
+          # would show up.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.13"
+          cache-dependency-path: services/core-api/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: npm audit, production dependencies, then every dependency
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+      - name: govulncheck, in reachability mode
+        working-directory: services/core-api
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: pip-audit, from a scanner environment of its own
+        run: |
+          python3 -m venv /tmp/scanner
+          /tmp/scanner/bin/pip install --upgrade pip pip-audit
+          python3 -m venv services/ai-research/.venv
+          services/ai-research/.venv/bin/pip install -e 'services/ai-research[dev]'
+          # --path, not a bare `pip-audit` inside the service venv: the scanner's
+          # own dependencies must never be part of the answer it gives.
+          /tmp/scanner/bin/pip-audit --path services/ai-research/.venv/lib/python*/site-packages
+      - name: gitleaks, with this repository's reviewed allowlist
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          # The same .gitleaks.toml the local target uses, so a finding on a
+          # laptop and a finding in CI are the same finding. `--no-git` scans the
+          # checkout - the pull request - and `--redact` keeps the value out of the
+          # log even if one is found, which is the whole reason the plan forbids
+          # pasting a secret into output.
+          args: detect --no-git --source . --redact --config .gitleaks.toml --exit-code 1
 
   ai-research:
     runs-on: ubuntu-latest
@@ -101,7 +160,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25.13"
           cache-dependency-path: services/core-api/go.sum
       - uses: actions/setup-python@v5
         with:
@@ -199,11 +258,17 @@ jobs:
       # own rather than part of the test command.
       VITE_API_URL: http://localhost:8181
       SOURCE_STORAGE_DIR: /tmp/dawha-e2e-storage
+      # Abuse controls off for the browser suite, stated here as well as in
+      # apps/web/e2e/stack.mjs: the twenty-eight journeys share one API and one
+      # client address, and the register journey alone would spend the sign-in
+      # budget. The limits are proved by platform/ratelimit and by the database
+      # job, which runs the same API with them on.
+      RATE_LIMIT_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25.13"
           cache-dependency-path: services/core-api/go.sum
       - uses: actions/setup-node@v4
         with:

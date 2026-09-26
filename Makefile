@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan ai-eval e2e e2e-clean
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval e2e e2e-clean
 
 install:
 	npm install
@@ -201,6 +201,73 @@ AI_EVAL_REPORT ?= evaluation/report.json
 ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
 
+# Security scanning: dependency advisories and committed secrets.
+#
+# Four scanners, each with a reviewed failure policy:
+#
+#   npm audit        --audit-level=high, so a high or critical advisory fails the
+#                      build and a moderate one is reported in the log without
+#                      failing it. Production dependencies are audited separately
+#                      from development ones, because a dev-only advisory and a
+#                      shipped one are not the same risk.
+#   govulncheck      the Go standard library and every module, in reachability
+#                      mode: a vulnerability in a package this service does not
+#                      call is not a finding, and one it does call is.
+#   pip-audit        every package in the ai-research venv, audited from a
+#                      separate scanner environment so the scanner's own
+#                      dependencies are never part of the answer.
+#   gitleaks         the checkout, with the rules and the single reviewed
+#                      allowlist entry in .gitleaks.toml.
+#
+# It is deliberately NOT part of `verify` or `verify-full`. Those answer "is this
+# tree correct"; this one answers "is this tree's dependency set still current",
+# which needs the network, downloads advisory data and installs tools nothing else
+# needs. Folding it in would make a developer without a network unable to run the
+# acceptance gate at all, which is how a gate gets skipped. It is a CI gate - the
+# `security` job - and this target is the same command, to run on demand.
+#
+#   make security-scan
+#
+# The reviewed exception file, which a reviewer reads before approving a
+# suppression, is infra/security/scanner-exceptions.md.
+GOVULNCHECK_VERSION ?= latest
+
+security-scan: security-scan-npm security-scan-go security-scan-python security-scan-secrets
+
+security-scan-npm:
+	@printf '== npm audit, production dependencies ==\n'
+	@npm audit --omit=dev --audit-level=high
+	@printf '== npm audit, every dependency (fails at high and critical) ==\n'
+	@npm audit --audit-level=high
+
+security-scan-go:
+	@printf '== govulncheck ==\n'
+	@cd services/core-api && \
+		if command -v govulncheck >/dev/null 2>&1; then \
+			govulncheck ./...; \
+		else \
+			printf 'govulncheck is not installed; installing it with `go install golang.org/x/vuln/cmd/govulncheck@%s`\n' "$(GOVULNCHECK_VERSION)" >&2; \
+			GOBIN="$$(go env GOPATH)/bin" go install "golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)" && \
+			"$$(go env GOPATH)/bin/govulncheck" ./...; \
+		fi
+
+security-scan-python:
+	@printf '== pip-audit (the ai-research venv, from a separate scanner environment) ==\n'
+	@scanner=$$(mktemp -d) && \
+		python3 -m venv "$$scanner" && \
+		"$$scanner/bin/pip" -q install --upgrade pip pip-audit && \
+		"$$scanner/bin/pip-audit" --path services/ai-research/.venv/lib/python*/site-packages; \
+		status=$$?; rm -rf "$$scanner"; exit $$status
+
+security-scan-secrets:
+	@printf '== gitleaks ==\n'
+	@if ! command -v gitleaks >/dev/null 2>&1; then \
+		printf '%s\n' 'gitleaks is not installed. Install it with `brew install gitleaks`.' >&2; \
+		exit 2; \
+	fi
+	@gitleaks detect --no-git --source . --redact --config .gitleaks.toml --exit-code 1
+	@printf 'no secrets found in the checkout\n'
+
 # e2e builds the web app against the local API and runs the Playwright suite
 # against the deterministic local stack. See apps/web/e2e/README.md and
 # apps/web/playwright.config.ts for the ports and the environment each service
@@ -210,6 +277,14 @@ ai-eval:
 # analysis worker - because a journey that waits for a run to finish is waiting for
 # something that claims its job. `apps/web/e2e/stack.mjs` owns that list, so the
 # Makefile does not repeat it and the two cannot disagree.
+#
+# RATE_LIMIT_ENABLED=false is exported to the stack explicitly, not relied on as a
+# default. The 28 journeys share one API and one client address, so the auth
+# budget of 30 a minute is spent by the register journey alone; turning the limits
+# off for the browser suite is the documented development override, and writing it
+# down here means a change that made a journey depend on being unthrottled appears
+# in this diff. The limits themselves are proved by services/core-api/platform/
+# ratelimit and by the CI database job, which runs the same API with them on.
 #
 # A run removes its own rows on the way out: the Playwright global teardown
 # executes apps/web/e2e/cleanup.sql, which deletes exactly what the journeys
@@ -237,6 +312,7 @@ e2e:
 		WEB_E2E_PORT="$(E2E_PORT)" \
 		ANALYSIS_WORKER_POLL_INTERVAL="200ms" \
 		WEB_ORIGIN="http://localhost:$(E2E_PORT)" \
+		RATE_LIMIT_ENABLED="$${RATE_LIMIT_ENABLED:-false}" \
 		npx playwright test
 
 # e2e-clean removes the synthetic rows a browser run created, through the same

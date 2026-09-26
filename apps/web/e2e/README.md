@@ -28,13 +28,29 @@ COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=dawha_e2e make e2e
 `npx playwright test`. To run the suite without the Makefile, set the variables
 below and build first.
 
+## Rate limits are off here, explicitly
+
+`RATE_LIMIT_ENABLED=false` is exported to the stack by `make e2e` and defaulted to
+`false` in `e2e/stack.mjs`. The twenty-eight journeys share one API and one client
+address, and the register journey alone would spend the whole sign-in budget of 30
+requests a minute, so the browser suite is not a place where a rate limit can be
+on.
+
+It is set explicitly rather than left to a default for two reasons. A journey that
+quietly came to depend on being unthrottled has to show up in a diff rather than in
+a flaky failure, and the E2E stack must never be the reason a production limit was
+widened. The limits are proved instead by `services/core-api/platform/ratelimit`,
+whose tests assert both that a budget is enforced and that the documented local
+demo workflow fits inside every one of them, and by the CI database job, which
+runs the same API with the limits on.
+
 ## What each service needs
 
 | Service | Port | Environment it requires |
 | --- | --- | --- |
 | PostgreSQL | 55432 | migrated and seeded by `make db-migrate db-seed`; postgis, pg_trgm, pgcrypto and vector must be present |
 | `ai-research` | 8182 | `services/ai-research/.venv`; no credentials, the provider is deterministic |
-| `core-api` | 8181 | `DATABASE_URL`, `AI_RESEARCH_URL`, `SOURCE_STORAGE_DIR`, `WEB_ORIGIN`, `CORE_API_PORT` |
+| `core-api` | 8181 | `DATABASE_URL`, `AI_RESEARCH_URL`, `SOURCE_STORAGE_DIR`, `WEB_ORIGIN`, `CORE_API_PORT`, `RATE_LIMIT_ENABLED` |
 | source-processing worker | none | the same as `core-api`, plus `SOURCE_WORKER_POLL_INTERVAL`; supervised by the API process and started with it |
 | analysis worker | none | the same as `core-api`, plus `AI_RESEARCH_URL` and `ANALYSIS_WORKER_POLL_INTERVAL`; drains the identity-scan and research-investigation job types, and is supervised by the API process and started with it |
 | web (`vite preview`) | 4173 | `apps/web/dist` built with `VITE_API_URL=http://localhost:8181` |
