@@ -255,13 +255,14 @@ type graphCommunityDetectionPhases struct {
 // The two questions are different and the difference is the interesting part.
 // Within one database the neighborhood is fully deterministic: the path id, the
 // input fingerprint, the edge-set fingerprint and the community partition
-// fingerprint are all equal across every repeat. Across two databases holding
-// equivalent graphs, the first three can differ, because source_dependencies.id
-// is a random uuid and the query orders candidate edges by it. The recorded
-// ReseedReproduction is what the run measured, and it is a record rather than an
-// assertion on purpose: a fingerprint that is stable inside a database and not
-// across databases is a property of the schema, and calling it a failure or a
-// success would be inventing a verdict the code does not express.
+// fingerprint are all equal across every repeat. Across a rebuild, the edge-set
+// fingerprint is a property of the graph and reproduces - that is what the run
+// asserts now, through the EdgesSurviveRebuild assertion - with one exception
+// that has nothing to do with the fingerprint: above the edge bound the query
+// keeps GraphMaxEdges of the candidate edges ranked by source_dependencies.id,
+// so two builds retain two different subsets and are not holding the same graph.
+// ReseedReproduction says which of the two happened, per scenario, because the
+// distinction is the finding and a single verdict would hide it.
 type graphBenchmarkStability struct {
 	PathID               string `json:"path_id"`
 	InputFingerprint     string `json:"input_fingerprint"`
@@ -340,6 +341,12 @@ type graphBenchmarkAssertions struct {
 	TruncationReportedAbove bool `json:"truncation_reported_above_the_bound"`
 	NoTruncationAtTheBound  bool `json:"no_truncation_at_the_bound"`
 	StableResults           bool `json:"stable_results"`
+	// EdgesSurviveRebuild says a scenario that was not truncated returned the
+	// same edge-set fingerprint after its rows were deleted and rebuilt. A
+	// fingerprint that only holds inside one database is not a property of the
+	// graph, and the scenarios below the bound are where that can be checked
+	// without the edge bound's own randomness in the way.
+	EdgesSurviveRebuild bool `json:"edge_set_fingerprint_survives_a_rebuild"`
 	// SeededShapeMatchesTraversal says every scenario's seeded arithmetic
 	// agreed with what the unbounded traversal actually reached. It is the check
 	// on the benchmark itself: without it, a table row could describe a graph
@@ -892,7 +899,7 @@ func TestGraphSourceDependencyBenchmark(t *testing.T) {
 		t.Fatalf("read the server version: %v", err)
 	}
 
-	assertions := graphBenchmarkAssertions{BoundedOutput: true, TruncationReportedAbove: true, NoTruncationAtTheBound: true, StableResults: true, SeededShapeMatchesTraversal: true}
+	assertions := graphBenchmarkAssertions{BoundedOutput: true, TruncationReportedAbove: true, NoTruncationAtTheBound: true, StableResults: true, EdgesSurviveRebuild: true, SeededShapeMatchesTraversal: true}
 	for _, shape := range graphBenchmarkShapes() {
 		shape := shape
 		scenario, ok := measureGraphBenchmarkScenario(t, fixture, service, ctx, shape, iterations, &assertions)
@@ -943,6 +950,9 @@ func TestGraphSourceDependencyBenchmark(t *testing.T) {
 	}
 	if !assertions.StableResults {
 		t.Error("the same graph returned a different result on a repeat request")
+	}
+	if !assertions.EdgesSurviveRebuild {
+		t.Error("an untruncated scenario returned a different edge-set fingerprint after its rows were deleted and rebuilt, so the fingerprint is not a property of the graph")
 	}
 	if !assertions.SeededShapeMatchesTraversal {
 		t.Error("a seeded graph did not match the arithmetic that described it, so the numbers above describe a graph that was not built")
@@ -1160,7 +1170,14 @@ func measureGraphBenchmarkScenario(t *testing.T, fixture *testsupport.Fixture, s
 	}
 	scenario.QueryPlan = plan
 	scenario.Unbounded = probeGraphBenchmarkUnbounded(ctx, fixture, shape, root)
-	scenario.Stability.ReseedReproduction = reseedGraphBenchmarkStability(t, fixture, service, ctx, shape, scenario.Stability)
+	reseed, sameEdgesAfterRebuild := reseedGraphBenchmarkStability(t, fixture, service, ctx, shape, scenario.Stability)
+	scenario.Stability.ReseedReproduction = reseed
+	// The rebuild check can only be a verdict where the edge bound did not
+	// choose a different subset of the statements, so the scenarios that
+	// truncated are excluded rather than counted as a pass.
+	if !scenario.Truncated && !sameEdgesAfterRebuild {
+		assertions.EdgesSurviveRebuild = false
+	}
 
 	if !scenario.Unbounded.MatchesExpectation || scenario.Unbounded.Failed != "" || scenario.Unbounded.TimedOut {
 		assertions.SeededShapeMatchesTraversal = false
@@ -1186,12 +1203,21 @@ func measureGraphBenchmarkScenario(t *testing.T, fixture *testsupport.Fixture, s
 // compares the answers, and returns a sentence saying what happened.
 //
 // The point is that the fingerprints are compared across two databases' worth of
-// rows rather than across two reads of one. source_dependencies.id is a random
-// uuid and the neighborhood query orders candidate edges by that id, so the
-// greedy community loop sees its edges in a different order in the rebuilt graph.
-// Whether the partition survives that is a property of the schema and the
-// algorithm, and the run records it instead of deciding it.
-func reseedGraphBenchmarkStability(t *testing.T, fixture *testsupport.Fixture, service *Service, ctx context.Context, shape graphBenchmarkShape, before graphBenchmarkStability) string {
+// rows rather than across two reads of one. The source ids are deterministic
+// (graphBenchmarkSourceID), so both builds hold the same sources and the same
+// dependency statements, while source_dependencies rows get fresh random ids and
+// the query ranks candidate edges by those ids.
+//
+// That makes two different things observable, and the sentence keeps them apart.
+// An untruncated scenario must reproduce its edge-set fingerprint, and
+// TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas is the
+// acceptance-suite version of the same check. A truncated one may not, and the
+// reason is the edge bound rather than the fingerprint: it keeps GraphMaxEdges
+// candidates in random id order, so the two builds retain different statements
+// and are not the same graph. That is a property of which edges the bound keeps,
+// not of how a result is identified, and the report says so instead of letting a
+// reader conclude that the fingerprint still is not stable.
+func reseedGraphBenchmarkStability(t *testing.T, fixture *testsupport.Fixture, service *Service, ctx context.Context, shape graphBenchmarkShape, before graphBenchmarkStability) (string, bool) {
 	t.Helper()
 	dropGraphBenchmarkShape(t, fixture, shape)
 	root := seedGraphBenchmarkShape(t, fixture, shape)
@@ -1203,14 +1229,23 @@ func reseedGraphBenchmarkStability(t *testing.T, fixture *testsupport.Fixture, s
 	if err != nil {
 		t.Fatalf("read the rebuilt neighborhood for the reseed check over %s: %v", shape.Name, err)
 	}
-	outcome := "the rebuilt graph returned the same edge-set fingerprint and the same community partition"
-	if neighborhood.Summary.EdgeSetFingerprint != before.EdgeSetFingerprint {
-		outcome = "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it"
+	sameEdges := neighborhood.Summary.EdgeSetFingerprint == before.EdgeSetFingerprint
+	outcome := "the rebuilt graph returned the same edge-set fingerprint"
+	if sameEdges {
+		outcome += " and the same community partition"
+	} else if neighborhood.Summary.Truncated {
+		outcome = "the rebuilt graph returned a DIFFERENT edge-set fingerprint, and the reason is the edge bound rather than the fingerprint: the query ranks candidate edges by source_dependencies.id, so the bound kept a different subset of them and the two builds are not the same graph"
+	} else {
+		outcome = "the rebuilt graph returned a DIFFERENT edge-set fingerprint with nothing truncated and the same sources and statements in both, so the fingerprint is not a property of the graph"
 	}
 	if after.Summary.PartitionFingerprint != before.PartitionFingerprint {
-		outcome += "; the community partition ALSO differed, so the greedy loop's tie-breaking depends on that random edge order"
+		if sameEdges {
+			outcome += "; the community partition ALSO differed on identical statements, so the greedy loop is not deterministic"
+		} else {
+			outcome += "; the partition differed with them, which follows from the different statements rather than from the loop"
+		}
 	}
-	return outcome
+	return outcome, sameEdges
 }
 
 // graphBenchmarkCommit records the tree the measurement came from, so a number
