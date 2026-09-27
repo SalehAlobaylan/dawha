@@ -425,19 +425,44 @@ migration disagreements.
 
 ### Phase 18: Jev Semantic Control Layer (`:1341-1374`)
 
-**`partial`.**
+**`partial`.** The first criterion is **OPEN** and the rest are met. Read the first
+row's evidence column before quoting any number from this phase: what is measured
+here, what its number means, and what would close it.
 
 | Criterion | Evidence |
 | --- | --- |
-| measurable reduction in expensive model calls | `internal/ai/routing.go`, `synthesis_skipped` in the routing report, `TestFallbackRouteUsesOperationalPaths` |
-| routing quality evaluated against a test set | `evaluation/routing_cases.jsonl`, `route_accuracy` 1.0 and `query_type_accuracy` 0.8667 against reviewed labels |
-| fallback path exists | `app/main.py` `routing_decision(fallback=True)`, `TestFallbackRouteUsesOperationalPaths` |
-| no historical status depends directly on Jev output | true by construction: routing returns `route`/`query_type`/`reason_code` and a `review_required` literal, and the evaluation report now states in the routing group's own notes that these numbers are agreement with reviewed labels and **not** historical accuracy |
+| measurable reduction in expensive model calls | **OPEN, and the instrumentation to measure it now exists.** `internal/ai/cost.go` is the cost model — one *dawha work unit* is one thousand runes of this service's own request payload at unit weight, times a declared operation weight and model weight — and `dawha_ai_cost_units{operation,route,model}` attributes each call's figure to the operation, to the route whose decision it was made under, and to the model that answered. `make cost-report` writes `docs/benchmarks/cost-attribution.json`: a **synthetic** workload over the labelled routing set, which measures the routing logic's cost behaviour and **NOT** a reduction in real spend — the report says so in `what_this_is_not` and in `reduction.is_a_measured_reduction_in_spend: false`, so the number cannot be quoted without the refusal. It is not in money and not over a real question mix. The real-traffic design, with the window, the sample floor, the threshold and the confounds all fixed before the data exists, is `docs/cost-measurement.md`. `TestAttributedCostReconcilesWithTheNumberOfCallsMade` is what stops the figure being decoration: the recorded total **and every per-series value** must equal what the cost model independently predicts, and the calls recorded must equal the calls made. `TestACheapAndADeepRouteAttributeDifferentCostForTheSameQuestion` asserts the cheap route's counterfactual equals the deep route's attribution, which is what makes the counterfactual a number rather than a story |
+| routing quality evaluated against a test set | **33 cases** in `evaluation/routing_cases.jsonl`, every one carrying `case_id`, `origin`, `labelled_by` and `written_to_exercise`; `evaluate_routing.load_cases` **fails the run** on a case missing any of them. `route_accuracy` 0.9697, `query_type_accuracy` 0.9091, `reason_code_accuracy` 0.9697, all against their thresholds. **Every case is hand-written by an author of this repository** and the labels are that author's expectations, so these are agreement with internally authored labels and not accuracy on real questions; the report carries that in a `provenance` sibling of the metrics, and `available_real_query_set: false` says why. Four cases disagree with their own label and are **kept** — rt-010 and rt-012 pre-existing, rt-019 (a question of pure punctuation is routed cheap rather than ignored) and rt-025 (the identity term `لقب` matches inside the word for tribe) added by plan 015, which is why `route_accuracy` fell from 1.0 |
+| fallback path exists | `app/main.py` `routing_decision(fallback=True)`, `internal/ai/routing.go` `FallbackRoute`, and six of the 33 cases (`fallback: true`) now exercise the fallback path rather than the provider. `TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses` compares the two implementations against the same labels: they reach the same route everywhere **except rt-019**, where this package's normalizer reduces punctuation to nothing and ignores the query while the provider keeps it and routes it cheap — so the routing of a junk query currently depends on whether the AI service is up. That is a residual, not a fix |
+| no historical status depends directly on Jev output | true by construction, and asserted from the side this plan added machinery to. Routing returns `route`/`query_type`/`reason_code` and a `review_required` literal, `db/migrations/0018_semantic_control.sql` holds `CHECK` constraints over the three route values and seven reason codes, and `internal/ai` contains no SQL. A route reaches **a metric label and nowhere else**: `ai.WithRoute` puts it on a context whose key is unexported and of its own type, `RouteFromContext` reads it once at the moment of the call, `Metrics.AICost` writes it to one counter, and nothing reads it back. `TestTheGoFallbackStaysOperationalClassification` asserts the decision carries no field meaning anything about the past and always requires review, and `TestTheRouteIsALabelAndNotAPrice` asserts the same request priced under two routes costs the same — a route is never a price multiplier, because a difference there would be a number this repository invented |
 
-**Remaining gap:** "measurable reduction in expensive model calls" is measured as
-`route_accuracy` and `synthesis_skipped` against a fifteen-case fixture set the
-same author wrote. It is not a cost measurement against real traffic, and the
-report says so.
+**What is unmeasured, and why:** the criterion asks for a reduction in expensive
+model calls. This repository has **no production traffic, no configured model
+provider and no invoice**, so no code change here can produce that number. What
+plan 015 removed is the reason there was nothing to look at: `dawha_ai_cost_units`
+existed and was structurally incapable of reporting a cost, because
+`internal/ai/client.go` passed a hard-coded `0`, and no cost model existed to pass
+anything else. The plan's own premise that "the cost model already defines" the
+units was wrong, and introducing the model was part of the work.
+
+**What would close it, and who collects it:** the real-traffic measurement
+designed in `docs/cost-measurement.md` — 28 consecutive days, at least 1,000
+research queries of which at least 200 deep, the deep-path call **rate** at least
+20% below the all-deep counterfactual with a 95% interval excluding zero, read
+from the counters this repository already exports. **Nothing in the repository
+needs to change to produce it.** It is collected by **the operator of a
+deployment**, from the same counters, with the confounds the design names
+(question mix over time, provider price changes, traffic volume, fallback rate, a
+routing change inside the window) held still or the window reported as
+inconclusive. A synthetic figure cannot close this criterion and nothing in this
+repository claims that it does.
+
+**Residual:** the two implementations of the routing decision disagree on rt-019,
+as above; `internal/ai/cost.go`'s `routeWork` map describes
+`internal/research/rag_service.go`'s switch rather than reimplementing it, so
+changing which operations a route calls makes that map wrong until it is changed in
+the same commit; and the operation and model weights are **declared, not measured**,
+because there is no invoice to measure them against.
 
 ### Phase 19: Research Workspace (`:1375-1418`)
 
@@ -731,7 +756,7 @@ Stated explicitly, with the code as the authority.
 | `IMPLEMENTATION_PLAN.md:1144` names a "text/OCR extraction" pipeline stage | There is no OCR, no PDF and no image ingestion. `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json` and `application/xml` and refuses anything else with 415, which is the decision `plans/003-source-format-contract.md:57` required and `ARCHITECTURE.md:1139-1155` already states. Reasoning under **Phase 14** above. |
 | `IMPLEMENTATION_PLAN.md:978` asks for "semantic passage search" | **Corrected by plan 014.** This row used to say "There is no embedding retrieval in the query path", and that was wrong. `internal/research/retrieval.go:70-122` scores passages with pgvector (`1 - (sp.embedding <=> $1::vector)`) and `rag_service.go:77-85` calls the lexical and vector legs and fuses them. What was true is narrower: the seeded corpus carried no embeddings, so the vector leg had nothing to score and every test, demo and benchmark had been running lexical-only. `cmd/embedding-backfill` fills the column through the same `/embed` contract the worker calls, and the semantic search is real - but it is real over hashed vectors, not semantic ones. See `docs/retrieval-measurement.md`. |
 | `IMPLEMENTATION_PLAN.md:1443` requires improvement over vector-only RAG | The vector-only path exists and was measured; the criterion is still open because the provider's embedding is a hash, so the baseline is a permutation. See Blocker 1 and `docs/retrieval-measurement.md`. |
-| `IMPLEMENTATION_PLAN.md:1362` asks for a measurable reduction in expensive model calls | What is measured is route agreement on fifteen self-authored fixtures and a `synthesis_skipped` count. No cost measurement exists. |
+| `IMPLEMENTATION_PLAN.md:1362` asks for a measurable reduction in expensive model calls | **This row was wrong and is corrected by plan 015.** It used to say "What is measured is route agreement on fifteen self-authored fixtures and a `synthesis_skipped` count. No cost measurement exists." The second sentence was true for the wrong reason: `dawha_ai_cost_units` existed but was **structurally incapable of reporting a cost**, because `internal/ai/client.go` passed a hard-coded `0`, and no cost model existed to pass anything else - so the plan's own premise that the cost model "already defines" the units was wrong. There is now a cost model, a counter carrying route and model, and a per-series reconciliation against it. The criterion is still OPEN, and the number this repository can take is a synthetic one that the report refuses to call a saving. See **Phase 18** above and `docs/cost-measurement.md`. |
 | `plans/README.md` describes the disputed-claims defect as the index comparing the normalized term against the raw column | That is correct, and the same file's summary of Phase 2 leaves the impression that name search generally cannot match ة. It always could: the people, families, tribes and branches indexes match. The defect was confined to `disputed-claims`, to claim-name search, and to the two historical-place-name predicates - four sites, all now fixed. Verified above. |
 
 ## Known residuals carried forward
