@@ -88,11 +88,19 @@ checkout starts a second PostgreSQL on port 55432. Both are documented in
 | entity relationships | `internal/identity/relationships.go`, `TestResolvedRelationshipIsNotEditable` |
 | normalized search fields generated | `internal/identity/normalization.go:10`, written on every insert |
 
-**Remaining gap:** one, carried from plan 001. Person alias reads in the research
-workspace are not source-scoped (`internal/research/workspace.go:437`). The second
-gap this section used to list - the disputed-claims index comparing the normalized
-search term against the raw name column, so a name containing ة was unreachable -
-was **Blocker 3** and is closed; see below.
+**Remaining gap:** none. This row was the one plan 001 carried, and it was
+**closed in plan 016**: the research workspace read person aliases with no
+predicate at all, which was the last unscoped read of `person_aliases` in the
+repository. `internal/research/workspace.go` now reads them through the same two
+gates `internal/dictionary` applies - the person policy, so a research-only
+person the actor may not read does not arrive through its other spellings, and
+the alias's own source, with an alias carrying no source staying as the platform
+record it is. `TestTheWorkspaceHidesAnAliasTakenFromAPrivateSource`,
+`TestTheWorkspaceHidesAResearchOnlyPersonsAliases` and
+`TestAResearchRoleKeepsTheViewOfTheAliasesItMayRead`. The second gap this
+section used to list - the disputed-claims index comparing the normalized search
+term against the raw name column, so a name containing ة was unreachable - was
+**Blocker 3** and was closed earlier.
 
 ### Phase 3: Tree Model (`:422-499`)
 
@@ -351,6 +359,7 @@ diagram at `IMPLEMENTATION_PLAN.md:1144` deliberately absent.
 | candidates accepted/rejected | `internal/sourceprocessing/review.go`, `TestUploadProcessAndReviewATextSource` |
 | accepted candidates create reviewed records | `TestCandidateStatusDefaultsToReview`, `TestCandidateReviewGroupingKeepsOrderAndEmptyLists` |
 | rejected candidates auditable | `TestSourceCharacterizationRunAndReview` |
+| file and run lists have a total order | `internal/sourceprocessing/review.go` `files` and `runs`, `ORDER BY created_at DESC, id`, pinned by `TestSourceFileAndRunOrderIsTotalForRowsCreatedInOneTransaction`, `TestTwoIdenticalReviewRequestsReturnTheSameOrder` and `TestPagingTheReviewResponseTwiceSeesEveryCandidateExactlyOnce` |
 
 **The absent stage: `text/OCR extraction` (`IMPLEMENTATION_PLAN.md:1144`).** The
 pipeline diagram names it as the second stage, after `Source upload`. It is not
@@ -373,9 +382,17 @@ traceability, review and audit, and all five are met. The stage that is missing 
 the diagram, not in the criteria, and saying so here is what keeps the row from
 reading as a claim that this version reads scans.
 
-**Remaining gap:** `internal/sourceprocessing/review.go:217` and `:253` order by
-`created_at` with no tiebreak, so two rows created in the same transaction can come
-back in either order. Cosmetic today, unstable tomorrow.
+**The OCR question is not settled by that decision, and it is now written down.**
+`docs/ocr-and-import-decision.md` records the current format contract, separates OCR
+from what a reliable family-tree import needs whatever its input, and leaves the OCR
+decision open rather than carrying it as a permanent asterisk in this row.
+
+**Remaining gap:** none. The one this row used to list - `files` and `runs`
+ordering by `created_at` with no tiebreak, so two rows created in one transaction
+could come back in either order - was **closed in plan 016**. `id` is now the second
+key on both queries, the rule the rest of the repository already uses for the same
+column pair. Which rows are returned is unchanged; the tests above say so
+explicitly so an order fix that quietly filtered one could not pass.
 
 ### Phase 15: Hybrid RAG (`:1194-1240`)
 
@@ -431,9 +448,9 @@ here, what its number means, and what would close it.
 
 | Criterion | Evidence |
 | --- | --- |
-| measurable reduction in expensive model calls | **OPEN, and the instrumentation to measure it now exists.** `internal/ai/cost.go` is the cost model — one *dawha work unit* is one thousand runes of this service's own request payload at unit weight, times a declared operation weight and model weight — and `dawha_ai_cost_units{operation,route,model}` attributes each call's figure to the operation, to the route whose decision it was made under, and to the model that answered. `make cost-report` writes `docs/benchmarks/cost-attribution.json`: a **synthetic** workload over the labelled routing set, which measures the routing logic's cost behaviour and **NOT** a reduction in real spend — the report says so in `what_this_is_not` and in `reduction.is_a_measured_reduction_in_spend: false`, so the number cannot be quoted without the refusal. It is not in money and not over a real question mix. The real-traffic design, with the window, the sample floor, the threshold and the confounds all fixed before the data exists, is `docs/cost-measurement.md`. `TestAttributedCostReconcilesWithTheNumberOfCallsMade` is what stops the figure being decoration: the recorded total **and every per-series value** must equal what the cost model independently predicts, and the calls recorded must equal the calls made. `TestACheapAndADeepRouteAttributeDifferentCostForTheSameQuestion` asserts the cheap route's counterfactual equals the deep route's attribution, which is what makes the counterfactual a number rather than a story |
-| routing quality evaluated against a test set | **33 cases** in `evaluation/routing_cases.jsonl`, every one carrying `case_id`, `origin`, `labelled_by` and `written_to_exercise`; `evaluate_routing.load_cases` **fails the run** on a case missing any of them. `route_accuracy` 0.9697, `query_type_accuracy` 0.9091, `reason_code_accuracy` 0.9697, all against their thresholds. **Every case is hand-written by an author of this repository** and the labels are that author's expectations, so these are agreement with internally authored labels and not accuracy on real questions; the report carries that in a `provenance` sibling of the metrics, and `available_real_query_set: false` says why. Four cases disagree with their own label and are **kept** — rt-010 and rt-012 pre-existing, rt-019 (a question of pure punctuation is routed cheap rather than ignored) and rt-025 (the identity term `لقب` matches inside the word for tribe) added by plan 015, which is why `route_accuracy` fell from 1.0 |
-| fallback path exists | `app/main.py` `routing_decision(fallback=True)`, `internal/ai/routing.go` `FallbackRoute`, and six of the 33 cases (`fallback: true`) now exercise the fallback path rather than the provider. `TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses` compares the two implementations against the same labels: they reach the same route everywhere **except rt-019**, where this package's normalizer reduces punctuation to nothing and ignores the query while the provider keeps it and routes it cheap — so the routing of a junk query currently depends on whether the AI service is up. That is a residual, not a fix |
+| measurable reduction in expensive model calls | **OPEN, and the instrumentation to measure it now exists.** `internal/ai/cost.go` is the cost model — one *dawha work unit* is one thousand runes of this service's own request payload at unit weight, times a declared operation weight and model weight — and `dawha_ai_cost_units{operation,route,model}` attributes each call's figure to the operation, to the route whose decision it was made under, and to the model that answered. `make cost-report` writes `docs/benchmarks/cost-attribution.json`: a **synthetic** workload over the labelled routing set, which measures the routing logic's cost behaviour and **NOT** a reduction in real spend — the report says so in `what_this_is_not` and in `reduction.is_a_measured_reduction_in_spend: false`, so the number cannot be quoted without the refusal. It is not in money and not over a real question mix. The real-traffic design, with the window, the sample floor, the threshold and the confounds all fixed before the data exists, is `docs/cost-measurement.md`. `TestAttributedCostReconcilesWithTheNumberOfCallsMade` is what stops the figure being decoration: the recorded total **and every per-series value** must equal what the cost model independently predicts, and the calls recorded must equal the calls made. `TestACheapAndADeepRouteAttributeDifferentCostForTheSameQuestion` asserts the cheap route's counterfactual equals the deep route's attribution, which is what makes the counterfactual a number rather than a story. `TestTheCostModelPricesTheRoutesTheRagServiceActuallyRuns` is what stops the cost model drifting from the code it describes: it reads the route switch out of `internal/research/rag_service.go`, derives per route which model operations that route calls, and requires `routeWork` and that derivation to agree in both directions |
+| routing quality evaluated against a test set | **33 cases** in `evaluation/routing_cases.jsonl`, every one carrying `case_id`, `origin`, `labelled_by` and `written_to_exercise`; `evaluate_routing.load_cases` **fails the run** on a case missing any of them. `route_accuracy` **1.0**, `query_type_accuracy` 0.9091, `reason_code_accuracy` **1.0**, all against their thresholds, re-measured by plan 016. **Every case is hand-written by an author of this repository** and the labels are that author's expectations, so these are agreement with internally authored labels and not accuracy on real questions; the report carries that in a `provenance` sibling of the metrics, and `available_real_query_set: false` says why. Three cases disagree with their own label and are **kept** — rt-010 and rt-012 pre-existing, and rt-025 (the identity term `لقب` matches inside the word for tribe) added by plan 015, which is why `query_type_accuracy` is 0.9091 rather than 1.0. Those three are a shared weakness of the term tables, which is what sharing one vocabulary means by construction: `route_accuracy` reached 1.0 in plan 016 when rt-019 stopped disagreeing |
+| fallback path exists | `app/main.py` `routing_decision(fallback=True)`, `internal/ai/routing.go` `FallbackRoute`, and six of the 33 cases (`fallback: true`) exercise the fallback path rather than the provider. **The two implementations now agree on every one of the 33 labelled cases, and that is derived rather than declared.** `TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase` runs the provider itself — through `evaluation.provider_routes.py` in the sibling service — and compares the two decisions field by field for every case, so the divergence set is empty by test rather than by a declared list somebody has to read and believe. It used to be a list: rt-019, a question of pure punctuation, was reduced to nothing by this package's normalizer and ignored while the provider kept the punctuation and routed it cheap, so the routing of a junk query depended on whether the AI service was up. `normalized_routing_text` in `app/main.py` now folds punctuation to a separator, the step list `identity.NormalizeArabicName` already specified, and the provider's own half is pinned by `services/ai-research/tests/test_routing_agreement.py`. **Which side is authoritative is stated in three places** so a reader never has to guess where a number came from: the function's docstring, the report's new `authority` block, and the maintenance notes in `docs/cost-measurement.md`. For a route the labelled case is the authority; for the normalization the two share, this repository's `NormalizeArabicName` is the specification; and neither implementation is the authority over the other, because the property that matters is that a question does not change route because of which one answered |
 | no historical status depends directly on Jev output | true by construction, and asserted from the side this plan added machinery to. Routing returns `route`/`query_type`/`reason_code` and a `review_required` literal, `db/migrations/0018_semantic_control.sql` holds `CHECK` constraints over the three route values and seven reason codes, and `internal/ai` contains no SQL. A route reaches **a metric label and nowhere else**: `ai.WithRoute` puts it on a context whose key is unexported and of its own type, `RouteFromContext` reads it once at the moment of the call, `Metrics.AICost` writes it to one counter, and nothing reads it back. `TestTheGoFallbackStaysOperationalClassification` asserts the decision carries no field meaning anything about the past and always requires review, and `TestTheRouteIsALabelAndNotAPrice` asserts the same request priced under two routes costs the same — a route is never a price multiplier, because a difference there would be a number this repository invented |
 
 **What is unmeasured, and why:** the criterion asks for a reduction in expensive
@@ -457,16 +474,16 @@ routing change inside the window) held still or the window reported as
 inconclusive. A synthetic figure cannot close this criterion and nothing in this
 repository claims that it does.
 
-**Residual:** the two implementations of the routing decision disagree on rt-019,
-as above; `internal/ai/cost.go`'s `routeWork` map describes
-`internal/research/rag_service.go`'s switch rather than reimplementing it, so
-changing which operations a route calls makes that map wrong until it is changed in
-the same commit; and the operation and model weights are **declared, not measured**,
-because there is no invoice to measure them against.
+**Residual:** the operation and model weights are **declared, not measured**,
+because there is no invoice to measure them against, and that is a decision about
+a provider rather than a defect. The routing duplication and the `routeWork`
+duplication were both **closed in plan 016**; the authority is stated above and
+the two correspondences are now tests rather than comments.
 
 ### Phase 19: Research Workspace (`:1375-1418`)
 
-**`implemented`**, with one criterion partially met.
+**`implemented`.** Every criterion is met, and the one that was partially met is
+closed.
 
 | Criterion | Evidence |
 | --- | --- |
@@ -474,9 +491,7 @@ because there is no invoice to measure them against.
 | all findings traceable to evidence | `internal/research/workspace.go`, `TestResearchRunMetadataIsResearchOnly` |
 | edits remain permission-controlled | `internal/research/workspace.go` in-transaction authorization; the suggestion half is `internal/suggestions` `canWriteGlobally`, unchanged, and the panel now says so when it answers 403 |
 | research history preserved | `internal/research/history.go`, `TestListRunsOrderIsTheSummaryOrder` |
-
-**Remaining gap:** `internal/research/workspace.go:437` reads person aliases
-without source scoping (carried from plan 001).
+| **the subject's names are scoped like every other read of them** | `internal/research/workspace.go` `workspaceEntityAliases`, through the same `visibility.Policy` helpers `internal/dictionary` uses: the person policy, and the alias's own source with "no source" still a platform record. `TestTheWorkspaceHidesAnAliasTakenFromAPrivateSource`, `TestTheWorkspaceHidesAResearchOnlyPersonsAliases`, `TestAResearchRoleKeepsTheViewOfTheAliasesItMayRead`, and `TestAFamilySubjectsAliasesAreUnscopedByDesign` for the reference families, which carry no source column and are unscoped by design |
 
 ### Phase 20: GraphRAG V1 (`:1419-1463`)
 
@@ -550,13 +565,17 @@ the labelling; the migration hypothesis itself is `platform_inferred`, never
 | counter-evidence included | `internal/researchagent/types.go` `Gap`/`Recommendation`, `TestAnInvestigationResumesFromWhereItStopped` |
 | unresolved state allowed | `GapCount` on the run, `TestResearchAgentRejectsInvalidAndUnauthorizedRuns` |
 | actions bounded by permissions | `TestAnInvestigationStaysReadOnlyWhenItRunsInAWorker`, `TestAWorkerWithoutAClaimCannotWriteTheInvestigation` |
+| **an absent source id is no constraint, and an absent id is still an id** | `internal/researchagent/stages.go` `searchSources` tests the optional source id for being NULL, which is what `nullableUUIDValue` hands it; the question id two clauses below already read it the right way through COALESCE. `TestSearchSourcesReadsAnAbsentSourceIDAsNoSourceConstraint` drives the stage three ways — with the source id, with none, and with some *other* source's id — because the third is what stops the fix from being "drop the filter" |
+| **a step reports the evidence it wrote** | `internal/researchagent/service.go` `persistStage` writes the step, inserts the evidence, and sets `evidence_count` from the inserts that happened, in one transaction. `research_agent_evidence` is UNIQUE on `(run_id, reference_type, reference_id, stance)` **without** `step_id`, so evidence an earlier stage already cited is not written again. `TestAStepReportsOnlyTheEvidenceItWrote` runs a real eleven-stage run against a fixture where `inspect_chronology` and `compare_claims` both read the same disputed claim, and asserts every step's count equals the rows carrying its id, that the counts sum to the table, and that the collision actually happened |
 
-**Remaining gaps, carried from plan 006 and verified here:**
-`internal/researchagent/stages.go:59-70` cannot match a NULL source id - the
-predicate is `($1 = '' OR s.id = $1::uuid)`, so a NULL parameter is neither `''`
-nor equal to a uuid and the stage returns nothing. And a step can report one more
-evidence item than it wrote (`internal/researchagent/service.go:418` writes
-`len(refs)` while the refs are persisted separately).
+**Remaining gaps:** none. The two this row used to list were **closed in plan
+016**: `search_sources` could not match a NULL source id, because a predicate of
+the form "is it the empty string" against a NULL parameter is NULL and never true,
+so a run scoped to a person with no source id found no source statements at all;
+and a step could report one more evidence item than it wrote, because
+`evidence_count` came from `len(refs)` in memory while the rows were inserted
+separately with ON CONFLICT DO NOTHING. Both are in the table above with their
+tests.
 
 ---
 
@@ -764,16 +783,32 @@ Stated explicitly, with the code as the authority.
 These are real, dated, and owned by the plan that found them. They are listed so a
 reader does not have to reconstruct them from six plan files.
 
+A row marked **FIXED in plan N** is kept rather than deleted, and that is the point:
+the entry names the cause, the place and the test that now holds it, so a reader
+who remembers the defect can find what closed it without reading commit history.
+The seven rows plan 016 closed are grouped with the one plan 014 closed. What
+plan 016 deliberately left open is still open, each with the reason it cannot be
+closed by code: `S3Store` has never contacted R2 and MinIO is the local and
+verification backend, so that is a cloud decision; rate limits are per-process and
+per-IP, and a shared limiter is deferred until the maintainer asks for one; and
+the upload quarantine hook has no specified policy to implement. Phases 20 and 18's
+own criteria are separate, and they are measurements this repository cannot take -
+see Blocker 1 and **Phase 18** above.
+
 | Residual | Where |
 | --- | --- |
 | The raw-versus-normalized asymmetry **Blocker 3** was about still exists where the schema has no normalized column to read: `internal/research/retrieval.go:325-336` matches a normalized term against `tree_nodes.display_name_ar`, and the `sources` and `open_questions` indexes in `internal/dictionary/service.go` and `internal/search/service.go` match against `title_ar` and `description_ar`. None of those four tables carries a normalized column, so closing them is a migration with a backfill over every row - a data decision, not a query fix, and the STOP condition plan 013 set for itself. They are not people-name indexes, which is why they were out of Step 1's scope; they are the same shape and they are named here rather than left for a reader to find. |
 | The research result order was not a total order, so equal-scored passages came back in a different order on every request | **FIXED in plan 014.** `internal/research/retrieval.go` built the fused candidate list by walking a `map[string]*Citation`; Go randomises map iteration and both sorts are stable, so every tie inherited the map's order. The order is now rerank score, then combined score, then passage id - the id being the same final tie-break the retrieval SQL already used. Ordering only: no score, weight, threshold, cap or membership changed. Pinned by `TestFusedOrderIsIdenticalAcrossRuns` and `TestFusedOrderBreaksTiesByPassageID`, which fail against the pre-fix code. Found because the retrieval measurement's `per_case` lists reordered between two runs of the same commit; see `docs/retrieval-measurement.md` |
+| `search_sources` cannot match a NULL source id | **FIXED in plan 016.** `internal/researchagent/stages.go` now tests the optional id for being NULL rather than for being the empty string. A run scoped to a person with no `source_id` finds material again. `TestSearchSourcesReadsAnAbsentSourceIDAsNoSourceConstraint` |
+| A per-step evidence count can exceed what was written | **FIXED in plan 016.** `internal/researchagent/service.go` derives the count from the inserts that persisted, inside the same transaction, so a step that only re-cites an earlier stage's evidence reports zero - which is the truth, since the row holding that evidence names the step that wrote it. `TestAStepReportsOnlyTheEvidenceItWrote` |
+| `source_files` / `source_processing_runs` order by `created_at` with no tiebreak | **FIXED in plan 016.** Both queries carry `id` as the second key, the rule the rest of the repository already uses for the same column pair. Which rows come back is unchanged. `TestSourceFileAndRunOrderIsTotalForRowsCreatedInOneTransaction`, `TestTwoIdenticalReviewRequestsReturnTheSameOrder`, `TestPagingTheReviewResponseTwiceSeesEveryCandidateExactlyOnce` |
+| The research workspace read person aliases with no source or person scoping | **FIXED in plan 016**, carried from plan 001 and the last unscoped read of `person_aliases` in the repository. `internal/research/workspace.go` applies the person policy and the alias-source policy through the same `visibility.Policy` helpers `internal/dictionary` uses. `TestTheWorkspaceHidesAnAliasTakenFromAPrivateSource`, `TestTheWorkspaceHidesAResearchOnlyPersonsAliases`, `TestAResearchRoleKeepsTheViewOfTheAliasesItMayRead` |
+| The two implementations of the routing decision disagreed on rt-019, so a junk query's route depended on whether the AI service was up | **FIXED in plan 016.** The provider's routing normalizer now folds punctuation the way `identity.NormalizeArabicName` does, both answer `ignore/general/noise`, and the divergence set over all 33 labelled cases is **derived and empty** rather than declared. `TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase`, `services/ai-research/tests/test_routing_agreement.py`. Which side is authoritative is stated in the function, the report and `docs/cost-measurement.md` |
+| `internal/ai/cost.go`'s `routeWork` described `rag_service.go`'s switch rather than calling it | **FIXED in plan 016.** The two cannot share a source - `internal/research` imports `internal/ai`, and collapsing the switches would mean putting the product's answer strings in the cost model - so the correspondence is a test instead: `TestTheCostModelPricesTheRoutesTheRagServiceActuallyRuns` reads the switch and requires agreement in both directions |
+| `extraction.entity_precision` measured 0.3333 because the extractor proposed whole sentences as names | **FIXED in plan 016.** The proposed span is bounded to the name, and the evaluation scores the exact span rather than containment. Measured **1.0** over the same six fixtures with no threshold moved and no expected entity touched; `KNOWN_DEFECTS` drops from three entries to two. `services/ai-research/tests/test_extraction_spans.py`. A precision of 1.0 on two correct proposals across six internally authored fixtures is agreement with a reviewer's labels, not a claim that the extractor is good, and the group note in `make ai-eval` says so |
 | `S3Store` is contract-tested against a double and has never spoken to a real endpoint | `platform/storage/s3.go`, `platform/storage/s3_test.go`; a deployment must run one live presign before trusting it |
 | Rate limits are in-process and IP-keyed; no cross-replica enforcement | `platform/ratelimit/ratelimit.go`; a multi-replica deployment needs a shared limiter |
 | The upload quarantine hook was deliberately not built | no requirement in this repository specifies the policy |
-| `search_sources` cannot match a NULL source id | `internal/researchagent/stages.go:59-70` |
-| A per-step evidence count can exceed what was written | `internal/researchagent/service.go:418` |
-| `source_files` / `source_processing_runs` order by `created_at` with no tiebreak | `internal/sourceprocessing/review.go:217`, `:253` |
 | Candidate passage text is still inline | plan 007's own note; the panel renders every candidate |
 | The development database accumulates test users from packages that seed the public schema | fixture schemas are isolated and dropped; the packages that predate that harness are not |
 | Community detection allocates 153 MiB per call on a 200-node star | `internal/research/graph_source_dependency_communities.go:216-271`, measured in `docs/graph-benchmark.md` |

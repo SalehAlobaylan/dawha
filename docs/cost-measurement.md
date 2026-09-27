@@ -261,17 +261,38 @@ list — which is outside this plan's scope and outside what this repository may
 
 ## Maintenance notes
 
-- **If `internal/research/rag_service.go` changes which operations a route calls,
-  `routeWork` in `cost.go` is wrong** until it is changed in the same commit. That
-  map is declared data describing the switch in `rag_service.go`, not a
-  reimplementation of it, and it is the one place in this plan where two files have
-  to agree without a compiler making them.
+- **`routeWork` in `cost.go` is checked against the RAG service, not trusted.**
+  It is declared data describing the switch in `internal/research/rag_service.go`
+  rather than a reimplementation of it, and the two cannot share a source:
+  `internal/research` imports `internal/ai`, so the reverse import is a cycle, and
+  collapsing the two switches into one function would mean putting the product's
+  answer strings in the cost model or the cost model's vocabulary in the RAG
+  service. Instead
+  `TestTheCostModelPricesTheRoutesTheRagServiceActuallyRuns` reads that switch out
+  of the RAG service's source, derives per route which model operations it calls,
+  and requires `routeWork` and that derivation to agree **in both directions** — so
+  a new model call on a route, a route that stops synthesising, or an operation
+  the map names that the switch never calls all fail a build. The reason is stated
+  beside the map as well.
 - The routing labels are internally authored. `evaluate_routing.load_cases` refuses
   a case without provenance, and both reports carry the limitation in their own
   output. A number derived from them is agreement with an author's expectations.
-- The Go fallback and the ai-research provider are two implementations of one
-  decision in two languages and nothing compares them at runtime. The Go test reads
-  the same fixture and asserts the divergence list exactly, so a new divergence
-  fails a build rather than reaching a deployment.
+- **Which implementation produced a routing number.** The labelled case is the
+  authority for a route: `expected_route` in `routing_cases.jsonl` says what a
+  question of that shape should do, and both implementations are measured against
+  it. The normalization the two share has its specification in
+  `internal/identity`'s `NormalizeArabicName`, mirrored step for step by the
+  provider's `normalized_routing_text`. Neither implementation is the authority
+  over the other: the provider answers when it is up, `ai.FallbackRoute` answers
+  when it is not, and the property that matters is that a question does not change
+  route because of which one answered.
+  `make cost-report` asks this repository's own `FallbackRoute`; `make ai-eval`
+  measures the provider. The two were separate implementations until plan 016
+  aligned the shared vocabulary, and they are compared field by field over all
+  thirty-three labelled cases by
+  `TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase`, which
+  derives both decisions rather than declaring which cases disagree. The divergence
+  set is now empty, so the number a cost report prices is the number the same
+  question would take with the service up.
 - `make cost-report` is deliberately **not** in `verify` or `verify-full`. A report
   is not a tree property. The assertions behind it are in `verify` on every build.
