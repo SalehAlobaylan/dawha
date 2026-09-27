@@ -24,7 +24,7 @@ reading commit history:
 phases in this repository have code. That is not the interesting claim, and on its
 own it is close to worthless. The interesting claim is whether the phase's own
 acceptance list is satisfied: twenty-one phases are `implemented` on that basis and
-four are `partial`, and every table below says which criterion is missing rather
+two are `partial`, and every table below says which criterion is missing rather
 than leaving the reader to infer it from a status word.
 
 Two more words used below:
@@ -88,11 +88,11 @@ checkout starts a second PostgreSQL on port 55432. Both are documented in
 | entity relationships | `internal/identity/relationships.go`, `TestResolvedRelationshipIsNotEditable` |
 | normalized search fields generated | `internal/identity/normalization.go:10`, written on every insert |
 
-**Remaining gap:** two, both carried from plan 001 and both real. Person alias
-reads in the research workspace are not source-scoped
-(`internal/research/workspace.go:437`). And the dictionary's disputed-claims index
-compares the normalized search term against the raw name column, so a person whose
-name contains ة cannot be found through that index - see **Blocker 3** below.
+**Remaining gap:** one, carried from plan 001. Person alias reads in the research
+workspace are not source-scoped (`internal/research/workspace.go:437`). The second
+gap this section used to list - the disputed-claims index comparing the normalized
+search term against the raw name column, so a name containing ة was unreachable -
+was **Blocker 3** and is closed; see below.
 
 ### Phase 3: Tree Model (`:422-499`)
 
@@ -164,41 +164,51 @@ still lists PDFs among stored object types. That line is now corrected.
 
 ### Phase 8: Public Suggestions (`:787-842`)
 
-**`partial`.** Review works end to end; one acceptance criterion is not reachable
-from the product.
+**`implemented`.** Review works end to end, and the domain change an acceptance
+causes is now expressible in the product rather than only through the API.
 
 | Criterion | Evidence |
 | --- | --- |
 | public user can submit on an allowed node | `internal/suggestions/service.go`, `apps/web/e2e/journeys/06-suggestion.spec.ts` |
 | collaborator sees review queue | `apps/web/src/components/SuggestionPanel.tsx` |
 | collaborator can accept/reject | `TestReviewDecision` |
-| **accepted suggestion can create domain changes** | `internal/suggestions/service.go:844` `applyChangeSet` exists and is tested (`TestChangeSetAcceptsEveryTypedTarget`), but the shipped panel sends no change set, and applying one requires a global write role rather than tree-review rights. `TestPlainCollaboratorKeepsTheReviewSurfaceWithoutAChangeSet` and `TestGlobalWriteRoleStillAppliesAChangeSet` pin both halves. |
+| **accepted suggestion can create domain changes** | `internal/suggestions/service.go` `applyChangeSet`, `apps/web/src/components/SuggestionPanel.tsx` `ChangeSetComposer`, and `apps/web/e2e/journeys/10-change-set.spec.ts`, which accepts a suggestion with a change set, reads the resulting alias back off the person page, and asserts the audit trail and the stored change set. The authorization rule is unchanged and still tested: `TestChangeSetAcceptsEveryTypedTarget`, `TestPlainCollaboratorKeepsTheReviewSurfaceWithoutAChangeSet`, `TestGlobalWriteRoleStillAppliesAChangeSet`. |
 | review decision is auditable | `internal/suggestions`, audit assertions in the same tests |
 
-**Remaining gap:** the domain-change half of this phase is API-only. A user
-accepting a suggestion in the browser gets the review recorded and the
-open-question artifact, not the change they accepted. This is a Phase 8 criterion
-and a Phase 19 criterion ("edits remain permission-controlled") in one gap.
+**Remaining gap:** none, with one rule the product cannot change. Applying a change
+set writes to the shared research tables, so it takes the same global write role the
+evidence service requires rather than tree-review rights. The browser is not told
+who holds that role - `/api/v1/auth/me` reports no roles - so the panel does not
+guess: it sends the change set, explains the 403 the API returns, stops offering the
+button, and leaves accept-without-change-set available. That is the only path a
+reviewer without the role has, and `journeys/10-change-set.spec.ts` asserts it still
+works after the refusal.
 
 ### Phase 9: Dictionary and Indexes (`:843-900`)
 
-**`partial`.**
+**`implemented`.**
 
 | Criterion | Evidence |
 | --- | --- |
 | public dictionary pages work | `internal/dictionary/service.go`, `apps/web/src/components/DictionaryPage.tsx` |
 | indexes filterable | `indexQuery` per kind, `TestIndexQueryIncludesAliasSearch` |
-| entries graph-backed | `internal/dictionary/service.go:425-463` joins people/families/places rather than a parallel editorial table |
+| entries graph-backed | `internal/dictionary/service.go:419-478` joins people/families/places rather than a parallel editorial table |
 | aliases searchable | `TestStringSimilarityNormalizesArabicNames`, `TestPeopleIndexAliasSearchCannotProbeAPrivateAlias` |
-| **every index answers the same query the same way** | **fails for `disputed-claims`** - see **Blocker 3** |
+| every index answers the same query the same way | `internal/httpapi/name_index_agreement_test.go` `TestPeopleFacingIndexesResolveOneTermIdentically` drives the nine people-facing routes over one corpus and requires the same verdict from all of them. The visibility half is `TestDisputedClaimIndexHidesPrivatePersonNames` and `TestDictionaryDisputedClaimIndexIsScoped`. |
 
-**Remaining gap:** Blocker 3. The visibility half is proved
-(`TestDisputedClaimIndexHidesPrivatePersonNames`,
-`TestDictionaryDisputedClaimIndexIsScoped`); the matching half is not.
+**Remaining gap:** none. This row was **Blocker 3** - the `disputed-claims` index
+compared the normalized term against the raw canonical name, so a name containing ة
+answered in five indexes and not in that one - and the same asymmetry was in the
+search claim stage and in both historical-place-name predicates. All four now read
+the normalized column. What caught it was the absence of a cross-index test rather
+than the presence of a bug, so the test that would have caught it now exists and is
+part of `make verify-full`.
 
 ### Phase 10: Historical Mapping (`:901-970`)
 
-**`implemented`.**
+**`implemented`**, on the six acceptance criteria - and one line of
+`IMPLEMENTATION_PLAN.md:947` that is not one of them is answered below rather than
+left unmentioned.
 
 | Criterion | Evidence |
 | --- | --- |
@@ -208,6 +218,84 @@ and a Phase 19 criterion ("edits remain permission-controlled") in one gap.
 | map filters by period | `TestMapFiltersExcludeBeforeTheResponse` |
 | evidence inspectable from map items | `internal/geography`, `TestMapHidesResearchOnlyPersonEndpoints` |
 | status visually distinguishable | `apps/web/src/components/StatusBadge.tsx` |
+
+#### What date display actually is in V1
+
+`IMPLEMENTATION_PLAN.md:947` asks, under "Time filtering", for a "year/range
+filter" and for "Hijri or Gregorian display support where practical". The first is
+implemented; the second is a decision, and it is written down here because the
+status document did not mention it at all.
+
+**What is stored.** Every temporal column in the schema is a PostgreSQL `date`, and
+none of them carries a calendar, an era or a per-record calendar column:
+`people.birth_date_from` / `birth_date_to` / `death_date_from` / `death_date_to`,
+`claims.time_from` / `time_to`, `branches.valid_from` / `valid_to`,
+`historical_place_names.valid_from` / `valid_to`, `geographic_associations.time_from`
+/ `time_to`, `migration_events.time_from` / `time_to`,
+`sources.publication_date_from` / `publication_date_to`. Approximation is carried by
+nullable bounds and by `migration_events.certainty`, which is `('precise',
+'approximate', 'uncertain')` - a column that grades the record's own precision.
+
+**What is rendered.** One vocabulary, produced once in
+`services/core-api/internal/dates` and sent to the client as a rendered string:
+
+| The record holds | It renders as |
+| --- | --- |
+| both bounds | `1120 — 1185`, and `1120 — 1185 (تقديرية)` when `certainty` says so |
+| an open bound | `من 1120` or `حتى 1185` |
+| no bound | `غير محددة` |
+| a period a person wrote down | their own words, verbatim: `قبل ١١٥٠هـ` |
+
+Every surface that shows a period is a reader of that one rule. The tree node years
+(`internal/trees/service.go` `formatYears`) and a map feature
+(`internal/geography/service.go`, which now carries a `period` field) are the same
+function; the place index (`apps/web/src/routes/places.tsx`) renders a recorded
+string through `apps/web/src/lib/periods.ts`, which is a pass-through with a test
+that fails if anyone "helpfully" converts it. Pinned by
+`TestFormatRangeCoversEveryShapeTheSchemaHolds`,
+`TestFormatRangeWithCertaintyNamesOnlyTheEstimates`,
+`TestMapFeatureRendersItsPeriodThroughTheDateContract`, and the three cases in
+`apps/web/src/lib/periods.test.ts`.
+
+**What does not exist.** No calendar conversion, anywhere, in either direction. There
+is no `hijri` handling in `apps/web` or in the API; the `هـ` in the demo period
+strings is a character in a string, not a converted value.
+
+#### The decision: a date-display contract, not a conversion
+
+**Chosen: (a), a documented contract. Not (b), a conversion helper.** The reasoning,
+so a later reader can disagree with it rather than guess at it:
+
+1. **There is nothing to convert from.** A conversion needs a calendar on the value.
+   The schema stores a bare `date` with no calendar column, and a row does not say
+   whether `1120-01-01` is a Hijri year recorded by a manuscript or a proleptic
+   Gregorian year recorded by a modern editor. Converting it picks one silently, in
+   the presentation layer, where no test sees it and no reviewer can refute it. That
+   is the failure mode this product's whole layering exists to prevent, applied to
+   its own output.
+2. **A conversion contradicts this phase's own criterion.** `IMPLEMENTATION_PLAN.md`
+   requires that uncertain history is never rendered as hard fact, and the schema
+   honours that with nullable bounds and a `certainty` column. A converted date is
+   day-precise. Printing one for a record whose `time_to` is NULL asserts a bound the
+   record explicitly declines to fix.
+3. **It is a product decision, not a bug fix.** Which calendar is authoritative,
+   whether a per-record calendar column is added (a migration and a backfill over
+   every temporal column), and what a date of unknown calendar should display as -
+   these are decisions about the record model. Plan 013's STOP conditions name a data
+   migration as a stop, and this is one.
+4. **The precision is not defensible either way.** A tabular Hijri conversion is
+   accurate to about a day and can be off by one; an observation-based one moves with
+   the sighted moon. Neither is "the date" for a tenth-century record whose bound is a
+   decade, so the conversion would be a real number attached to an approximate claim -
+   and the smallest honest alternative is to show the bound the record actually has.
+5. **A conversion would need a dependency.** Plan 013's third STOP condition is a
+   third-party calendar library. The honest version of (b) - hand-rolled arithmetic
+   tables in Go - is a second calendar implementation to keep correct for a display
+   decision that should not be made yet.
+
+What would reopen it: a source record that states its own calendar, a calendar column
+in the schema, and a decision about which is authoritative. Until a record says which
+calendar it is in, the platform has nothing to convert and should say so.
 
 ### Phase 11: Search V1 (`:971-1025`)
 
@@ -253,7 +341,8 @@ fenced, which the plan did not ask for.
 
 ### Phase 14: Source Processing Pipeline (`:1133-1193`)
 
-**`implemented`.**
+**`implemented`** on every acceptance criterion, with one stage of the pipeline
+diagram at `IMPLEMENTATION_PLAN.md:1144` deliberately absent.
 
 | Criterion | Evidence |
 | --- | --- |
@@ -262,6 +351,27 @@ fenced, which the plan did not ask for.
 | candidates accepted/rejected | `internal/sourceprocessing/review.go`, `TestUploadProcessAndReviewATextSource` |
 | accepted candidates create reviewed records | `TestCandidateStatusDefaultsToReview`, `TestCandidateReviewGroupingKeepsOrderAndEmptyLists` |
 | rejected candidates auditable | `TestSourceCharacterizationRunAndReview` |
+
+**The absent stage: `text/OCR extraction` (`IMPLEMENTATION_PLAN.md:1144`).** The
+pipeline diagram names it as the second stage, after `Source upload`. It is not
+implemented and there is no partial version of it: there is no OCR, no PDF and no
+image ingestion anywhere in the repository. An upload is text or one of two
+structured text formats or it is refused with `415` at the HTTP boundary, before
+storage and before a job is enqueued - `internal/sourceprocessing/upload.go:153`
+declares the whole accepted set (`text/*`, `application/json`, `application/xml`),
+and `UnsupportedContentError` names it back to the caller.
+
+**This is the deliberate V1 decision, recorded in `plans/003-source-format-contract.md:57`**,
+which chose text-only V1 over bounded PDF/OCR extraction and required the choice to
+be written into the API error message, the UI copy and the tests - all three of which
+now read the same list from `upload.go`. `ARCHITECTURE.md:1139-1155` states the same
+thing for a reader who starts from the architecture document, and
+`apps/web/e2e/journeys/05-attach-source.spec.ts` proves the refusal in a browser.
+The phase is `implemented` rather than `partial` because none of its five acceptance
+criteria mentions a format: the criteria are about asynchrony, page-level
+traceability, review and audit, and all five are met. The stage that is missing is in
+the diagram, not in the criteria, and saying so here is what keeps the row from
+reading as a claim that this version reads scans.
 
 **Remaining gap:** `internal/sourceprocessing/review.go:217` and `:253` order by
 `created_at` with no tiebreak, so two rows created in the same transaction can come
@@ -337,7 +447,7 @@ report says so.
 | --- | --- |
 | investigate without jumping across screens | `apps/web/src/components/QuestionWorkspace.tsx`, `apps/web/e2e/journeys/09-research-query.spec.ts` |
 | all findings traceable to evidence | `internal/research/workspace.go`, `TestResearchRunMetadataIsResearchOnly` |
-| edits remain permission-controlled | `internal/research/workspace.go` in-transaction authorization; the suggestion half is Phase 8's gap |
+| edits remain permission-controlled | `internal/research/workspace.go` in-transaction authorization; the suggestion half is `internal/suggestions` `canWriteGlobally`, unchanged, and the panel now says so when it answers 403 |
 | research history preserved | `internal/research/history.go`, `TestListRunsOrderIsTheSummaryOrder` |
 
 **Remaining gap:** `internal/research/workspace.go:437` reads person aliases
@@ -436,18 +546,26 @@ Marked against evidence, not against intent. "Proved" means a test in
 | 9 | represent competing claims | proved | `journeys/07-question-dispute.spec.ts`; `TestClaimConflicts` |
 | 10 | create an open research question | proved | `journeys/07-question-dispute.spec.ts`; `TestOpenQuestionCanBeCreatedWorkedAndLeftOpen` |
 | 11 | receive a public Arabic suggestion | proved | `journeys/06-suggestion.spec.ts`; `internal/suggestions` |
-| 12 | review and accept/reject that suggestion | **proved for review; the domain change it is meant to cause is API-only** | `TestReviewDecision`; `TestChangeSetAcceptsEveryTypedTarget`; the shipped panel sends no change set (Phase 8) |
-| 13 | browse family/tribe dictionary pages | **proved except through the disputed-claims index** | `DictionaryPage.tsx`; `TestIndexQueryIncludesAliasSearch`; **Blocker 3** |
-| 14 | search names and sources | proved, with the same exception as 13 | `journeys/08-browse-map.spec.ts`; `TestSearchNameRelevance`; **Blocker 3** |
+| 12 | review and accept/reject that suggestion | proved, and the domain change an acceptance causes is expressible in the browser | `journeys/10-change-set.spec.ts` (accepts with a change set, asserts the record, the audit trail and the stored change set); `TestReviewDecision`; `TestChangeSetAcceptsEveryTypedTarget` |
+| 13 | browse family/tribe dictionary pages | proved | `DictionaryPage.tsx`; `TestIndexQueryIncludesAliasSearch`; `TestEveryNameIndexAnswersForBothSpellingsOfATaMarbutaName`; **Blocker 3**, closed |
+| 14 | search names and sources | proved | `journeys/08-browse-map.spec.ts`; `TestSearchNameRelevance`; `TestClaimStageAnswersForBothSpellingsOfTheSubjectName`; `TestPeopleFacingIndexesResolveOneTermIdentically`; **Blocker 3**, closed |
 | 15 | view historical locations on a map | proved | `journeys/08-browse-map.spec.ts` (4 journeys); `TestMapKeepsEveryPublicAssociation` |
 | 16 | view migration relationships | proved | `journeys/08-browse-map.spec.ts`; `TestBuildMigrationHypothesisAndContradictionAreLabeled` |
-| 17 | ask a source-grounded research question | **partly proved: the answer is grounded in *a* citation, not always in one that supports it** | `journeys/09-research-query.spec.ts`; `citation_precision` 0.8182; **Blocker 2** |
+| 17 | ask a source-grounded research question | proved: a citation that does not support the answer is refused | `journeys/09-research-query.spec.ts`; `citations.unsupported_refusal` 1.0 against a threshold of 1.0, `cit-003` / `cit-007` / `cit-008`; **Blocker 2**, closed in plan 012 |
 | 18 | see the five layers separated | proved | `internal/research/layers.go`; `TestRetrieveClaimsRelevance`, `TestRetrieveTreeInterpretationsRelevance`, `TestFindingDoesNotBecomeInterpretationByIdentity`; `EvidencePanels.tsx` |
 
-**Fourteen of the eighteen are proved outright. Four carry a gap, and those four
-come from three defects** - steps 13 and 14 are the same dictionary-index defect
-seen from two screens, so the number of gaps is larger than the number of things
-that are wrong.
+**All eighteen are proved outright.** That took three plans and four blockers, and
+the record of how is worth keeping: step 17 was proved by plan 012, whose row was
+still carrying the pre-plan-012 wording until this commit, and steps 12, 13 and 14
+were proved by this one - 12 by making the change set expressible in the browser, and
+13 and 14 by fixing the four raw-versus-normalized predicates and adding the
+cross-index test whose absence let the defect through. A status row that is quietly
+out of date is the failure this document exists to prevent, so the correction is in
+the same commit as the code.
+
+What is left is not a gap in the eighteen but a standing limit of the repository:
+nothing here claims multi-hop retrieval improves on vector-only retrieval, because
+there is no second retrieval path to compare against (**Blocker 1**).
 
 ---
 
@@ -497,15 +615,28 @@ layering exists to prevent, and it was reachable from the shipped research path.
 word still is) pin all three directions, and `unsupported_refusal` is one of the
 safety floors in `thresholds.describe()` with its threshold at 1.0.
 
-### Blocker 3 - the disputed-claims dictionary index cannot be searched by a ة name
+### Blocker 3 - a ة name was invisible in four of the people-facing indexes - FIXED in plan 013
 
-`internal/dictionary/service.go:123` normalizes the search term
-(`NormalizeArabicName` maps ة to ه), and the `people`, `families`, `tribes`,
-`branches` and `places` indexes compare it against the normalized column. The
-`disputed-claims` index at `internal/dictionary/service.go:463` compares the same
-normalized term against the **raw** `canonical_name_ar`.
+**Status: closed.** `ListIndex` normalizes the search term
+(`NormalizeArabicName` maps ة to ه) and `validateInput` does the same for search, so
+a term handed to a predicate is always normalized. Four predicates compared that
+normalized term against a **raw** column:
 
-Verified against PostgreSQL with the exact predicates the code runs:
+| Site | Column it read | Now reads |
+| --- | --- | --- |
+| `internal/dictionary/service.go` `disputed-claims` branch | `people.canonical_name_ar` | `people.normalized_name_ar` |
+| `internal/dictionary/service.go` `places` branch | `historical_place_names.name_ar` | `historical_place_names.normalized_name_ar` |
+| `internal/search/service.go` `searchClaims` | `people.canonical_name_ar` | `people.normalized_name_ar` |
+| `internal/search/service.go` `searchNames`, place branch | `historical_place_names.name_ar` | `historical_place_names.normalized_name_ar` |
+
+Every one of them now matches the column that already holds the same normalization.
+Nothing is re-normalized inside a predicate - a `lower(replace(...))` over a stored
+column is the unindexed scan `db/migrations/0042_passage_lexical_trigram_index.sql`
+declined to justify - and no stored
+column was rewritten, so this is a query fix and not a migration.
+
+**What the reproduction looked like before the fix**, against PostgreSQL with the
+exact predicates the code ran:
 
 ```text
 reader types: فاطمة  ->  NormalizeArabicName -> فاطمه
@@ -513,10 +644,27 @@ people index         (normalized term vs normalized column): فاطمة بنت �
 disputed-claims index(normalized term vs raw column):        no match
 ```
 
-**Why it blocks:** V1 steps 13 and 14 are dictionary and search, and a name
-containing ة - which is a large share of Arabic given names - is invisible through
-one of the eight public indexes. The two indexes also disagree with each other for
-the same query, so "searchable" is not a property the index currently has.
+**Why it blocked:** V1 steps 13 and 14 are dictionary and search, and a name
+containing ة - a large share of Arabic given names - was invisible through four of
+the people-facing indexes. The indexes also disagreed with each other for the same
+query, so "searchable" was not a property they had.
+
+**What holds it there now.** Each index answers for both spellings of a name carrying
+ة, and `TestPeopleFacingIndexesResolveOneTermIdentically` in
+`internal/httpapi/name_index_agreement_test.go` drives the nine people-facing routes
+over one corpus and requires the same verdict from every one of them. Against the old
+predicates that single test names the four routes that disagreed:
+
+```text
+with the canonical spelling the people-facing indexes did not agree: [dictionary people=true
+ dictionary families=true dictionary tribes=true dictionary branches=true dictionary places=false
+ dictionary disputed-claims=false search names (person)=true search names (place historical name)=false
+ search claims (subject name)=false]
+```
+
+That cross-index test is the part the defect actually lacked. Every route's own test
+had passed, because the demo corpus is Arabic family names - exactly the shape that
+hides a ة/ه difference.
 
 ---
 
@@ -527,10 +675,12 @@ Stated explicitly, with the code as the authority.
 | Document says | Code says |
 | --- | --- |
 | `ARCHITECTURE.md:1127` lists PDFs among stored object types | `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json`, `application/xml`; a PDF is refused with 415. **Corrected in `ARCHITECTURE.md` by this change.** |
+| `IMPLEMENTATION_PLAN.md:947` asks for "Hijri or Gregorian display support where practical" | There is no calendar conversion in either direction, and the decision is deliberate rather than an omission: every temporal column is a bare `date` with no calendar, so there is nothing to convert FROM, and a converted date would be day-precise where the record is a decade. One date-display contract instead, in `internal/dates`. Reasoning under **Phase 10** above. |
+| `IMPLEMENTATION_PLAN.md:1144` names a "text/OCR extraction" pipeline stage | There is no OCR, no PDF and no image ingestion. `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json` and `application/xml` and refuses anything else with 415, which is the decision `plans/003-source-format-contract.md:57` required and `ARCHITECTURE.md:1139-1155` already states. Reasoning under **Phase 14** above. |
 | `IMPLEMENTATION_PLAN.md:978` asks for "semantic passage search" | `internal/research/retrieval.go` is lexical: trigram index plus token overlap. There is no embedding retrieval in the query path. |
 | `IMPLEMENTATION_PLAN.md:1443` requires improvement over vector-only RAG | No vector-only path exists, so nothing can be compared. See Blocker 1. |
 | `IMPLEMENTATION_PLAN.md:1362` asks for a measurable reduction in expensive model calls | What is measured is route agreement on fifteen self-authored fixtures and a `synthesis_skipped` count. No cost measurement exists. |
-| `plans/README.md` describes the disputed-claims defect as the index comparing the normalized term against the raw column | That is correct, and the same file's summary of Phase 2 leaves the impression that name search generally cannot match ة. It can: the people index matches. The defect is confined to `disputed-claims` and to claim-name search. Verified above. |
+| `plans/README.md` describes the disputed-claims defect as the index comparing the normalized term against the raw column | That is correct, and the same file's summary of Phase 2 leaves the impression that name search generally cannot match ة. It always could: the people, families, tribes and branches indexes match. The defect was confined to `disputed-claims`, to claim-name search, and to the two historical-place-name predicates - four sites, all now fixed. Verified above. |
 
 ## Known residuals carried forward
 
@@ -539,6 +689,7 @@ reader does not have to reconstruct them from six plan files.
 
 | Residual | Where |
 | --- | --- |
+| The raw-versus-normalized asymmetry **Blocker 3** was about still exists where the schema has no normalized column to read: `internal/research/retrieval.go:325-336` matches a normalized term against `tree_nodes.display_name_ar`, and the `sources` and `open_questions` indexes in `internal/dictionary/service.go` and `internal/search/service.go` match against `title_ar` and `description_ar`. None of those four tables carries a normalized column, so closing them is a migration with a backfill over every row - a data decision, not a query fix, and the STOP condition plan 013 set for itself. They are not people-name indexes, which is why they were out of Step 1's scope; they are the same shape and they are named here rather than left for a reader to find. |
 | `S3Store` is contract-tested against a double and has never spoken to a real endpoint | `platform/storage/s3.go`, `platform/storage/s3_test.go`; a deployment must run one live presign before trusting it |
 | Rate limits are in-process and IP-keyed; no cross-replica enforcement | `platform/ratelimit/ratelimit.go`; a multi-replica deployment needs a shared limiter |
 | The upload quarantine hook was deliberately not built | no requirement in this repository specifies the policy |

@@ -1771,6 +1771,14 @@ export interface MapFeature {
   certainty?: string;
   timeFrom?: string;
   timeTo?: string;
+  /**
+   * The range as the API renders it, through the one date contract in
+   * internal/dates: "1120 — 1185 (تقديرية)", "من 1120", "حتى 1185" or "غير محددة".
+   * The client does not build a period string of its own out of timeFrom - that is
+   * how the map, the tree node and the place index came to say three different
+   * things about one row.
+   */
+  period?: string;
   sourceId?: string;
   sourceTitle?: string;
   evidenceId?: string;

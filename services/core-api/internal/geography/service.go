@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dates"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -60,18 +61,23 @@ type Viewport struct {
 }
 
 type Feature struct {
-	ID             string   `json:"id"`
-	Kind           string   `json:"kind"`
-	PlaceID        string   `json:"placeId,omitempty"`
-	PlaceName      string   `json:"placeName,omitempty"`
-	EntityType     string   `json:"entityType,omitempty"`
-	EntityID       string   `json:"entityId,omitempty"`
-	EntityName     string   `json:"entityName,omitempty"`
-	RelationType   string   `json:"relationType,omitempty"`
-	Status         string   `json:"status"`
-	Certainty      string   `json:"certainty,omitempty"`
-	TimeFrom       string   `json:"timeFrom,omitempty"`
-	TimeTo         string   `json:"timeTo,omitempty"`
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	PlaceID      string `json:"placeId,omitempty"`
+	PlaceName    string `json:"placeName,omitempty"`
+	EntityType   string `json:"entityType,omitempty"`
+	EntityID     string `json:"entityId,omitempty"`
+	EntityName   string `json:"entityName,omitempty"`
+	RelationType string `json:"relationType,omitempty"`
+	Status       string `json:"status"`
+	Certainty    string `json:"certainty,omitempty"`
+	TimeFrom     string `json:"timeFrom,omitempty"`
+	TimeTo       string `json:"timeTo,omitempty"`
+	// Period is the range as the product renders it, produced by the same helper the
+	// tree node years use, so a reader who has seen one surface can read the other.
+	// It carries no era and no converted value: the columns hold an ISO date with no
+	// calendar, and dates is where the reasoning is written down.
+	Period         string   `json:"period"`
 	SourceID       string   `json:"sourceId,omitempty"`
 	SourceTitle    string   `json:"sourceTitle,omitempty"`
 	EvidenceID     string   `json:"evidenceId,omitempty"`
@@ -496,6 +502,7 @@ func scanFeatures(rows pgx.Rows) ([]Feature, error) {
 		item.Certainty = textValue(certainty)
 		item.TimeFrom = dateValue(timeFrom)
 		item.TimeTo = dateValue(timeTo)
+		item.Period = dates.FormatRangeWithCertainty(item.TimeFrom, item.TimeTo, item.Certainty)
 		item.SourceID = uuidString(sourceID)
 		item.SourceTitle = textValue(sourceTitle)
 		item.EvidenceID = uuidString(evidenceID)

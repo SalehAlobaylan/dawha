@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft, CalendarDays, ChevronLeft, CircleAlert, Layers3, MapPinned, Plus, Route, Search, SearchX, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
 import { places } from "../data/demo";
+import { formatRecordedPeriod } from "../lib/periods";
 import { MapLibreCanvas } from "../components/MapLibreCanvas";
 import { HistoricalMapPanel } from "../components/HistoricalMapPanel";
 import { StatusBadge } from "../components/StatusBadge";
@@ -42,7 +43,7 @@ export function PlacesPage() {
 
       <section className="places-workspace">
         <aside className="places-sidebar">
-          <div className="eyebrow">الموضع المحدد</div><div className="place-detail-title"><span className="place-large-mark"><MapPinned size={21} /></span><div><h2>{selected.name}</h2><p>{selected.type} · {selected.period}</p></div></div><StatusBadge tone={selected.status === "موثق" ? "source" : selected.status === "متنازع عليه" ? "disputed" : "interpretation"}>{selected.status}</StatusBadge>
+          <div className="eyebrow">الموضع المحدد</div><div className="place-detail-title"><span className="place-large-mark"><MapPinned size={21} /></span><div><h2>{selected.name}</h2><p>{selected.type} · {formatRecordedPeriod(selected.period)}</p></div></div><StatusBadge tone={selected.status === "موثق" ? "source" : selected.status === "متنازع عليه" ? "disputed" : "interpretation"}>{selected.status}</StatusBadge>
           <div className="place-detail-stats"><div><strong>{selected.evidence}</strong><span>إشارات</span></div><div><strong>03</strong><span>أدوار</span></div><div><strong>02</strong><span>أسئلة</span></div></div>
           <div className="place-detail-block"><div className="detail-label">ماذا نعرف؟</div><p>تظهر إشارات لهذا الموضع موزعة على أكثر من مصدر، مع فارق في التسميات والتواريخ.</p></div>
           <div className="place-detail-block"><div className="detail-label">ماذا لا نعرف؟</div><p>لم تُحسم حدود الحضور، ولم تُثبت كل الروايات كاعتماد مستقل.</p></div>
@@ -53,7 +54,7 @@ export function PlacesPage() {
 
       <HistoricalMapPanel />
 
-      <section className="places-index-section"><div className="places-index-head"><div><div className="eyebrow">قائمة المواضع</div><h2>ابنِ زمنك المفتوح</h2><p>اختر موضعاً، أو ابحث عن موضع قديم لا تزال تسميته غير مستقرة.</p></div><label className="library-search"><Search size={15} /><input aria-label="ابحث عن موضع" placeholder="ابحث عن موضع" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div><div className="place-index-grid">{visiblePlaces.map((place) => <button type="button" className="place-index-card" key={place.id} onClick={() => setSelected(place)}><span className={`place-index-icon place-icon-${place.status === "موثق" ? "source" : place.status === "متنازع عليه" ? "disputed" : "interpretation"}`}><MapPinned size={17} /></span><span className="place-index-copy"><strong>{place.name}</strong><small>{place.type} · {place.period}</small></span><span className="place-index-count">{place.evidence} إشارات</span></button>)}</div>{visiblePlaces.length === 0 ? <div className="empty-search"><SearchX size={20} /><strong>لا توجد نتائج مطابقة</strong><span>جرّب اسماً آخر، أو أعد الفتح على كل الفترات.</span></div> : null}</section>
+      <section className="places-index-section"><div className="places-index-head"><div><div className="eyebrow">قائمة المواضع</div><h2>ابنِ زمنك المفتوح</h2><p>اختر موضعاً، أو ابحث عن موضع قديم لا تزال تسميته غير مستقرة.</p></div><label className="library-search"><Search size={15} /><input aria-label="ابحث عن موضع" placeholder="ابحث عن موضع" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div><div className="place-index-grid">{visiblePlaces.map((place) => <button type="button" className="place-index-card" key={place.id} onClick={() => setSelected(place)}><span className={`place-index-icon place-icon-${place.status === "موثق" ? "source" : place.status === "متنازع عليه" ? "disputed" : "interpretation"}`}><MapPinned size={17} /></span><span className="place-index-copy"><strong>{place.name}</strong><small>{place.type} · {formatRecordedPeriod(place.period)}</small></span><span className="place-index-count">{place.evidence} إشارات</span></button>)}</div>{visiblePlaces.length === 0 ? <div className="empty-search"><SearchX size={20} /><strong>لا توجد نتائج مطابقة</strong><span>جرّب اسماً آخر، أو أعد الفتح على كل الفترات.</span></div> : null}</section>
 
       <section className="map-method-note"><Layers3 size={18} /><div><strong>كيف نعرض عدم اليقين؟</strong><span>نستخدم نقاط حضور، مناطق تقريبية، وطبقات منفصلة للحقائق والادعاءات والاستنتاجات.</span></div><Link to="/research">اقرأ منهجية البحث <ArrowLeft size={14} /></Link></section>
     </div>

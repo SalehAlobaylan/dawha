@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dates"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -1291,6 +1292,10 @@ func parseDate(value string) (pgtype.Date, error) {
 	return pgtype.Date{Time: parsed, Valid: true}, nil
 }
 
+// formatYears renders a person's four optional dates as the one period string the
+// product shows. The vocabulary is dates.FormatRange's, so a node in a tree and a
+// feature on the map read the same for the same row; the reduction below is the
+// person-specific part, and it exists because a life has two ranges and one line.
 func formatYears(birthFrom, birthTo, deathFrom, deathTo pgtype.Date) string {
 	start := ""
 	if birthFrom.Valid {
@@ -1306,16 +1311,7 @@ func formatYears(birthFrom, birthTo, deathFrom, deathTo pgtype.Date) string {
 	} else if deathFrom.Valid {
 		end = deathFrom.Time.Format("2006")
 	}
-	if start == "" && end == "" {
-		return "غير محددة"
-	}
-	if start == "" {
-		return "حتى " + end
-	}
-	if end == "" || start == end {
-		return start
-	}
-	return start + " — " + end
+	return dates.FormatRange(start, end)
 }
 
 func uuidString(value pgtype.UUID) string {
