@@ -3,8 +3,10 @@ package research
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
@@ -76,6 +78,80 @@ func TestDetectGraphSourceDependencyCommunitiesKeepsDenseClustersSeparate(t *tes
 			t.Fatalf("unexpected dense cluster size: %+v", community)
 		}
 	}
+}
+
+// TestDetectGraphSourceDependencyCommunitiesPinsTheAnswerOnATiedGraph is the
+// regression test for the partition itself, as opposed to its determinism.
+//
+// The greedy loop is free to represent a community however it likes internally,
+// and the partition it returns is not free at all. A star is the worst case for
+// that freedom: every candidate merge has the same gain, so which pair wins is
+// decided entirely by the tie-break, and a tie-break that moved would silently
+// repartition a perfectly symmetric graph. The expected values below are what
+// this loop returned before its working set changed, asserted field by field, so
+// making the loop cheaper has to be a deliberate edit to this test rather than
+// something that happens to come out the other side.
+//
+// The graph is asymmetric on purpose: one extra parallel statement between leaf-3
+// and leaf-1, which is enough to make {leaf-1, leaf-3} its own community. The
+// partition is therefore not the obvious one, and a loop that drifted towards an
+// obvious answer would be caught rather than agreed with.
+func TestDetectGraphSourceDependencyCommunitiesPinsTheAnswerOnATiedGraph(t *testing.T) {
+	nodes := []GraphNode{{ID: "root", Type: "source"}}
+	edges := []GraphEdge{}
+	for index := 1; index <= 6; index++ {
+		leaf := fmt.Sprintf("leaf-%d", index)
+		nodes = append(nodes, GraphNode{ID: leaf, Type: "source", Depth: 1})
+		edges = append(edges, GraphEdge{ID: fmt.Sprintf("edge-%d", index), Type: "source_dependency", FromNodeID: "root", ToNodeID: leaf, Predicate: "cites", Status: "confirmed"})
+	}
+	edges = append(edges, GraphEdge{ID: "edge-extra", Type: "source_dependency", FromNodeID: "leaf-3", ToNodeID: "leaf-1", Predicate: "likely_paraphrase", Status: "needs_review"})
+	path := GraphPath{Nodes: nodes, Edges: edges}
+
+	analysis, err := detectGraphSourceDependencyCommunities(path, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.PartitionFingerprint != "1dbc8c268c7700fee99203e8f52cbce03c6f391747664d022f672e0ad02aedf2" {
+		t.Fatalf("the tied star now partitions as %s, want 1dbc8c268c7700fee99203e8f52cbce03c6f391747664d022f672e0ad02aedf2 (communities %s)",
+			analysis.PartitionFingerprint, communitySourceIDs(analysis))
+	}
+	if analysis.PartitionCount != 2 || analysis.SubthresholdCommunityCount != 0 || analysis.LargestCommunitySize != 5 {
+		t.Fatalf("unexpected partition shape: %+v", analysis)
+	}
+	want := []GraphSourceDependencyCommunity{
+		{CommunityID: "91940250-323a-54e3-a231-2c711475000f", SourceIDs: []string{"leaf-1", "leaf-3"}, Size: 2, InternalEdgeCount: 1, ExternalEdgeCount: 2, EdgeStatusCounts: []GraphSourceDependencyStatusCount{{Status: "needs_review", Count: 1}}},
+		{CommunityID: "3721ae5a-8e2c-5d6d-be27-56b7228df8f6", SourceIDs: []string{"leaf-2", "leaf-4", "leaf-5", "leaf-6", "root"}, Size: 5, InternalEdgeCount: 4, ExternalEdgeCount: 2, EdgeStatusCounts: []GraphSourceDependencyStatusCount{{Status: "confirmed", Count: 4}}},
+	}
+	if !reflect.DeepEqual(analysis.Communities, want) {
+		t.Fatalf("the tied star now reports different communities.\n got: %+v\nwant: %+v", analysis.Communities, want)
+	}
+
+	// The partition is a property of the graph, not of the order the rows
+	// arrived in. Reversing both lists must not move it, and this is the
+	// property that lets the fingerprint be compared across two databases.
+	reversedNodes := make([]GraphNode, 0, len(nodes))
+	for index := len(nodes) - 1; index >= 0; index-- {
+		reversedNodes = append(reversedNodes, nodes[index])
+	}
+	reversedEdges := make([]GraphEdge, 0, len(edges))
+	for index := len(edges) - 1; index >= 0; index-- {
+		reversedEdges = append(reversedEdges, edges[index])
+	}
+	reversed, err := detectGraphSourceDependencyCommunities(GraphPath{Nodes: reversedNodes, Edges: reversedEdges}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(analysis, reversed) {
+		t.Fatalf("reversing the node and edge order changed the partition.\n  forward:  %+v\n  reversed: %+v", analysis, reversed)
+	}
+}
+
+func communitySourceIDs(analysis graphSourceDependencyCommunityAnalysis) string {
+	parts := make([]string, 0, len(analysis.Communities))
+	for _, community := range analysis.Communities {
+		parts = append(parts, strings.Join(community.SourceIDs, "+"))
+	}
+	return strings.Join(parts, " | ")
 }
 
 func TestNormalizeGraphSourceDependencyCommunitiesInput(t *testing.T) {

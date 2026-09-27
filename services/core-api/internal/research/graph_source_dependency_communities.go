@@ -92,6 +92,30 @@ type graphSourceDependencyUniqueEdge struct {
 	status string
 }
 
+// graphSourceDependencyCommunityGraph is a path reduced to what community
+// detection actually works on: the distinct source ids, the deduplicated
+// dependency statements between them, and each source's degree in that edge set.
+//
+// It is a separate value rather than local variables because the phases of
+// community detection are measured separately. Before this existed, "community
+// detection allocates 153 MiB per call" was a number with no way to attribute it,
+// and the attribution is what turned it into a specific line of code.
+type graphSourceDependencyCommunityGraph struct {
+	nodeIDs     []string
+	nodeSet     map[string]struct{}
+	edgePairs   []graphSourceDependencyCommunityPair
+	uniqueEdges map[string]graphSourceDependencyUniqueEdge
+	degree      map[string]int
+}
+
+// graphSourceDependencyPartition is the greedy loop's answer before anybody
+// describes it: the member groups, in the total order the fingerprint is
+// defined over, and the fingerprint of that order.
+type graphSourceDependencyPartition struct {
+	groups      [][]string
+	fingerprint string
+}
+
 func (s *Service) GraphSourceDependencyCommunities(ctx context.Context, input GraphSourceDependencyCommunitiesInput, actorID string) (GraphSourceDependencyCommunitiesResult, error) {
 	if err := s.ready(); err != nil {
 		return GraphSourceDependencyCommunitiesResult{}, err
@@ -159,15 +183,39 @@ func normalizeGraphSourceDependencyCommunitiesInput(input GraphSourceDependencyC
 	return input, nil
 }
 
+// detectGraphSourceDependencyCommunities is three phases in order, and it is
+// written as three phases so each one can be measured on its own. The recorded
+// benchmark attributes the cost of a call to the input it reads, the greedy
+// merges, and the report it writes, because a single number for a whole
+// algorithm tells a reader that something is expensive and not what.
+//
+// The phases share nothing mutable and each is a pure function of the previous
+// one's output, so the split is a measurement seam rather than a change of
+// behaviour.
 func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int) (graphSourceDependencyCommunityAnalysis, error) {
 	if minCommunitySize < 1 {
 		return graphSourceDependencyCommunityAnalysis{}, ErrValidation
 	}
+	graph, err := graphSourceDependencyCommunityInput(path)
+	if err != nil {
+		return graphSourceDependencyCommunityAnalysis{}, err
+	}
+	return graphSourceDependencyCommunityReport(graph, graphSourceDependencyCommunityPartition(graph), minCommunitySize), nil
+}
+
+// graphSourceDependencyCommunityInput reduces a path to the nodes, the
+// deduplicated dependency statements, and the degrees the gain formula needs.
+//
+// Two records of the same pair of sources are one statement for structure and
+// two for status: parallel statements collapse into the pair, and the pair
+// reports needs_review if any of them does, because a statement a human has yet
+// to accept is not the same finding as one they have.
+func graphSourceDependencyCommunityInput(path GraphPath) (graphSourceDependencyCommunityGraph, error) {
 	nodeIDs := make([]string, 0, len(path.Nodes))
 	nodeSet := make(map[string]struct{}, len(path.Nodes))
 	for _, node := range path.Nodes {
 		if node.ID == "" {
-			return graphSourceDependencyCommunityAnalysis{}, ErrValidation
+			return graphSourceDependencyCommunityGraph{}, ErrValidation
 		}
 		if _, exists := nodeSet[node.ID]; !exists {
 			nodeSet[node.ID] = struct{}{}
@@ -179,10 +227,10 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 	edgePairs := make([]graphSourceDependencyCommunityPair, 0, len(path.Edges))
 	for _, edge := range path.Edges {
 		if _, exists := nodeSet[edge.FromNodeID]; !exists {
-			return graphSourceDependencyCommunityAnalysis{}, ErrValidation
+			return graphSourceDependencyCommunityGraph{}, ErrValidation
 		}
 		if _, exists := nodeSet[edge.ToNodeID]; !exists {
-			return graphSourceDependencyCommunityAnalysis{}, ErrValidation
+			return graphSourceDependencyCommunityGraph{}, ErrValidation
 		}
 		if edge.FromNodeID == edge.ToNodeID {
 			continue
@@ -202,22 +250,37 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 		uniqueEdges[key] = graphSourceDependencyUniqueEdge{pair: pair, status: edge.Status}
 		edgePairs = append(edgePairs, pair)
 	}
-	states := make(map[string]*graphSourceDependencyCommunityState, len(nodeIDs))
-	nodeState := make(map[string]string, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		states[nodeID] = &graphSourceDependencyCommunityState{members: map[string]struct{}{nodeID: {}}}
+	degree := make(map[string]int, len(nodeIDs))
+	for _, edge := range edgePairs {
+		degree[edge.left]++
+		degree[edge.right]++
+	}
+	return graphSourceDependencyCommunityGraph{nodeIDs: nodeIDs, nodeSet: nodeSet, edgePairs: edgePairs, uniqueEdges: uniqueEdges, degree: degree}, nil
+}
+
+// graphSourceDependencyCommunityPartition runs greedy modularity to its end and
+// returns the member groups in the order the partition fingerprint is defined
+// over.
+//
+// The loop is the expensive phase and it is expensive for a structural reason:
+// it rebuilds the whole between-community edge map once per merge, so a graph
+// that merges k times pays k times over the whole edge set. The number of
+// merges is not under the loop's control - it is nodes minus surviving
+// partitions - which is why the cost tracks the shape of the graph rather than
+// its size, and why a 200-node star costs more than a 1,200-node layered graph.
+func graphSourceDependencyCommunityPartition(graph graphSourceDependencyCommunityGraph) graphSourceDependencyPartition {
+	states := make(map[string]*graphSourceDependencyCommunityState, len(graph.nodeIDs))
+	nodeState := make(map[string]string, len(graph.nodeIDs))
+	for _, nodeID := range graph.nodeIDs {
+		states[nodeID] = &graphSourceDependencyCommunityState{members: map[string]struct{}{nodeID: {}}, degree: graph.degree[nodeID]}
 		nodeState[nodeID] = nodeID
 	}
-	for _, edge := range edgePairs {
-		states[edge.left].degree++
-		states[edge.right].degree++
-	}
-	edgeCount := len(edgePairs)
+	edgeCount := len(graph.edgePairs)
 	for {
 		bestGain := math.Inf(-1)
 		bestPair := graphSourceDependencyCommunityPair{}
 		between := make(map[string]int)
-		for _, edge := range edgePairs {
+		for _, edge := range graph.edgePairs {
 			leftState := nodeState[edge.left]
 			rightState := nodeState[edge.right]
 			if leftState == rightState {
@@ -286,7 +349,17 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 		partitionKeyParts = append(partitionKeyParts, strings.Join(members, ","))
 	}
 	partitionSum := sha256.Sum256([]byte(strings.Join(partitionKeyParts, "||")))
-	analysis := graphSourceDependencyCommunityAnalysis{PartitionFingerprint: hex.EncodeToString(partitionSum[:]), PartitionCount: len(memberGroups), Communities: make([]GraphSourceDependencyCommunity, 0)}
+	return graphSourceDependencyPartition{groups: memberGroups, fingerprint: hex.EncodeToString(partitionSum[:])}
+}
+
+// graphSourceDependencyCommunityReport describes each partition: which sources
+// are in it, how many statements are inside it, how many leave it, and how their
+// review statuses fall. A community below the size the caller asked for is
+// counted and not reported, because reporting a two-source "community" as a
+// finding is how a structural summary turns into noise.
+func graphSourceDependencyCommunityReport(graph graphSourceDependencyCommunityGraph, partition graphSourceDependencyPartition, minCommunitySize int) graphSourceDependencyCommunityAnalysis {
+	memberGroups := partition.groups
+	analysis := graphSourceDependencyCommunityAnalysis{PartitionFingerprint: partition.fingerprint, PartitionCount: len(memberGroups), Communities: make([]GraphSourceDependencyCommunity, 0)}
 	for _, members := range memberGroups {
 		if len(members) > analysis.LargestCommunitySize {
 			analysis.LargestCommunitySize = len(members)
@@ -301,7 +374,7 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 		}
 		internalEdges := 0
 		externalEdges := 0
-		for _, edge := range edgePairs {
+		for _, edge := range graph.edgePairs {
 			leftIn := false
 			rightIn := false
 			_, leftIn = memberSet[edge.left]
@@ -318,7 +391,7 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 			}
 		}
 		statusCounts := make(map[string]int)
-		for _, edge := range uniqueEdges {
+		for _, edge := range graph.uniqueEdges {
 			if _, leftIn := memberSet[edge.pair.left]; !leftIn {
 				continue
 			}
@@ -342,7 +415,7 @@ func detectGraphSourceDependencyCommunities(path GraphPath, minCommunitySize int
 	sort.Slice(analysis.Communities, func(left, right int) bool {
 		return strings.Join(analysis.Communities[left].SourceIDs, ",") < strings.Join(analysis.Communities[right].SourceIDs, ",")
 	})
-	return analysis, nil
+	return analysis
 }
 
 func graphSourceDependencyPairKey(pair graphSourceDependencyCommunityPair) string {

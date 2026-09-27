@@ -222,6 +222,33 @@ type graphBenchmarkUnboundedProbe struct {
 	MatchesExpectation bool `json:"matches_expected_shape"`
 }
 
+// graphBenchmarkPhase is one phase's share of a community-detection call.
+//
+// The whole-call number answers "is this expensive"; it cannot answer "why", and
+// a reader who knows only that is left with the two obvious suspects - the edge
+// set and the label propagation - and no way to tell them apart. These are the
+// three phases detectGraphSourceDependencyCommunities is actually written as,
+// measured separately over the same path, so the report can say which one the
+// cost is in.
+type graphBenchmarkPhase struct {
+	BytesPerCall  int64   `json:"bytes_per_call"`
+	AllocsPerCall int64   `json:"allocs_per_call"`
+	MSPerCall     float64 `json:"ms_per_call"`
+}
+
+// graphCommunityDetectionPhases attributes one community-detection call to the
+// input it reads, the greedy merges it performs, and the report it writes.
+//
+// The three sum to the call. The reported total in community_detection is
+// measured separately, without the MemStats stops between phases, so a reader who
+// wants to check the attribution can compare them.
+type graphCommunityDetectionPhases struct {
+	Note   string              `json:"note"`
+	Input  graphBenchmarkPhase `json:"input"`
+	Merges graphBenchmarkPhase `json:"merges"`
+	Report graphBenchmarkPhase `json:"report"`
+}
+
 // graphBenchmarkStability is what repeated requests returned, and whether the
 // same graph rebuilt from scratch returns the same answer.
 //
@@ -247,27 +274,28 @@ type graphBenchmarkStability struct {
 
 // graphBenchmarkScenario is one row of the recorded table.
 type graphBenchmarkScenario struct {
-	Name              string                    `json:"name"`
-	Description       string                    `json:"description"`
-	RootSourceID      string                    `json:"root_source_id"`
-	AvailableNodes    int                       `json:"available_nodes"`
-	AvailableEdges    int                       `json:"available_edges"`
-	ReturnedNodes     int                       `json:"returned_nodes"`
-	ReturnedEdges     int                       `json:"returned_edges"`
-	NodeRetention     float64                   `json:"node_retention"`
-	EdgeRetention     float64                   `json:"edge_retention"`
-	Requests          int                       `json:"requests"`
-	TruncatedRequests int                       `json:"truncated_requests"`
-	TruncationRate    float64                   `json:"truncation_rate"`
-	Truncated         bool                      `json:"truncated"`
-	TruncationReasons []string                  `json:"truncation_reasons"`
-	Status            string                    `json:"status"`
-	Retrieval         graphBenchmarkMeasurement `json:"retrieval"`
-	Neighborhood      graphBenchmarkMeasurement `json:"neighborhood"`
-	CommunityDetect   graphBenchmarkMeasurement `json:"community_detection"`
-	Communities       graphBenchmarkMeasurement `json:"communities"`
-	PartitionCount    int                       `json:"partition_count"`
-	LargestCommunity  int                       `json:"largest_community"`
+	Name              string                        `json:"name"`
+	Description       string                        `json:"description"`
+	RootSourceID      string                        `json:"root_source_id"`
+	AvailableNodes    int                           `json:"available_nodes"`
+	AvailableEdges    int                           `json:"available_edges"`
+	ReturnedNodes     int                           `json:"returned_nodes"`
+	ReturnedEdges     int                           `json:"returned_edges"`
+	NodeRetention     float64                       `json:"node_retention"`
+	EdgeRetention     float64                       `json:"edge_retention"`
+	Requests          int                           `json:"requests"`
+	TruncatedRequests int                           `json:"truncated_requests"`
+	TruncationRate    float64                       `json:"truncation_rate"`
+	Truncated         bool                          `json:"truncated"`
+	TruncationReasons []string                      `json:"truncation_reasons"`
+	Status            string                        `json:"status"`
+	Retrieval         graphBenchmarkMeasurement     `json:"retrieval"`
+	Neighborhood      graphBenchmarkMeasurement     `json:"neighborhood"`
+	CommunityDetect   graphBenchmarkMeasurement     `json:"community_detection"`
+	CommunityPhases   graphCommunityDetectionPhases `json:"community_detection_phases"`
+	Communities       graphBenchmarkMeasurement     `json:"communities"`
+	PartitionCount    int                           `json:"partition_count"`
+	LargestCommunity  int                           `json:"largest_community"`
 	// InferredMergeIterations is the number of community merges the greedy
 	// modularity loop performed, derived as nodes minus surviving partitions:
 	// every merge removes exactly one state, and the loop only ends when no
@@ -921,6 +949,81 @@ func TestGraphSourceDependencyBenchmark(t *testing.T) {
 	}
 }
 
+// graphBenchmarkPhaseAccumulator is the running total of one phase across the
+// measured iterations.
+type graphBenchmarkPhaseAccumulator struct {
+	bytes  int64
+	allocs int64
+	nanos  int64
+}
+
+func (accumulator *graphBenchmarkPhaseAccumulator) add(before, after *runtime.MemStats, elapsed time.Duration) {
+	accumulator.bytes += int64(after.TotalAlloc - before.TotalAlloc)
+	accumulator.allocs += int64(after.Mallocs - before.Mallocs)
+	accumulator.nanos += elapsed.Nanoseconds()
+}
+
+func (accumulator graphBenchmarkPhaseAccumulator) perCall(iterations int) graphBenchmarkPhase {
+	if iterations < 1 {
+		iterations = 1
+	}
+	return graphBenchmarkPhase{
+		BytesPerCall:  accumulator.bytes / int64(iterations),
+		AllocsPerCall: accumulator.allocs / int64(iterations),
+		MSPerCall:     roundGraphBenchmark(float64(accumulator.nanos) / float64(iterations) / 1e6),
+	}
+}
+
+// measureGraphCommunityPhases attributes one community-detection call to its
+// three phases, over the same path the whole-call measurement used.
+//
+// Each phase is timed and counted on its own, with the phases chained inside one
+// iteration so each is measured on the state the previous one produced - the
+// report phase cannot be measured on a partition nobody computed. There is no
+// GC between phases: TotalAlloc is cumulative, so a collection that happens to
+// land between two phases does not change either delta, and forcing one would
+// put a stop-the-world into every sample.
+func measureGraphCommunityPhases(path GraphPath, minCommunitySize, iterations int) (graphCommunityDetectionPhases, error) {
+	phases := graphCommunityDetectionPhases{
+		Note: "the three phases detectGraphSourceDependencyCommunities is written as, each measured on its own over the same retrieved path: input reads the nodes, statements and degrees; merges runs greedy modularity to its end; report describes the partitions",
+	}
+	if iterations < 1 {
+		iterations = 1
+	}
+	var inputCost, mergesCost, reportCost graphBenchmarkPhaseAccumulator
+	var before, after runtime.MemStats
+	runtime.GC()
+	for iteration := 0; iteration < iterations; iteration++ {
+		runtime.ReadMemStats(&before)
+		start := time.Now()
+		graph, err := graphSourceDependencyCommunityInput(path)
+		elapsed := time.Since(start)
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			return phases, err
+		}
+		inputCost.add(&before, &after, elapsed)
+
+		runtime.ReadMemStats(&before)
+		start = time.Now()
+		partition := graphSourceDependencyCommunityPartition(graph)
+		elapsed = time.Since(start)
+		runtime.ReadMemStats(&after)
+		mergesCost.add(&before, &after, elapsed)
+
+		runtime.ReadMemStats(&before)
+		start = time.Now()
+		graphSourceDependencyCommunityReport(graph, partition, minCommunitySize)
+		elapsed = time.Since(start)
+		runtime.ReadMemStats(&after)
+		reportCost.add(&before, &after, elapsed)
+	}
+	phases.Input = inputCost.perCall(iterations)
+	phases.Merges = mergesCost.perCall(iterations)
+	phases.Report = reportCost.perCall(iterations)
+	return phases, nil
+}
+
 // measureGraphBenchmarkScenario measures one shape and folds what it finds into
 // the run's assertions. It returns false when the shape could not be measured,
 // so a broken shape is skipped with a reason rather than silently averaged in.
@@ -977,6 +1080,14 @@ func measureGraphBenchmarkScenario(t *testing.T, fixture *testsupport.Fixture, s
 		t.Fatalf("measure community detection over %s: %v", shape.Name, err)
 	}
 	scenario.CommunityDetect = detection
+
+	// The same path again, one phase at a time. The whole-call number above says
+	// how much; these say where.
+	phases, err := measureGraphCommunityPhases(row.Path, 2, iterations)
+	if err != nil {
+		t.Fatalf("attribute community detection over %s: %v", shape.Name, err)
+	}
+	scenario.CommunityPhases = phases
 
 	communities, err := measureGraphBenchmark(iterations, func(int) error {
 		_, err := service.GraphSourceDependencyCommunities(ctx, communitiesInput, "")
