@@ -87,6 +87,16 @@ type graphSourceDependencyCommunityPair struct {
 	right string
 }
 
+// graphSourceDependencyCommunityPairKey is two live communities, by id.
+//
+// It is a map key on purpose: the map rebuilt on every merge used to be keyed by
+// a string built from two community names, which is a copy per candidate per
+// merge. Two integers are a key the runtime can hash without allocating.
+type graphSourceDependencyCommunityPairKey struct {
+	left  int
+	right int
+}
+
 type graphSourceDependencyUniqueEdge struct {
 	pair   graphSourceDependencyCommunityPair
 	status string
@@ -267,54 +277,78 @@ func graphSourceDependencyCommunityInput(path GraphPath) (graphSourceDependencyC
 // that merges k times pays k times over the whole edge set. The number of
 // merges is not under the loop's control - it is nodes minus surviving
 // partitions - which is why the cost tracks the shape of the graph rather than
-// its size, and why a 200-node star costs more than a 1,200-node layered graph.
+// its size, and why a 200-node star cost more than a 1,200-node layered graph.
+//
+// A community is addressed by an integer here, and that is the change that makes
+// the loop affordable. A community used to be NAMED by its own member list, and
+// the map rebuilt every iteration was keyed by concatenating two of those names
+// per candidate pair: a graph whose communities grow large paid the size of its
+// communities once per candidate per merge, and at the 200-node bound that was
+// about 39,000 concatenations of a name up to 7 KiB long. That was 153 MiB per
+// call. An eight-byte key is the same map without the copy.
+//
+// The name is not gone, it is no longer the key. The tie-break between
+// equally-good merges is defined over member lists and is still defined that
+// way, which is why keys[] holds one: the comparison is now between two names
+// that already exist instead of a fresh concatenation of two names that might
+// be long. Dropping the name would be cheaper still and would change which
+// merge wins on a tied graph, so it stays, and
+// TestDetectGraphSourceDependencyCommunitiesPinsTheAnswerOnATiedGraph pins
+// what it decides.
 func graphSourceDependencyCommunityPartition(graph graphSourceDependencyCommunityGraph) graphSourceDependencyPartition {
-	states := make(map[string]*graphSourceDependencyCommunityState, len(graph.nodeIDs))
-	nodeState := make(map[string]string, len(graph.nodeIDs))
+	// keys[i] is the name of the community with id i: its members, sorted and
+	// joined. Ids are never reused, so a dead community's name is dead weight
+	// bounded by the number of merges.
+	keys := make([]string, 0, len(graph.nodeIDs)+len(graph.nodeIDs))
+	states := make(map[int]*graphSourceDependencyCommunityState, len(graph.nodeIDs))
+	nodeState := make(map[string]int, len(graph.nodeIDs))
 	for _, nodeID := range graph.nodeIDs {
-		states[nodeID] = &graphSourceDependencyCommunityState{members: map[string]struct{}{nodeID: {}}, degree: graph.degree[nodeID]}
-		nodeState[nodeID] = nodeID
+		keys = append(keys, nodeID)
+		states[len(keys)-1] = &graphSourceDependencyCommunityState{members: map[string]struct{}{nodeID: {}}, degree: graph.degree[nodeID]}
+		nodeState[nodeID] = len(keys) - 1
 	}
 	edgeCount := len(graph.edgePairs)
 	for {
 		bestGain := math.Inf(-1)
-		bestPair := graphSourceDependencyCommunityPair{}
-		between := make(map[string]int)
+		best := graphSourceDependencyCommunityPairKey{left: -1, right: -1}
+		// Presized: one entry per edge is an upper bound on the pairs, and a map
+		// that grows inside the loop rehashes on every merge.
+		between := make(map[graphSourceDependencyCommunityPairKey]int, edgeCount)
 		for _, edge := range graph.edgePairs {
-			leftState := nodeState[edge.left]
-			rightState := nodeState[edge.right]
-			if leftState == rightState {
+			leftID := nodeState[edge.left]
+			rightID := nodeState[edge.right]
+			if leftID == rightID {
 				continue
 			}
-			if leftState > rightState {
-				leftState, rightState = rightState, leftState
+			// The pair is stored in NAME order rather than id order, so the key is
+			// the same whichever end of the edge the map walk arrives by, and so
+			// the tie-break below compares the same two names in the same order it
+			// always did.
+			if keys[leftID] > keys[rightID] {
+				leftID, rightID = rightID, leftID
 			}
-			key := leftState + "\x00" + rightState
-			between[key]++
+			between[graphSourceDependencyCommunityPairKey{left: leftID, right: rightID}]++
 		}
-		for key, count := range between {
-			parts := strings.SplitN(key, "\x00", 2)
-			leftState, rightState := parts[0], parts[1]
-			left := states[leftState]
-			right := states[rightState]
+		for pair, count := range between {
+			left := states[pair.left]
+			right := states[pair.right]
 			if left == nil || right == nil {
 				continue
 			}
 			gain := float64(count)/float64(edgeCount) - (float64(left.degree)*float64(right.degree))/(2*float64(edgeCount)*float64(edgeCount))
-			pairKey := graphSourceDependencyPairKey(graphSourceDependencyCommunityPair{left: leftState, right: rightState})
-			if gain > bestGain+1e-12 || (math.Abs(gain-bestGain) <= 1e-12 && (bestPair.left == "" || pairKey < graphSourceDependencyPairKey(bestPair))) {
+			if gain > bestGain+1e-12 || (math.Abs(gain-bestGain) <= 1e-12 && (best.left < 0 || graphSourceDependencyCommunityPairKeyLess(keys, pair, best))) {
 				bestGain = gain
-				bestPair = graphSourceDependencyCommunityPair{left: leftState, right: rightState}
+				best = pair
 			}
 		}
-		if bestPair.left == "" || bestGain <= 1e-12 {
+		if best.left < 0 || bestGain <= 1e-12 {
 			break
 		}
-		if bestPair.left > bestPair.right {
-			bestPair.left, bestPair.right = bestPair.right, bestPair.left
-		}
-		left := states[bestPair.left]
-		right := states[bestPair.right]
+		// The pair is already in name order, because the map key was built that
+		// way; the old code re-normalised it here and the reordering could never
+		// fire.
+		left := states[best.left]
+		right := states[best.right]
 		for nodeID := range right.members {
 			left.members[nodeID] = struct{}{}
 		}
@@ -324,13 +358,18 @@ func graphSourceDependencyCommunityPartition(graph graphSourceDependencyCommunit
 			members = append(members, member)
 		}
 		sort.Strings(members)
-		newKey := graphSourceDependencyCommunityKey(members)
+		// The merged community's name is rebuilt here, once per merge. This is the
+		// only place it is built, and it is the whole remaining cost of naming
+		// communities: one pass over the new members per merge, against one per
+		// candidate pair per merge before.
+		keys = append(keys, graphSourceDependencyCommunityKey(members))
+		merged := len(keys) - 1
 		for _, member := range members {
-			nodeState[member] = newKey
+			nodeState[member] = merged
 		}
-		delete(states, bestPair.left)
-		delete(states, bestPair.right)
-		states[newKey] = left
+		delete(states, best.left)
+		delete(states, best.right)
+		states[merged] = left
 	}
 	memberGroups := make([][]string, 0, len(states))
 	for _, state := range states {
@@ -420,6 +459,30 @@ func graphSourceDependencyCommunityReport(graph graphSourceDependencyCommunityGr
 
 func graphSourceDependencyPairKey(pair graphSourceDependencyCommunityPair) string {
 	return pair.left + "\x00" + pair.right
+}
+
+// graphSourceDependencyCommunityPairKeyLess is the tie-break between two
+// candidate merges whose gain is equal to within 1e-12: the one whose community
+// names come first in lexicographic order wins.
+//
+// The old code compared left+"\x00"+right against the same concatenation of the
+// incumbent, and that comparison is the one this reproduces, without building
+// either string. The two are the same comparison because both pairs are held in
+// name order, and because NUL is the smallest byte a string can contain: if the
+// left names differ the comparison is decided by them at their first differing
+// byte, and if one is a prefix of the other the shorter pair's NUL sorts first,
+// which is the same verdict as the shorter name being smaller. So comparing
+// (left name, right name) in that order decides exactly what the concatenated
+// strings decided.
+//
+// It is a total order over the candidates - no two live communities share a
+// name, and a pair is canonical - which is why the loop's answer does not depend
+// on the order Go happens to walk the map in.
+func graphSourceDependencyCommunityPairKeyLess(keys []string, candidate, incumbent graphSourceDependencyCommunityPairKey) bool {
+	if keys[candidate.left] != keys[incumbent.left] {
+		return keys[candidate.left] < keys[incumbent.left]
+	}
+	return keys[candidate.right] < keys[incumbent.right]
 }
 
 func graphSourceDependencyCommunityKey(members []string) string {
