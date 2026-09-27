@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-09-26T17:41:05Z",
+  "generated_at": "2026-09-27T19:05:29Z",
   "command": "make graph-benchmark",
-  "commit": "4e54553",
+  "commit": "bc902e8",
   "go_version": "go1.25.13",
   "num_cpu": 8,
   "postgres_server_version": "16.15",
@@ -34,55 +34,73 @@
       "status": "structural",
       "retrieval": {
         "samples": 20,
-        "first_call_ms": 61.341,
-        "min_ms": 4.121,
-        "p50_ms": 4.631,
-        "p95_ms": 8.007,
-        "max_ms": 61.341,
-        "mean_ms": 8.071,
-        "bytes_per_op": 184072,
-        "allocs_per_op": 602
+        "first_call_ms": 36.69,
+        "min_ms": 2.656,
+        "p50_ms": 2.79,
+        "p95_ms": 4.476,
+        "max_ms": 36.69,
+        "mean_ms": 4.796,
+        "bytes_per_op": 142688,
+        "allocs_per_op": 655
       },
       "neighborhood": {
         "samples": 20,
-        "first_call_ms": 63.078,
-        "min_ms": 33.442,
-        "p50_ms": 36.023,
-        "p95_ms": 37.623,
-        "max_ms": 63.078,
-        "mean_ms": 37.541,
-        "bytes_per_op": 591249,
-        "allocs_per_op": 10351
+        "first_call_ms": 43.473,
+        "min_ms": 19.972,
+        "p50_ms": 22.109,
+        "p95_ms": 43.473,
+        "max_ms": 50.241,
+        "mean_ms": 24.913,
+        "bytes_per_op": 546291,
+        "allocs_per_op": 10404
       },
       "community_detection": {
         "samples": 20,
-        "first_call_ms": 2.443,
-        "min_ms": 1.376,
-        "p50_ms": 1.842,
-        "p95_ms": 2.323,
-        "max_ms": 2.443,
-        "mean_ms": 1.88,
-        "bytes_per_op": 2787440,
-        "allocs_per_op": 5428
+        "first_call_ms": 0.429,
+        "min_ms": 0.311,
+        "p50_ms": 0.344,
+        "p95_ms": 0.479,
+        "max_ms": 1.006,
+        "mean_ms": 0.393,
+        "bytes_per_op": 218464,
+        "allocs_per_op": 500
+      },
+      "community_detection_phases": {
+        "note": "the three phases detectGraphSourceDependencyCommunities is written as, each measured on its own over the same retrieved path: input reads the nodes, statements and degrees; merges runs greedy modularity to its end; report describes the partitions",
+        "input": {
+          "bytes_per_call": 19416,
+          "allocs_per_call": 68,
+          "ms_per_call": 0.017
+        },
+        "merges": {
+          "bytes_per_call": 189832,
+          "allocs_per_call": 418,
+          "ms_per_call": 0.364
+        },
+        "report": {
+          "bytes_per_call": 9216,
+          "allocs_per_call": 14,
+          "ms_per_call": 0.016
+        }
       },
       "communities": {
         "samples": 20,
-        "first_call_ms": 40.702,
-        "min_ms": 38.303,
-        "p50_ms": 42.338,
-        "p95_ms": 50.229,
-        "max_ms": 55.888,
-        "mean_ms": 43.307,
-        "bytes_per_op": 3549668,
-        "allocs_per_op": 15822
+        "first_call_ms": 26.941,
+        "min_ms": 20.492,
+        "p50_ms": 23.852,
+        "p95_ms": 44.613,
+        "max_ms": 95.252,
+        "mean_ms": 29.617,
+        "bytes_per_op": 826435,
+        "allocs_per_op": 10978
       },
       "partition_count": 1,
       "largest_community": 50,
       "inferred_merge_iterations": 49,
       "query_plan": {
         "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
-        "planning_ms": 2.172,
-        "execution_ms": 2.624,
+        "planning_ms": 1.148,
+        "execution_ms": 1.483,
         "shared_hit_blocks": 164,
         "shared_read_blocks": 0,
         "node_types": {
@@ -109,7 +127,7 @@
             "relation": "sources",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.07,
+            "actual_total_time_ms": 0.054,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -118,7 +136,7 @@
             "relation": "source_dependencies",
             "actual_rows": 50,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.017,
+            "actual_total_time_ms": 0.011,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -127,7 +145,7 @@
             "relation": "sources",
             "actual_rows": 54,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.013,
+            "actual_total_time_ms": 0.009,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -137,7 +155,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 2,
-            "actual_total_time_ms": 0.006,
+            "actual_total_time_ms": 0.005,
             "shared_hit_blocks": 4,
             "shared_read_blocks": 0
           }
@@ -148,7 +166,7 @@
             "relation": "sources",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.07,
+            "actual_total_time_ms": 0.054,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -157,7 +175,7 @@
             "relation": "source_dependencies",
             "actual_rows": 50,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.017,
+            "actual_total_time_ms": 0.011,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -166,7 +184,7 @@
             "relation": "sources",
             "actual_rows": 54,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.013,
+            "actual_total_time_ms": 0.009,
             "shared_hit_blocks": 1,
             "shared_read_blocks": 0
           },
@@ -176,7 +194,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 2,
-            "actual_total_time_ms": 0.006,
+            "actual_total_time_ms": 0.005,
             "shared_hit_blocks": 4,
             "shared_read_blocks": 0
           }
@@ -187,7 +205,7 @@
           "relation": "sources",
           "actual_rows": 1,
           "actual_loops": 1,
-          "actual_total_time_ms": 0.07,
+          "actual_total_time_ms": 0.054,
           "shared_hit_blocks": 1,
           "shared_read_blocks": 0
         },
@@ -197,19 +215,19 @@
         "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
         "reachable_nodes": 50,
         "reachable_edges": 49,
-        "elapsed_ms": 3.57,
+        "elapsed_ms": 3.713,
         "timed_out": false,
         "overshoot_factor_vs_max_nodes": 0.25,
         "matches_expected_shape": true
       },
       "stability": {
-        "path_id": "0e22cccd-6b3b-55e9-a878-981c23587631",
+        "path_id": "6a1c8c8c-ceab-5b5f-a707-5fbadd39e08f",
         "input_fingerprint": "ade72e202147b1082ecad75e05775de2b82190a473a3ebcdace859dc72778295",
-        "edge_set_fingerprint": "7a9fa8b2fbcacc0cb701efdc0e9f95de8439d8e13ac70cb9297362aebd26d808",
+        "edge_set_fingerprint": "f39311434d9d6475aadec099435df244007064281527c35e8d703fd6f04379bf",
         "partition_fingerprint": "8a7446f30356a11a2ef46daf4f95a43612a8c80928cf9e3e470f17158b9b2f27",
         "repeated_requests": 22,
         "stable_within_the_run": true,
-        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it"
+        "reseed_reproduction": "the rebuilt graph returned the same edge-set fingerprint and the same community partition"
       }
     },
     {
@@ -230,55 +248,73 @@
       "status": "structural",
       "retrieval": {
         "samples": 20,
-        "first_call_ms": 19.591,
-        "min_ms": 13.875,
-        "p50_ms": 18.001,
-        "p95_ms": 24.649,
-        "max_ms": 39.998,
-        "mean_ms": 19.284,
-        "bytes_per_op": 750743,
-        "allocs_per_op": 2117
+        "first_call_ms": 17.422,
+        "min_ms": 6.49,
+        "p50_ms": 8.286,
+        "p95_ms": 14.207,
+        "max_ms": 17.422,
+        "mean_ms": 9.449,
+        "bytes_per_op": 573671,
+        "allocs_per_op": 2320
       },
       "neighborhood": {
         "samples": 20,
-        "first_call_ms": 172.69,
-        "min_ms": 138.976,
-        "p50_ms": 158.721,
-        "p95_ms": 186.516,
-        "max_ms": 187.035,
-        "mean_ms": 162.456,
-        "bytes_per_op": 2482939,
-        "allocs_per_op": 41611
+        "first_call_ms": 85.743,
+        "min_ms": 75.104,
+        "p50_ms": 83.147,
+        "p95_ms": 122.552,
+        "max_ms": 127.357,
+        "mean_ms": 87.792,
+        "bytes_per_op": 2269143,
+        "allocs_per_op": 41821
       },
       "community_detection": {
         "samples": 20,
-        "first_call_ms": 87.527,
-        "min_ms": 87.527,
-        "p50_ms": 89.944,
-        "p95_ms": 91.574,
-        "max_ms": 93.582,
-        "mean_ms": 90.055,
-        "bytes_per_op": 160749864,
-        "allocs_per_op": 82307
+        "first_call_ms": 5.869,
+        "min_ms": 4.901,
+        "p50_ms": 5.293,
+        "p95_ms": 8.173,
+        "max_ms": 9.414,
+        "mean_ms": 6.05,
+        "bytes_per_op": 2664160,
+        "allocs_per_op": 1874
+      },
+      "community_detection_phases": {
+        "note": "the three phases detectGraphSourceDependencyCommunities is written as, each measured on its own over the same retrieved path: input reads the nodes, statements and degrees; merges runs greedy modularity to its end; report describes the partitions",
+        "input": {
+          "bytes_per_call": 76232,
+          "allocs_per_call": 223,
+          "ms_per_call": 0.049
+        },
+        "merges": {
+          "bytes_per_call": 2544011,
+          "allocs_per_call": 1623,
+          "ms_per_call": 5.063
+        },
+        "report": {
+          "bytes_per_call": 43936,
+          "allocs_per_call": 28,
+          "ms_per_call": 0.059
+        }
       },
       "communities": {
         "samples": 20,
-        "first_call_ms": 268.215,
-        "min_ms": 246.191,
-        "p50_ms": 277.306,
-        "p95_ms": 373.163,
-        "max_ms": 438.361,
-        "mean_ms": 293.499,
-        "bytes_per_op": 163923073,
-        "allocs_per_op": 123979
+        "first_call_ms": 97.548,
+        "min_ms": 82.079,
+        "p50_ms": 86.27,
+        "p95_ms": 97.548,
+        "max_ms": 104.999,
+        "mean_ms": 88.892,
+        "bytes_per_op": 5193472,
+        "allocs_per_op": 43928
       },
       "partition_count": 2,
       "largest_community": 198,
       "inferred_merge_iterations": 198,
       "query_plan": {
         "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
-        "planning_ms": 3.102,
-        "execution_ms": 10.679,
+        "planning_ms": 1.11,
+        "execution_ms": 3.802,
         "shared_hit_blocks": 458,
         "shared_read_blocks": 0,
         "node_types": {
@@ -305,7 +341,7 @@
             "relation": "source_dependencies",
             "actual_rows": 250,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.123,
+            "actual_total_time_ms": 0.046,
             "shared_hit_blocks": 4,
             "shared_read_blocks": 0
           },
@@ -314,7 +350,7 @@
             "relation": "sources",
             "actual_rows": 254,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.101,
+            "actual_total_time_ms": 0.041,
             "shared_hit_blocks": 5,
             "shared_read_blocks": 0
           },
@@ -324,7 +360,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.029,
+            "actual_total_time_ms": 0.012,
             "shared_hit_blocks": 2,
             "shared_read_blocks": 0
           },
@@ -334,7 +370,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 4,
-            "actual_total_time_ms": 0.007,
+            "actual_total_time_ms": 0.002,
             "shared_hit_blocks": 8,
             "shared_read_blocks": 0
           }
@@ -345,7 +381,7 @@
             "relation": "source_dependencies",
             "actual_rows": 250,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.123,
+            "actual_total_time_ms": 0.046,
             "shared_hit_blocks": 4,
             "shared_read_blocks": 0
           },
@@ -354,7 +390,7 @@
             "relation": "sources",
             "actual_rows": 254,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.101,
+            "actual_total_time_ms": 0.041,
             "shared_hit_blocks": 5,
             "shared_read_blocks": 0
           },
@@ -364,7 +400,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.029,
+            "actual_total_time_ms": 0.012,
             "shared_hit_blocks": 2,
             "shared_read_blocks": 0
           },
@@ -374,7 +410,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 4,
-            "actual_total_time_ms": 0.007,
+            "actual_total_time_ms": 0.002,
             "shared_hit_blocks": 8,
             "shared_read_blocks": 0
           }
@@ -385,7 +421,7 @@
           "relation": "source_dependencies",
           "actual_rows": 250,
           "actual_loops": 1,
-          "actual_total_time_ms": 0.123,
+          "actual_total_time_ms": 0.046,
           "shared_hit_blocks": 4,
           "shared_read_blocks": 0
         },
@@ -395,19 +431,19 @@
         "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
         "reachable_nodes": 200,
         "reachable_edges": 200,
-        "elapsed_ms": 4.322,
+        "elapsed_ms": 1.945,
         "timed_out": false,
         "overshoot_factor_vs_max_nodes": 1,
         "matches_expected_shape": true
       },
       "stability": {
-        "path_id": "fa6a2f84-4267-55ab-86e6-5a05603d8e75",
+        "path_id": "d3924e85-a501-5f9f-b2fd-40ba63bffdeb",
         "input_fingerprint": "d4c498dea69da5cc57971fdbdf16d9d19221d450322b49be3ae54caa8209928d",
-        "edge_set_fingerprint": "ed66e39c2753f74643eb3aa929763bbe1a2952e7ee20d936a84cb4d8cc3dfc26",
+        "edge_set_fingerprint": "8e05ce71db829793631e24653833c1db4f449461650f85aeb8d521ea4845b6ba",
         "partition_fingerprint": "78224af653cd2bda974fb2635e5394e59f09fb831089a8a99ee60a9dffcdc2bf",
         "repeated_requests": 22,
         "stable_within_the_run": true,
-        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it"
+        "reseed_reproduction": "the rebuilt graph returned the same edge-set fingerprint and the same community partition"
       }
     },
     {
@@ -431,55 +467,73 @@
       "status": "partial",
       "retrieval": {
         "samples": 20,
-        "first_call_ms": 21.444,
-        "min_ms": 18.488,
-        "p50_ms": 23.347,
-        "p95_ms": 44.292,
-        "max_ms": 48.635,
-        "mean_ms": 25.789,
-        "bytes_per_op": 742468,
-        "allocs_per_op": 2212
+        "first_call_ms": 13.105,
+        "min_ms": 9.067,
+        "p50_ms": 10.222,
+        "p95_ms": 12.518,
+        "max_ms": 13.105,
+        "mean_ms": 10.611,
+        "bytes_per_op": 589044,
+        "allocs_per_op": 2418
       },
       "neighborhood": {
         "samples": 20,
-        "first_call_ms": 367.297,
-        "min_ms": 166.838,
-        "p50_ms": 183.158,
-        "p95_ms": 213.284,
-        "max_ms": 367.297,
-        "mean_ms": 192.899,
-        "bytes_per_op": 2473379,
-        "allocs_per_op": 41719
+        "first_call_ms": 87.144,
+        "min_ms": 77.801,
+        "p50_ms": 85.551,
+        "p95_ms": 96.891,
+        "max_ms": 104.864,
+        "mean_ms": 87.114,
+        "bytes_per_op": 2303741,
+        "allocs_per_op": 41935
       },
       "community_detection": {
         "samples": 20,
-        "first_call_ms": 17.148,
-        "min_ms": 16.492,
-        "p50_ms": 19.765,
-        "p95_ms": 26.964,
-        "max_ms": 27.439,
-        "mean_ms": 21.342,
-        "bytes_per_op": 11541288,
-        "allocs_per_op": 54912
+        "first_call_ms": 3.739,
+        "min_ms": 2.621,
+        "p50_ms": 3.615,
+        "p95_ms": 5.328,
+        "max_ms": 5.464,
+        "mean_ms": 3.793,
+        "bytes_per_op": 1254123,
+        "allocs_per_op": 2481
+      },
+      "community_detection_phases": {
+        "note": "the three phases detectGraphSourceDependencyCommunities is written as, each measured on its own over the same retrieved path: input reads the nodes, statements and degrees; merges runs greedy modularity to its end; report describes the partitions",
+        "input": {
+          "bytes_per_call": 76232,
+          "allocs_per_call": 223,
+          "ms_per_call": 0.052
+        },
+        "merges": {
+          "bytes_per_call": 1111449,
+          "allocs_per_call": 1800,
+          "ms_per_call": 2.454
+        },
+        "report": {
+          "bytes_per_call": 65520,
+          "allocs_per_call": 468,
+          "ms_per_call": 0.411
+        }
       },
       "communities": {
         "samples": 20,
-        "first_call_ms": 279.967,
-        "min_ms": 184.876,
-        "p50_ms": 209.202,
-        "p95_ms": 220.507,
-        "max_ms": 279.967,
-        "mean_ms": 208.034,
-        "bytes_per_op": 14723874,
-        "allocs_per_op": 96675
+        "first_call_ms": 92.833,
+        "min_ms": 81.398,
+        "p50_ms": 89.32,
+        "p95_ms": 94.694,
+        "max_ms": 99.166,
+        "mean_ms": 89.181,
+        "bytes_per_op": 3810922,
+        "allocs_per_op": 44628
       },
-      "partition_count": 65,
-      "largest_community": 45,
-      "inferred_merge_iterations": 135,
+      "partition_count": 68,
+      "largest_community": 49,
+      "inferred_merge_iterations": 132,
       "query_plan": {
         "note": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) of the exact query text services/core-api/internal/research/graph_source_dependency.go runs, with the same five parameters and the same read-only repeatable-read transaction",
-        "planning_ms": 2.604,
-        "execution_ms": 14.649,
+        "planning_ms": 1.132,
+        "execution_ms": 6.061,
         "shared_hit_blocks": 2381,
         "shared_read_blocks": 0,
         "node_types": {
@@ -505,7 +559,7 @@
             "relation": "source_dependencies",
             "actual_rows": 1849,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.65,
+            "actual_total_time_ms": 0.297,
             "shared_hit_blocks": 32,
             "shared_read_blocks": 0
           },
@@ -514,7 +568,7 @@
             "relation": "sources",
             "actual_rows": 1455,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.452,
+            "actual_total_time_ms": 0.25,
             "shared_hit_blocks": 29,
             "shared_read_blocks": 0
           },
@@ -523,7 +577,7 @@
             "relation": "sources",
             "actual_rows": 1455,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.413,
+            "actual_total_time_ms": 0.213,
             "shared_hit_blocks": 29,
             "shared_read_blocks": 0
           },
@@ -533,7 +587,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.019,
+            "actual_total_time_ms": 0.01,
             "shared_hit_blocks": 3,
             "shared_read_blocks": 0
           }
@@ -544,7 +598,7 @@
             "relation": "source_dependencies",
             "actual_rows": 1849,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.65,
+            "actual_total_time_ms": 0.297,
             "shared_hit_blocks": 32,
             "shared_read_blocks": 0
           },
@@ -553,7 +607,7 @@
             "relation": "sources",
             "actual_rows": 1455,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.452,
+            "actual_total_time_ms": 0.25,
             "shared_hit_blocks": 29,
             "shared_read_blocks": 0
           },
@@ -562,7 +616,7 @@
             "relation": "sources",
             "actual_rows": 1455,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.413,
+            "actual_total_time_ms": 0.213,
             "shared_hit_blocks": 29,
             "shared_read_blocks": 0
           },
@@ -572,7 +626,7 @@
             "index": "sources_pkey",
             "actual_rows": 1,
             "actual_loops": 1,
-            "actual_total_time_ms": 0.019,
+            "actual_total_time_ms": 0.01,
             "shared_hit_blocks": 3,
             "shared_read_blocks": 0
           }
@@ -583,7 +637,7 @@
           "relation": "source_dependencies",
           "actual_rows": 1849,
           "actual_loops": 1,
-          "actual_total_time_ms": 0.65,
+          "actual_total_time_ms": 0.297,
           "shared_hit_blocks": 32,
           "shared_read_blocks": 0
         },
@@ -593,19 +647,19 @@
         "note": "benchmark-only recursive traversal with no node, edge or saturation bound; production truncates at GraphMaxNodes/GraphMaxEdges",
         "reachable_nodes": 1201,
         "reachable_edges": 1599,
-        "elapsed_ms": 14.453,
+        "elapsed_ms": 6.284,
         "timed_out": false,
         "overshoot_factor_vs_max_nodes": 6.01,
         "matches_expected_shape": true
       },
       "stability": {
-        "path_id": "2dee36a8-335a-5e05-b82d-b8f8974839ea",
+        "path_id": "f0f1dcd7-9619-5d44-927c-332053d0726b",
         "input_fingerprint": "a294b0667ffa50e8522ebccfc9e4c650ef471ac59b171b015c1031c809a1b64e",
-        "edge_set_fingerprint": "ee32fa3bb6cb5b8871256e16b8b375ff11c5aff85da51b145e8992d5b901fc39",
-        "partition_fingerprint": "76e91df751c8f38c5d4ba0a176fc4dd52941126ea65d50a92dcf9b9d8f766835",
+        "edge_set_fingerprint": "fb59e32c961335ad3fb276247a9eaecc47c08760638d78879524c31458147abb",
+        "partition_fingerprint": "3d8b8d40ae93bfb29d1e041cf95b066658ea01ed897df7ad6ed0c0daa139f794",
         "repeated_requests": 22,
         "stable_within_the_run": true,
-        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same nodes and edges: source_dependencies.id is a random uuid and the query orders candidate edges by it; the community partition ALSO differed, so the greedy loop's tie-breaking depends on that random edge order"
+        "reseed_reproduction": "the rebuilt graph returned a DIFFERENT edge-set fingerprint, and the reason is the edge bound rather than the fingerprint: the query ranks candidate edges by source_dependencies.id, so the bound kept a different subset of them and the two builds are not the same graph; the partition differed with them, which follows from the different statements rather than from the loop"
       }
     }
   ],
@@ -614,6 +668,7 @@
     "truncation_reported_above_the_bound": true,
     "no_truncation_at_the_bound": true,
     "stable_results": true,
+    "edge_set_fingerprint_survives_a_rebuild": true,
     "seeded_shape_matches_traversal": true
   }
 }

@@ -1,8 +1,12 @@
 # Graph retrieval limits: the measurement behind the Neo4j decision
 
-**Status:** measured once, on one machine, with synthetic data. It does not
-reopen the Neo4j decision, and the last section says plainly why the data is not
-enough to reopen it.
+**Status:** re-recorded after plan 017, on one machine, with synthetic data. It
+does not reopen the Neo4j decision, and the last section says plainly why the
+data is still not enough to reopen it. Two numbers in the previous run were
+findings about this code rather than about the system - a fingerprint that
+changed when nothing changed, and 153 MiB of garbage per community-detection
+call - and both are now measured after the fixes, with the before and the after
+labelled as such everywhere they appear.
 
 **Decision it informs:** the gate in `IMPLEMENTATION_PLAN.md:1619-1646` ("Add it
 only if measurements show PostgreSQL graph retrieval is becoming limiting") and
@@ -10,7 +14,10 @@ the derived-projection sketch in `ARCHITECTURE.md:605-632`. PostgreSQL stays
 authoritative; nothing in this document proposes otherwise.
 
 **Recorded run:** `docs/benchmarks/graph-source-dependency.json`, produced by
-commit `4e54553` on 2026-09-26T17:41:05Z.
+commit `bc902e8` on 2026-09-27T19:05:29Z. The previous run, at commit
+`4e54553` on 2026-09-26, is quoted only where a number changed, and says which
+commit it came from. Runs 2 and 3 of the same command on the same machine are in
+the repeatability section and were written to `/tmp`.
 
 ## What was measured, and what was not
 
@@ -28,11 +35,11 @@ Measured, for three synthetic graphs:
 | Retrieval latency | `retrieveGraphSourceDependencyNeighborhood`, the recursive read-only transaction the service runs, p50 and p95 by nearest rank over 20 samples |
 | Operation latency | the same traversal plus run bookkeeping and persistence: what a request actually waits for |
 | Community detection | `detectGraphSourceDependencyCommunities`, the Go greedy modularity over the bounded path, measured on one retrieved path so the number is the algorithm and not a query |
-| Memory | Go-side `TotalAlloc` and `Mallocs` deltas around the timed loop, per call. This is the API process. It is not PostgreSQL's memory. |
+| Memory, and where it goes | Go-side `TotalAlloc` and `Mallocs` deltas around the timed loop, per call, for the call as a whole and for each of the three phases the detection function is written as. This is the API process. It is not PostgreSQL's memory. |
 | Truncation | the returned node and edge counts, the truncation verdict, and which limit fired |
 | Query plan | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` of the exact query text in `graph_source_dependency.go`, same five parameters, same read-only repeatable-read transaction, same `statement_timeout = 2000ms` |
 | Headroom | the same traversal with no bounds at all, run by the benchmark, to show what the bound is hiding |
-| Stability | every graph re-requested 22 times, then deleted and rebuilt from scratch and re-requested |
+| Stability | every graph re-requested 22 times, then deleted and rebuilt from scratch and re-requested, and - through the acceptance suite - the same corpus built twice in two separately created schemas and compared |
 
 Not measured, and not claimed:
 
@@ -64,7 +71,13 @@ The same command runs
 `TestGraphSourceDependencyNeighborhoodStaysBoundedAcrossGraphSizes`, which is
 also part of `make verify-full`. That test is the assertion rather than the
 measurement: it fails if output leaves the bounds, if a graph exactly at the
-bounds reports truncation, or if a repeat request disagrees.
+bounds reports truncation, or if a repeat request disagrees. The property this
+run is now also asserting is `edge_set_fingerprint_survives_a_rebuild`: a
+scenario that was not truncated must return the same edge-set fingerprint after
+its rows are deleted and rebuilt. The two-schema version of that property,
+`TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas`, is in the
+acceptance suite rather than here, because it needs two fixtures and belongs
+where a failure blocks a merge.
 
 The synthetic rows are marker titles (`benchmark-<scenario>`) in a schema that
 stops existing when the command finishes. No secret and no personal data is
@@ -97,32 +110,95 @@ exactly the node and edge counts in the table, and the recorded run's first draf
 failed that check with an off-by-one edge count, which is the check earning its
 keep.
 
+The node selection is deterministic and the edge selection is not, and the
+difference decides what the "above" row can be used for. `source_dependencies.id`
+is a random uuid and the query ranks candidate edges by it
+(`graph_source_dependency.go:475-569`), so above the edge bound the 200 retained
+statements are 200 of 1,599 candidates in random order. Two builds of the same
+scenario retain different statements. Everything about that scenario's *counts*
+reproduces; its partition does not, and the stability section says so instead of
+letting the reader assume otherwise.
+
 ## Latency and memory
 
 Recorded run, 20 samples per operation, PostgreSQL 16.15 in the project's
-container, Go 1.25.13, 8 CPUs. All figures in milliseconds; memory in KiB per
-call.
+container, Go 1.25.13, 8 CPUs, load average about 5 on the same machine during
+the three runs. All figures in milliseconds; memory in KiB per call.
 
 | Scenario | Operation | p50 | p95 | first call | KiB/call | allocs/call |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| below (50n/49e) | retrieval | 4.631 | 8.007 | 61.341 | 180 | 602 |
-| below | neighborhood | 36.023 | 37.623 | 63.078 | 577 | 10,351 |
-| below | community detection | 1.842 | 2.323 | 2.443 | 2,722 | 5,428 |
-| below | communities | 42.338 | 50.229 | 40.702 | 3,467 | 15,822 |
-| at (200n/200e) | retrieval | 18.001 | 24.649 | 19.591 | 733 | 2,117 |
-| at | neighborhood | 158.721 | 186.516 | 172.690 | 2,425 | 41,611 |
-| at | **community detection** | **89.944** | **91.574** | 87.527 | **156,982** | **82,307** |
-| at | communities | 277.306 | 373.163 | 268.215 | 160,081 | 123,979 |
-| above (1201n/1599e) | retrieval | 23.347 | 44.292 | 21.444 | 725 | 2,212 |
-| above | neighborhood | 183.158 | 213.284 | 367.297 | 2,415 | 41,719 |
-| above | community detection | 19.765 | 26.964 | 17.148 | 11,271 | 54,912 |
-| above | communities | 209.202 | 220.507 | 279.967 | 14,379 | 96,675 |
+| below (50n/49e) | retrieval | 2.790 | 4.476 | 36.690 | 139 | 655 |
+| below | neighborhood | 22.109 | 43.473 | 43.473 | 533 | 10,404 |
+| below | community detection | 0.344 | 0.479 | 0.429 | 213 | 500 |
+| below | communities | 23.852 | 44.613 | 26.941 | 807 | 10,978 |
+| at (200n/200e) | retrieval | 8.286 | 14.207 | 17.422 | 560 | 2,320 |
+| at | neighborhood | 83.147 | 122.552 | 85.743 | 2,215 | 41,821 |
+| at | **community detection** | **5.293** | **8.173** | **5.869** | **2,601** | **1,874** |
+| at | communities | 86.270 | 97.548 | 97.548 | 5,071 | 43,928 |
+| above (1201n/1599e) | retrieval | 10.222 | 12.518 | 13.105 | 575 | 2,418 |
+| above | neighborhood | 85.551 | 96.891 | 87.144 | 2,249 | 41,935 |
+| above | community detection | 3.615 | 5.328 | 3.739 | 1,224 | 2,481 |
+| above | communities | 89.320 | 94.694 | 92.833 | 3,721 | 44,628 |
 
 The first call is reported separately rather than dropped. On the smallest graph
-it is 61ms against a 4.6ms p50: a cold plan and a cold buffer cache. That is
+it is 36.7ms against a 2.8ms p50: a cold plan and a cold buffer cache. That is
 real, it is what the first user after a deploy waits for, and averaging it into a
 p95 would make the steady state look worse than it is while hiding the only part
 a reader could act on.
+
+### What the community-detection memory is spent on
+
+The recorded run attributes a community-detection call to the three phases the
+function is written as, measured on its own over the same path. This is new in
+this run: the previous run reported one number for the call and a guess about the
+mechanism, and the guess was right, which is the only reason it was harmless.
+
+| Scenario | input | merges | report | total | merges share |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| below (50n/49e) | 19.0 KiB / 68 allocs / 0.017ms | 185.4 KiB / 418 / 0.364ms | 9.0 KiB / 14 / 0.016ms | 213.4 KiB / 500 / 0.397ms | 87% |
+| at (200n/200e) | 74.4 KiB / 223 / 0.049ms | 2,484.4 KiB / 1,623 / 5.063ms | 42.9 KiB / 28 / 0.059ms | 2,601.7 KiB / 1,874 / 5.171ms | 95% |
+| above (1201n/1599e) | 74.4 KiB / 223 / 0.052ms | 1,085.4 KiB / 1,800 / 2.454ms | 64.0 KiB / 468 / 0.411ms | 1,223.8 KiB / 2,491 / 2.917ms | 89% |
+
+So it is not the edge set being materialised (0.05% of the at-the-bound call) and
+not the per-community accounting (0.03%). It is the greedy loop, and inside the
+loop - from a `pprof` line profile taken at the bound with `-memprofilerate 1` -
+97.7% of the whole call was three string concatenations
+(`graph_source_dependency_communities.go:298-391` before the change): 899 of the
+920 MiB the five profiled calls allocated, in the between-community map key built
+once per candidate pair per merge, the same key rebuilt for the tie-break, and
+the incumbent's key rebuilt again inside the comparison. A community was *named*
+by its own member list, so a candidate pair's key was as long as the two
+communities it joined, up to 7 KiB on a star that merges 198 times over 199
+candidate pairs. The cost was `O(merges x pairs x members)`, and 153 MiB is what
+that is at the bound.
+
+Communities are now addressed by an integer, so the map key is two ints and no
+copy, and the member-list name is built once per merge instead of once per
+candidate per merge. The name is still built, because the tie-break between
+equally-good merges is defined over member lists and changing that would change
+which merge wins on a tied graph. The measured result, from a run of the same
+command on the same machine immediately before the change (commit `c8bb88a`):
+
+| At the 200-node bound | before (`c8bb88a`) | after (`bc902e8`) | ratio |
+| --- | ---: | ---: | ---: |
+| KiB per call | 156,983 | 2,601 | 0.017x |
+| allocations per call | 82,328 | 1,874 | 0.023x |
+| p50 | 45.972ms | 5.293ms | 0.12x |
+| partitions / largest | 2 / 198 | 2 / 198 | unchanged |
+
+The previous run of this document recorded 156,982 KiB and 82,307 allocations at
+43.95-89.94ms p50 for the same call, from commit `4e54553`; this run's
+immediately-before measurement is within 0.01% and 0.03% of it on bytes and
+allocations, so the before column is a re-measurement of the same thing rather
+than a different number.
+
+What is left is 1.5 MiB of the 2.6, and it is the rebuild of the
+between-community map once per merge - the loop's shape, not an accident of it.
+Merges are bounded by `GraphMaxNodes` and edges by `GraphMaxEdges`, so the
+operation's memory is now bounded by the same numbers the product already chose
+to bound the answer by. Making that rebuild incremental is a larger rewrite of
+the same loop for about 1.3 MiB at a bound this product set deliberately, so the
+residual is recorded here rather than chased.
 
 ## Truncation and retention
 
@@ -146,9 +222,9 @@ all of them.
 
 | Scenario | Planning | Execution | Shared buffers | Plan shape |
 | --- | ---: | ---: | ---: | --- |
-| below | 2.172 | 2.624 | 164 | `Recursive Union` over a materialized `active_edges` CTE; `Seq Scan` on `sources` (54 rows) and `source_dependencies` (50 rows) |
-| at | 3.102 | 10.679 | 458 | same shape; `Seq Scan` on `sources` (254) and `source_dependencies` (250) |
-| above | 2.604 | 14.649 | 2,381 | same shape; `Seq Scan` on `sources` (1,455) and `source_dependencies` (1,849) |
+| below | 1.148 | 1.483 | 164 | `Recursive Union` over a materialized `active_edges` CTE; `Seq Scan` on `sources` (54 rows) and `source_dependencies` (50 rows) |
+| at | 1.110 | 3.802 | 458 | same shape; `Seq Scan` on `sources` (254) and `source_dependencies` (250) |
+| above | 1.132 | 6.061 | 2,381 | same shape; `Seq Scan` on `sources` (1,455) and `source_dependencies` (1,849) |
 
 Zero shared blocks were read from disk in any scenario: every buffer was already
 resident. The plan is index-light and scan-heavy at all three sizes, which is what
@@ -174,12 +250,12 @@ The same traversal with no node, edge or saturation bound, run by the benchmark:
 
 | Scenario | Reachable nodes | Reachable edges | Elapsed | Overshoot vs `GraphMaxNodes` |
 | --- | ---: | ---: | ---: | ---: |
-| below | 50 | 49 | 3.570 | 0.25x |
-| at | 200 | 200 | 4.322 | 1.00x |
-| above | 1,201 | 1,599 | 14.453 | 6.01x |
+| below | 50 | 49 | 3.713 | 0.25x |
+| at | 200 | 200 | 1.945 | 1.00x |
+| above | 1,201 | 1,599 | 6.284 | 6.01x |
 
-The unbounded traversal of a graph six times the bound finished in 14.5ms, against
-10.7ms for the bounded query at one quarter the size. The bound is not what makes
+The unbounded traversal of a graph six times the bound finished in 6.3ms, against
+6.1ms for the bounded query at one quarter the size. The bound is not what makes
 this fast; the bound is what makes it *predictable*. Nothing in this measurement
 shows PostgreSQL straining at 1,200 nodes — it shows the query is comfortable
 there and the product has decided not to show more than 200 anyway.
@@ -188,125 +264,181 @@ there and the product has decided not to show more than 200 anyway.
 
 Within one database, everything is deterministic. Across 22 requests per scenario
 the path id, the input fingerprint, the edge-set fingerprint and the community
-partition fingerprint were identical, in all three scenarios, in both recorded
-runs.
+partition fingerprint were identical, in all three scenarios, in all three runs.
 
-Across a rebuilt graph they are not, and the run measures why rather than
-asserting a verdict:
+Across a rebuild, the fingerprints are now the same too, and the previous run's
+finding is gone. It used to read:
 
 > the rebuilt graph returned a DIFFERENT edge-set fingerprint while the same
 > nodes and edges: `source_dependencies.id` is a random uuid and the query orders
 > candidate edges by it
 
-`source_dependencies.id` is `gen_random_uuid()` (`db/migrations/0003_research_and_jobs.sql:223`),
-and `graph_source_dependency.go:498-513` selects candidate edges `ORDER BY
-edge_id`. So the edge-set fingerprint is a hash of a set whose element ids are
-different in every database, and for the densest graph the greedy community loop
-sees its edges in a different order, which changes which of two equally-good
-merges wins. In the two recorded runs the above-the-bound partition came out as
-65 communities (largest 45) and 67 communities (largest 38) — same graph, same
-bounds, different answer.
+The edge-set fingerprint hashed `source_dependencies.id`, and the two path ids
+hashed the raw edge JSON, which carries that same id and the order the query
+returned the edges in. A dependency statement is now identified by `(from, to,
+predicate, status)` - the tuple `source_dependencies` already declares `UNIQUE`
+(`db/migrations/0003_research_and_jobs.sql:223`) - and the statements are sorted,
+so the fingerprint is a property of the set and not of the row ids or the
+returned order. `graph_source_dependency.go:326-356` states what makes two
+neighborhoods the same, because that is the contract and it used to be implied by
+an implementation detail. Which neighbours are returned is unchanged: the query,
+its `ORDER BY edge_id`, the 200/200 bounds, the edge ids and positions in the
+persisted JSON, all of it.
 
-The consequence for a reader: these fingerprints identify a neighborhood *within a
-database*. They are a cache key and an audit trail, which is what they are for.
-They are not a content-addressed hash two databases can be compared through, and
-this document does not use them as one.
+The acceptance suite proves it where a single database cannot:
+`TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas` builds the same
+corpus in two separately created schemas on the same server, in opposite
+insertion order and with independent random edge row ids, and requires the path
+id, the edge-set fingerprint, the partition fingerprint and the communities path
+id to be equal across them. It also asserts the two schemas really did get
+different row ids, that repeated reads of one corpus agree, and - the control
+that gives the other two meaning - that adding one dependency statement changes
+the fingerprint.
+
+**What is still not stable above the bound, and is not the fingerprint.** The
+rebuild check now distinguishes two things that used to be one sentence. Below and
+at the bound a rebuild reproduces the fingerprint and the partition exactly, and
+that is asserted (`edge_set_fingerprint_survives_a_rebuild`). Above the bound it
+does not, and the reason is in the query rather than in the hash: the edge bound
+keeps 200 candidates in random id order, so the rebuilt graph hands the algorithm
+a different set of statements. That is why the above-the-bound partition count
+moves between runs of identical code - 65, 67, 64, 68 in the four runs recorded
+across the two documents, and 68, 66, 73 in the three runs of this one, with the
+merge count moving 132, 134, 127 alongside it. The previous document explained
+this as the greedy loop's tie-breaking depending on the random edge order. That
+was wrong: the loop is order-independent, and what changed was which statements
+reached it.
+
+Fixing that would mean ranking candidate edges by `(source_id,
+depends_on_source_id, dependency_type)` instead of by `id` - the same stable key
+used for the fingerprint, no schema change required. It is not done here because
+it changes which 200 of 1,599 statements a truncated graph returns, which is
+outside what this measurement is allowed to decide. It is a decision, not an
+oversight: a truncated neighborhood should be a predictable subset, and the
+cheapest way to get that is one `ORDER BY` in the query.
 
 ## Repeatability
 
-Three runs of `make graph-benchmark`, same machine, same command, scratch
-database, 20 iterations each. Run 1 is the recorded artifact; runs 2 and 3 were
-written to `/tmp`.
+Three runs of the benchmark, same machine, same command, scratch database, 20
+iterations each, load average about 5. Run 1 is the recorded artifact; runs 2 and
+3 were written to `/tmp`. The corpus is synthetic and deterministic, so a
+run-to-run difference is a finding about the code or the machine, never about the
+data.
 
-**Every structural result is identical in all three runs**, and every run's own
-assertions hold:
+**Every structural result is identical in all three runs** except the two the
+previous section explains, and every run's own assertions hold:
 
 | Result | Runs 1, 2, 3 |
 | --- | --- |
 | returned nodes / edges per scenario | 50/49, 200/200, 200/200 - identical |
 | truncation verdict and reasons | none, none, `node_limit`+`edge_limit` - identical |
+| node and edge retention above the bound | 16.65% and 12.51% - identical |
 | unbounded reachable nodes / edges | 50/49, 200/200, 1201/1599 - identical |
 | plan shared buffers | 164, 458, 2381 - identical |
-| merges / partitions, below and at the bound | 49/1 and 198/2 - identical |
+| partitions below and at the bound | 1 of 50 and 2 with the largest 198 - identical |
+| partitions above the bound | 68, 66, 73 - **not** identical, and not expected to be |
+| fingerprint survives a rebuild, untruncated scenarios | yes, both, all three runs |
 | path id, input fingerprint, stable within the run | yes, all scenarios, all runs |
 
-**Allocations are reproducible to five significant figures on the paths that do no
-I/O**, which is the number worth having:
+**Allocations are reproducible to the byte on the paths that do no I/O**, which
+is the number worth having. Spread is `(max - min)` as a percentage of the mean
+across the three runs:
 
-| Metric | Run 1 | Run 2 | Run 3 |
-| --- | ---: | ---: | ---: |
-| community detection, at the bound, bytes/call | 160,749,864 | 160,751,968 | 160,752,146 |
-| neighborhood, at the bound, bytes/call | 2,482,939 | 2,488,592 | 2,434,136 |
-| retrieval, above the bound, bytes/call | 742,468 | 736,065 | 742,832 |
+| Metric | Run 1 | Run 2 | Run 3 | spread |
+| --- | ---: | ---: | ---: | ---: |
+| community detection, at the bound, KiB/call | 2,601 | 2,601 | 2,601 | 0.0% |
+| community detection, at the bound, allocs/call | 1,874 | 1,874 | 1,874 | 0.0% |
+| community detection, below the bound, KiB/call | 213 | 213 | 213 | 0.0% |
+| neighborhood, at the bound, KiB/call | 2,215 | 2,269 | 2,232 | 2.4% |
+| neighborhood, at the bound, allocs/call | 41,821 | 41,818 | 41,806 | 0.0% |
+| retrieval, above the bound, KiB/call | 575 | 555 | 561 | 3.6% |
+| retrieval, above the bound, allocs/call | 2,418 | 2,409 | 2,411 | 0.4% |
+| community detection, above the bound, KiB/call | 1,224 | 1,264 | 1,190 | 6.0% |
+
+The community-detection rows move at the bound by nothing at all and above it by
+6%, and the reason is the same as the partition: above the bound the operation is
+given a different 200 statements each run, and the algorithm's cost depends on
+the statements it was given.
 
 **Wall-clock latency is not reproducible on this machine, and the way it fails is
-worth stating precisely.** It is not per-metric noise: each run is uniformly faster
-or uniformly slower than the others.
+worth stating precisely.** It is not per-metric noise: each run is uniformly
+faster or uniformly slower than the others, and the whole set sits 40-56% below
+the previous document's, which is a property of the machine on the day rather
+than of the code.
 
-| Retrieval p50 (ms) | Run 1 | Run 2 | Run 3 |
-| --- | ---: | ---: | ---: |
-| below the bound | 4.6 | 7.8 | 2.8 |
-| at the bound | 18.0 | 17.6 | 7.0 |
-| above the bound | 23.3 | 16.9 | 12.8 |
+| p50 (ms) | Run 1 | Run 2 | Run 3 | spread |
+| --- | ---: | ---: | ---: | ---: |
+| retrieval, below the bound | 2.790 | 3.702 | 3.073 | 28.6% |
+| retrieval, at the bound | 8.286 | 7.490 | 7.190 | 14.3% |
+| retrieval, above the bound | 10.222 | 10.475 | 9.285 | 11.9% |
+| neighborhood, at the bound | 83.147 | 81.114 | 87.179 | 7.2% |
+| community detection, at the bound | 5.293 | 5.453 | 5.218 | 4.4% |
+| communities, above the bound | 89.320 | 87.514 | 88.197 | 2.0% |
 
-Run 2 is 1.7x run 1 on the smallest graph and 0.7x on the largest; run 3 is 0.6x
-run 1 on the smallest and 0.55x on the largest. The size ordering held in runs 1
-and 3 and reversed in run 2, where the at-the-bound and above-the-bound retrievals
-came out within 4% of each other. One `p95` moved by 10x between runs: the
-below-the-bound neighborhood `p95` was 37.6ms, then 410.7ms, then 28.7ms, which is
-one slow sample on a shared machine rather than a tail.
+The p95 column is worse and should not be quoted from: its spread across the
+three runs runs from 2.4% to 81.6%, and one at-the-bound neighborhood p95 came
+out at 200.8ms against 122.6ms and 88.7ms. That is one slow sample on a shared
+machine, which is what a p95 of 20 samples is: the 19th slowest observation, not
+a tail.
 
-So: **quote the sizes, the truncation verdicts, the allocations and the
-community-detection ratio from this document. Do not quote a latency number from it
-as a property of the system.** The p50 column is evidence that the operation is
-tens to hundreds of milliseconds, and it is not a number to hold anybody to.
+So: **quote the sizes, the truncation verdicts, the allocations, the partition
+counts below and at the bound, and the community-detection ratio from this
+document. Do not quote a latency number from it as a property of the system.**
 
-**One relationship does reproduce, and it is the finding this document is for.**
-Community detection on the star at the bound costs 3.6x to 8.7x what it costs on
-the denser graph above it - 89.9/19.8, 123.8/14.2, 46.0/12.7 across the three runs -
-with the allocations behind it agreeing to five significant figures. The cost is a
-function of how many communities the greedy loop merges, not of how many edges it
-was given, and that is a fact about the algorithm rather than about the machine.
+**The relationship this document exists for still holds, and it is now a
+flat one.** The previous run's finding was that community detection on the star
+at the bound cost 3.6x to 8.7x what it cost on the denser graph above it - a
+star being *more* expensive than a six-times-larger graph, which is what sent a
+reader looking. It is now 2.0x (2,601 against 1,224 KiB) and 1.5x by p50 (5.293
+against 3.615ms), in line with 198 merges against 132 over 200 edges. The
+inversion is gone with its cause, and what remains is the ordinary fact that the
+greedy loop's cost follows the number of merges it performs.
 
 ## Findings
 
 **1. The retrieval is not the cost. The bookkeeping and the persistence are.**
-At the bound, retrieval is 18ms and the full operation is 159ms — 88% of the
+At the bound, retrieval is 8.3ms and the full operation is 83.1ms — 90% of the
 request is everything that happens after the graph has been read: starting the
 run, writing the path, the summary and the neighborhood row, completing the run.
-A graph database would replace the 18ms and leave the 141ms. If this operation
+A graph database would replace the 8.3ms and leave the 75ms. If this operation
 ever needed to be faster, the profile points at the run bookkeeping, not at
 PostgreSQL.
 
-**2. Community detection is the one place with a real scaling problem, and it is
-not a database problem.** The at-the-bound scenario, a root that cites 199
-sources, allocates **153 MiB per call** (156,982 KiB) in 82,307 allocations to find two
-communities. The below-the-bound scenario, the same shape at a quarter the size,
-allocates 2.7 MiB. Four times the nodes costs fifty-eight times the memory. The
-mechanism is in `graph_source_dependency_communities.go:216-271`: the greedy loop
-rebuilds its between-community edge map on every merge, and each merge renames
-the merged community by hashing its member list
-(`graphSourceDependencyCommunityKey`), so a star-shaped graph pays
-`O(members²)` in string building. `InferredMergeIterations` in the report is the
-count that drives it: 49, 198 and 135 for the three scenarios, derived as nodes
-minus surviving partitions.
-
-This is the finding most worth acting on, and it is not an argument for a graph
-database. It is an argument for bounding the greedy loop's working set, which is a
-change to one Go function, and it is listed in the status matrix as an open item
-rather than fixed here because this plan changes no production algorithm.
+**2. Community detection's memory problem was an implementation artifact, and it
+is fixed.** The at-the-bound scenario allocated **153 MiB per call** in 82,328
+allocations, measured again immediately before the change. A line profile put
+98.6% of it in three string concatenations in the merge loop, all of them paying
+for the size of a community's member list once per candidate pair per merge. A
+community is now addressed by an integer and the member list is built once per
+merge: **2,601 KiB and 1,874 allocations**, a 60x and a 44x reduction, with the
+partition identical. The cost also stopped being a function of how many
+communities the greedy loop merges into one large one and became a function of
+how many merges there are. This is the finding this document is for, and it was
+never an argument for a graph database: it was an argument for one Go loop, and
+the loop answered.
 
 **3. Above the bound, both limits fire and the verdict is honest.** The
 above-the-bound scenario retains 16.65% of the reachable nodes, reports
 `node_limit` and `edge_limit`, and downgrades its status to `partial`. This is
 the behavior the truncation reporting was built for and it is the strongest
 evidence in this document that the bounds are a product decision rather than a
-performance trick.
+performance trick. What is *not* honest yet is which 200 edges survive the
+retention: that is decided by a random uuid, and the stability section names the
+one-word change that would make it predictable.
 
-**4. The unbounded traversal is affordable at six times the bound.** 14.5ms for
+**4. The unbounded traversal is affordable at six times the bound.** 6.3ms for
 1,201 nodes. The 200-node bound is not currently protecting the database from
 anything. It is protecting the reader of a research result from a wall of
 citations, which is a different reason and a defensible one.
+
+**5. A fingerprint that cannot survive a rebuild cannot answer the question it
+exists for.** The previous run recorded, correctly, that a fingerprint of the
+neighborhood was a property of the row ids rather than of the graph. It is now a
+property of the graph, asserted in the acceptance suite across two schemas and in
+this run across a rebuild, and the property is stated in the code rather than
+implied by a hash over a `gen_random_uuid()` column. This is plan 014's lesson
+one layer up, and it is worth more than the memory number: a measurement that
+changes when nothing changed is not a measurement.
 
 ## The Neo4j conclusion
 
@@ -318,10 +450,10 @@ in `IMPLEMENTATION_PLAN.md:1619-1636`:
 | --- | --- |
 | frequent deep multi-hop traversals | Not measured. Every sample is depth 2; the bound is depth 3. Multi-hop at depth 3 over a 1,200-node graph was not run. |
 | graph algorithms are core to product use | No. Two of the twelve graph operations in `graphrag.go:47-60` are source-dependency, and one of those is community detection. |
-| recursive SQL becomes difficult to maintain | Not measured, and not a performance question. `graph_source_dependency.go:442-537` is 95 lines of one recursive query with three bounds in it. |
+| recursive SQL becomes difficult to maintain | Not measured, and not a performance question. `graph_source_dependency.go:475-569` is 95 lines of one recursive query with three bounds in it. |
 | relationship counts become very large | Not measured. The largest graph here is 1,599 edges. |
-| graph-native exploration becomes latency-sensitive | No evidence. p50 is tens of milliseconds for retrieval, hundreds for the full operation, on one idle machine. |
-| community detection becomes important | It is the opposite: community detection is the *slow* part (89ms, 153 MiB) and it is slow in Go, not in SQL. A graph database would not fix it. |
+| graph-native exploration becomes latency-sensitive | No evidence. p50 is single-digit to tens of milliseconds for retrieval and roughly 85ms for the full operation, on one machine under load. |
+| community detection becomes important | It is the opposite, and less so than last time: it is 5.3ms and 2.6 MiB at the bound, was 46-90ms and 153 MiB. A graph database would not have fixed the 153 MiB, and it is not what fixes the 5.3ms either. |
 | source dependency networks become large | Not measured. 1,201 nodes is a synthetic maximum, not an observed one. |
 
 **The data is insufficient to reopen this decision, and the honest reason is
@@ -345,13 +477,23 @@ that would change the answer:
    index-driven, and this run is far too small to show it.
 4. **A p95 from real traffic** rather than from a loop on a laptop.
 
-None of those four is a reason to add Neo4j. They are the reasons the gate stays
-closed for now instead of being reopened on a date.
+**Which number would have to move.** Nothing in this table can reopen the gate on
+its own, and the one number that moved since the previous run moved *away* from
+it: community detection's cost per call went from 156,982 KiB to 2,601, and at
+153 MiB a call there was a real argument for bounding the operation before twenty
+concurrent researchers found it - 20 x 153 MiB is 3 GiB of allocation churn, and
+that argument is now 60x weaker. Of the four gaps above, three are inputs that
+have to be collected rather than numbers that have to move, and the fourth would
+be a p95 measured under concurrency rather than on this machine. The number to
+watch is the query's shared buffers at a production row count: 2,381 at 1,849
+rows, all resident, zero disk reads. If a real table made that the dominant term
+and the plan went index-hunting, that would be the first evidence in this
+document that could be read as a database limit rather than as a fixture.
 
 ## Caveats
 
-- One machine, one container, one afternoon. The latency column is evidence of
-  order of magnitude and nothing finer.
+- One machine, one container, one afternoon, under a load average of about 5. The
+  latency column is evidence of order of magnitude and nothing finer.
 - Single-threaded. Every sample is one request against an otherwise idle
   database.
 - Synthetic shapes. Three graphs chosen to sit below, at and above a bound say
@@ -363,6 +505,9 @@ closed for now instead of being reopened on a date.
   two scenarios already seeded, so each scenario sees a slightly different table
   size. That is why the `at` and `above` rows are not two points on one curve,
   and it is why the document does not extrapolate from them.
+- Above the edge bound the retained statements are a random subset, so that
+  scenario's partition, merge count and cost are properties of one run and not of
+  the corpus. The two scenarios that are not truncated are the ones to compare.
 - No graph engine was run. This document contains no claim about what one would
   cost, and the numbers above are not a case for or against adding one.
 
@@ -371,6 +516,8 @@ closed for now instead of being reopened on a date.
 Re-run `make graph-benchmark` when any of these change: the bounds in
 `graphrag.go:37-45`, the neighborhood query, the community detection loop, or the
 `source_dependencies` indexes. Replace the table above and this file's commit
-reference in the same commit, and keep the variance band honest — if a future run
-is reproducible to within 5%, say so and say what changed, because that would be
-a result about the machine as much as about the code.
+reference in the same commit, and keep the variance band honest - if a future run
+is reproducible to within 5%, say so and say what changed, because that would be a
+result about the machine as much as about the code. A number measured before a
+change is not the number after it: the before and after columns above name their
+commits for exactly that reason.

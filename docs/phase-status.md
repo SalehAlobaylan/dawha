@@ -502,7 +502,7 @@ repository.**
 | Criterion | Evidence |
 | --- | --- |
 | **multi-hop research questions improve over vector-only RAG** | **measured, and the criterion is still open — this is Blocker 1, restated.** Both retrieval paths exist and both ran: `docs/retrieval-measurement.md` scores vector-only, hybrid and graph-augmented over 29 labelled Arabic questions and a 42-passage corpus that `make retrieval-report` provisions into an isolated schema and drops again. On the 17 multi-hop questions, vector-only reaches recall@5 0.118 (MRR 0.078), hybrid 1.000 (MRR 0.784), graph-augmented 1.000 (MRR 0.784), against a stated variance of 0.248. The difference is far outside the noise and is still **not** evidence for the criterion, because the only embedding provider this repository may use returns a SHA-512 hash of the input rather than a semantic vector: cosine(query, 42 other corpus texts) averages 0.068 and 28 of 42 come out positive. The "vector-only" arm is a permutation, so a difference against it is a difference against noise. |
-| graph traversal performant for bounded depth | measured: `docs/graph-benchmark.md`, 4.6-23.3ms p50 retrieval at and below the bounds, reproducible structurally and in allocations across two runs |
+| graph traversal performant for bounded depth | measured: `docs/graph-benchmark.md`, 2.8-10.5ms p50 retrieval at and below the bounds, reproducible structurally and in allocations across three runs, with the at-the-bound community-detection call at 2,601 KiB and 1,874 allocations |
 | evidence path explainable | `internal/research/rag_types.go:156` `GraphPath.Explanation` per status, `TestGraphShortestRelationshipPathIsBoundedAndDirectional`, `TestGraphAncestorFrontierIsDeterministicAndAIIndependent` |
 
 **Remaining gap:** the first criterion, and it is the criterion the phase is named
@@ -526,9 +526,15 @@ query log.
 | dependency does not automatically invalidate a source | `internal/research/graph_source_dependency.go` returns `StructuralOnly: true` with no evidence refs; `TestGraphSourceDependencyNeighborhoodIsBoundedAndPrivate` asserts `StructuralOnly` and an empty `EvidenceRefs` |
 
 **Measured, and worth reading before raising the bounds:** community detection
-allocates 153 MiB per call on a 200-node star, and its cost tracks the number of
-merges rather than the number of edges. `docs/graph-benchmark.md` has the numbers
-and the mechanism. It is a Go loop, not a database limit.
+used to allocate 153 MiB per call on a 200-node star, which was enough to
+reconsider bounding the loop's working set; it now allocates 2,601 KiB in 1,874
+allocations, with the partition unchanged, because a community is addressed by an
+integer rather than by its member list. Its cost still tracks the number of
+merges rather than the number of edges - which is why raising the node bound
+raises the loop's work with it - and the benchmark now attributes a call to its
+three phases so that the next reader does not have to guess.
+`docs/graph-benchmark.md` has the numbers and the mechanism. It is a Go loop,
+not a database limit.
 
 ### Phase 22: Advanced Temporal and Statistical Analysis (`:1502-1538`)
 
@@ -812,8 +818,8 @@ see Blocker 1 and **Phase 18** above.
 | The upload quarantine hook was deliberately not built | no requirement in this repository specifies the policy |
 | Candidate passage text is still inline | plan 007's own note; the panel renders every candidate |
 | The development database accumulates test users from packages that seed the public schema | fixture schemas are isolated and dropped; the packages that predate that harness are not |
-| Community detection allocates 153 MiB per call on a 200-node star | `internal/research/graph_source_dependency_communities.go:216-271`, measured in `docs/graph-benchmark.md` |
-| Neighborhood fingerprints are stable within a database, not across equivalent ones | `source_dependencies.id` is a random uuid and the query orders candidate edges by it; measured in `docs/graph-benchmark.md` |
+| Community detection allocates 153 MiB per call on a 200-node star | **FIXED in plan 017.** A community was *named* by its own member list and the greedy loop rebuilt its between-community map once per merge, keyed by concatenating two of those names per candidate pair - so a pair's key was as long as the two communities it joined, up to 7 KiB, and the cost was `O(merges x pairs x members)`. A community is now addressed by an integer, and the member-list name is built once per merge instead of once per candidate per merge, because the tie-break between equally-good merges is defined over member lists. Measured **2,601 KiB and 1,874 allocations per call at the bound**, down from 156,983 KiB and 82,328, with the partition identical; the remaining 1.5 MiB is the per-merge map rebuild, which is the loop's shape and is bounded by `GraphMaxNodes` merges over `GraphMaxEdges` edges. The answer did not change: the whole previous implementation was compared field by field against the new one over 384 graph/minimum-size pairs per run across six runs, and a tied star's partition is pinned field by field. `internal/research/graph_source_dependency_communities.go:298-391`, `TestDetectGraphSourceDependencyCommunitiesPinsTheAnswerOnATiedGraph`, measured in `docs/graph-benchmark.md` |
+| Neighborhood fingerprints are stable within a database, not across equivalent ones | **FIXED in plan 017.** The edge-set fingerprint hashed `source_dependencies.id` and the two path ids hashed the raw edge JSON, which carries that same id and the order the query returned edges in, so two databases holding the same corpus produced different fingerprints. A dependency statement is now identified by `(from, to, predicate, status)` - the tuple `source_dependencies` already declares `UNIQUE` - and the statements are sorted, so the fingerprint is a property of the graph and not of the row ids. `TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas` builds the same corpus in two separately created schemas, in opposite insertion order and with independent random edge row ids, and requires the path id, edge-set fingerprint and partition fingerprint to be equal, with a control that a genuinely different neighborhood does not match. Which neighbours are returned is unchanged, including the edge ids in the persisted JSON. **Not** changed, and named in `docs/graph-benchmark.md`: above the edge bound the query ranks candidate edges by that same random id, so which 200 of 1,599 statements survive truncation is still a random subset. That is the edge selection rather than the fingerprint, and changing it would change which edges a truncated graph returns. `internal/research/graph_source_dependency.go:326-356` |
 
 ## Maintenance
 
