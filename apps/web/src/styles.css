@@ -137,25 +137,19 @@ a {
   display: grid;
   width: 39px;
   height: 39px;
+  flex: none;
   place-items: center;
   border-radius: 12px;
-  background: var(--ink);
-  color: var(--sand);
-  box-shadow: 0 5px 12px rgba(45, 37, 32, 0.12);
+  /* The mark is drawn on paper, so the chip is paper: an ink tile turned the
+     artwork's own background into a black square behind a rust mark. */
+  background: var(--white-warm);
+  border: 1px solid var(--rule);
+  box-shadow: 0 5px 12px rgba(45, 37, 32, 0.1);
 }
 
-.brand-mark svg {
-  width: 25px;
-  height: 25px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.7;
-}
-
-.brand-mark circle {
-  fill: var(--red);
-  stroke: none;
+.brand-mark img {
+  width: 24px;
+  height: auto;
 }
 
 .workspace-chip {

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/wordmark.png" alt="دَوْحة" width="220" />
+</p>
+
 # Dawha
 
 An Arabic lineage research platform: family trees, historical sources, claims with

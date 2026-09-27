@@ -1,10 +1,17 @@
+import brandMark from "../assets/brand/mark.png";
+
+/**
+ * The product mark. The artwork is the real brand, so it is an image rather than
+ * a drawn stand-in: a rust three-figure genealogy mark on transparent, keyed out
+ * of the master by apps/web/scripts/prepare-brand-assets.py.
+ *
+ * It is decorative — every place that renders it also renders the name "دَوْحة"
+ * as text, so a screen reader announces the product rather than a file.
+ */
 export function BrandMark() {
   return (
-    <span className="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 32 32" role="presentation">
-        <path d="M5 8h22M5 16h22M5 24h22M11 3v26M21 3v26" />
-        <circle cx="16" cy="16" r="3.5" />
-      </svg>
+    <span className="brand-mark">
+      <img src={brandMark} alt="" width={28} height={32} decoding="async" />
     </span>
   );
 }
