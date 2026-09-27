@@ -63,16 +63,20 @@ THRESHOLDS: dict[str, dict[str, float]] = {
         "recall": 0.7,
         "mrr": 0.4,
     },
-    # Entity precision is 0.33 measured, against a 0.2 floor, because the
-    # provider proposes over-long spans and the containment rule charges it for
-    # that. The number is a baseline with a known weakness, not a target; see
-    # the note in evaluate_extraction.
+    # Entity precision is measured EXACTLY - a proposal is a hit when it IS a
+    # reviewed span - and it measured 0.3333 under the containment rule that
+    # preceded it, which is why the floor is 0.2 and not 1.0. The provider's spans
+    # are bounded now, so the measured value is 1.0 on two correct proposals over
+    # six internally authored fixtures, and the 0.2 floor stays where it is: a
+    # defect left this list when the provider changed, not when the number moved,
+    # and the floor is the measured baseline rather than a target. Re-measuring it
+    # against a larger fixture set is a version bump and a review, not a quiet
+    # edit. See the notes in evaluate_extraction.
     "extraction": {
         "claim_count_accuracy": 0.8,
         "entity_precision": 0.2,
         "entity_recall": 0.9,
-    },
-    # A name nobody recorded must resolve to nothing. That threshold is 1.0 on
+    },    # A name nobody recorded must resolve to nothing. That threshold is 1.0 on
     # purpose and is the one number in this file that must never be lowered.
     "resolution": {
         "top1_accuracy": 0.8,
@@ -128,16 +132,6 @@ THRESHOLDS: dict[str, dict[str, float]] = {
 # is the one thing that must never happen: it converts a measurement into a
 # description.
 KNOWN_DEFECTS: dict[str, dict[str, str]] = {
-    "extraction.entity_precision": {
-        "summary": "The extractor proposes spans that are much longer than the entity.",
-        "cause": "app/main.py extract_entities matches any run of four or more Arabic characters.",
-        "consequence": (
-            "A reviewer opens a candidate panel where a third of the proposals are over-long."
-        ),
-        "fix": (
-            "Bound the proposed span to the name, and score exact spans rather than containment."
-        ),
-    },
     "contradiction.pair_precision": {
         "summary": "Pairs about different people are proposed as contradiction candidates.",
         "cause": (

@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 _DIACRITICS = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACES = re.compile(r"\s+")
 _SENTENCES = re.compile(r"[^.!?\n]+[.!?]?")
-_NAME_CONTEXT = re.compile(r"(?<![؀-ۿ])(?:ابن|أبو|ابو|بنت|بن)\s+[؀-ۿ]+(?:\s+[؀-ۿ]+)?")
 _ARABIC_SEQUENCE = re.compile(r"[؀-ۿ][؀-ۿ\s]{2,60}[؀-ۿ]")
 _RELATION_TERMS = (
     "والد",
@@ -478,6 +477,104 @@ def clamp(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 4)
 
 
+# THE PROPOSED ENTITY SPAN IS THE NAME, AND NOT THE SENTENCE AROUND IT.
+#
+# `extract_entities` used to propose two things. The first was a kunyah or nisbah
+# form, taken by a regex over the marker followed by up to two more words. The
+# second was ANY run of four or more Arabic characters, taken by
+# `_ARABIC_SEQUENCE` - which, applied to a whole sentence, proposes the sentence.
+# A registry line came back as one candidate of
+# "ذكر السجل أن أبو بكر هو والد عبدالله بن محمد", and a reviewer opening the
+# candidate panel had to trim every one of those by hand. That is the defect
+# `KNOWN_DEFECTS` recorded under `extraction.entity_precision` and the reason the
+# evaluation scored entity spans by containment: an over-long proposal contains
+# the right answer, so the rule could not tell a good boundary from a bad one.
+#
+# So a proposed span is now BOUNDED, and the rule is about Arabic onomastics
+# rather than a length threshold:
+#
+#  1. A person name starts at a KUNYAH - أبو, أبو, بنت. A kunyah is a name on its
+#     own: "أبو بكر" is a man's name and "بنت محمد" is a form of address. It
+#     always starts a name, whatever precedes it - including a verb, because
+#     "ذكر أبو بكر" mentions a man and does not name one before him.
+#  2. A person name starts at a NISBAH - ابن, بن - only when nothing names it. A
+#     nisbah on its own is a parentage connector waiting for an ancestor, and
+#     given one it is a connector inside a longer expression: "عبدالله بن محمد" is
+#     one man's full name and "بن محمد" is its tail, which is not anybody's name.
+#     The word that names a marker is any word that is not a function word, so
+#     "ذكر السجل أن أبو بكر" and "بنت محمد هي أم عبدالله" are not parentage
+#     formulas - "أن" and "هي" are function words and name nobody.
+#  3. Either way the name is the marker and the ONE word after it, because that is
+#     the shape a kunyah or a nisbah name has: "أبو بكر", "بنت محمد", "بن محمد".
+#     A name is not allowed to run further than that, and the reason is specific:
+#     the conjunction و in Arabic prose is written ATTACHED to the next word
+#     ("ذكر أبو بكر وعبدالله بن محمد"), so a name that grew until a function word
+#     or a marker stopped it would swallow the conjunction and the next name with
+#     it. Bounding at one word cannot do that, because there is nothing between
+#     the given name and the conjunction to mistake for part of the name.
+#
+#     The cost of bounding at one is stated rather than hidden: a name written with
+#     a further qualifier - "أبو بكر الصديق" - is proposed without the qualifier.
+#     That costs RECALL, never precision, which is the opposite of the defect this
+#     replaces, and it is measured in the evaluation report rather than argued here.
+#
+#  4. A marker with no word after it is the relation, not the entity.
+#
+# The other cost of bounding is also stated: a bare personal name with no marker
+# around it is no longer proposed. The reviewer's own fixtures
+# (`extraction_cases.jsonl`) record an empty expected set for two sentences that
+# are nothing but bare names in a relation - ext-003 and ext-004 - so this is
+# what the reviewer asked for, and a lexical proposer that offers a name it cannot
+# bound is a review queue rather than a candidate list.
+#
+# `_ARABIC_SEQUENCE` stays, and now does the one job it is good at: splitting a
+# line into the runs of Arabic that a name can be made of. Punctuation and Latin
+# text end a run, so a name is never proposed across them.
+_KUNYAH_MARKERS = frozenset({"ابو", "بنت"})
+_NISBAH_MARKERS = frozenset({"ابن", "بن"})
+_NAME_MARKERS = _KUNYAH_MARKERS | _NISBAH_MARKERS
+_NAME_WORDS_AFTER_MARKER = 1
+
+
+def _is_name_word(value: str) -> bool:
+    """Whether a word can be the name a marker introduces.
+
+    Not a function word, and not another marker: a second marker means the first
+    one's name ended where the second begins.
+    """
+    normalized = normalized_text(value)
+    if not normalized or normalized in _FUNCTION_WORDS:
+        return False
+    return normalized not in _NAME_MARKERS
+
+
+def bounded_name_spans(text: str) -> list[str]:
+    """The person-name spans of `text`, in the order they appear.
+
+    See the note above: the span is the name, bounded on both sides, and a
+    nisbah that something already names is a connector rather than a name.
+    """
+    spans: list[str] = []
+    for run in _ARABIC_SEQUENCE.finditer(text):
+        words = [match for match in re.finditer(r"[؀-ۿ]+", run.group(0))]
+        for index, word in enumerate(words):
+            marker = normalized_text(word.group(0))
+            if marker not in _NAME_MARKERS:
+                continue
+            if marker in _NISBAH_MARKERS and index > 0 and _is_name_word(
+                words[index - 1].group(0)
+            ):
+                # Something names this nisbah, so it is a parentage connector and
+                # its tail is not a name.
+                continue
+            end = index + 1 + _NAME_WORDS_AFTER_MARKER
+            if end > len(words) or not _is_name_word(words[end - 1].group(0)):
+                # A marker with no name after it is the relation, not the entity.
+                continue
+            spans.append(text[run.start() + word.start() : run.start() + words[end - 1].end()])
+    return spans
+
+
 def relation_parts(value: str, predicate: str) -> tuple[str, str]:
     index = value.find(predicate)
     if index < 0:
@@ -763,13 +860,8 @@ class DeterministicProvider:
 
     def extract_entities(self, request: ExtractionRequest) -> EntityExtractionResponse:
         values: list[str] = []
-        for match in _NAME_CONTEXT.finditer(request.text):
-            value = _SPACES.sub(" ", match.group(0)).strip()
+        for value in bounded_name_spans(request.text):
             if value and value not in values:
-                values.append(value)
-        for match in _ARABIC_SEQUENCE.finditer(request.text):
-            value = _SPACES.sub(" ", match.group(0)).strip()
-            if len(value) >= 4 and value not in values:
                 values.append(value)
         entities = [
             EntityCandidate(

@@ -37,6 +37,7 @@ from app.main import (
     ResearchQueryRequest,
     SourceContext,
     StatementInput,
+    normalize_arabic_name,
 )
 from evaluation.thresholds import thresholds_for
 
@@ -113,16 +114,38 @@ def evaluate_retrieval(provider: DeterministicProvider) -> dict[str, Any]:
     }
 
 
+def _exact_span(value: str) -> str:
+    """A span as a comparable value.
+
+    The reviewer's expected entities and the provider's proposals are compared as
+    names, not as the raw strings they happen to be: `normalize_arabic_name` is
+    the normalization this repository already applies before a term is matched
+    against a name column, so "أبو بكر" and "ابو بكر" are one span under it. It
+    is applied to BOTH sides, which is what keeps this an exact-span rule rather
+    than a second normalization that only helps the provider.
+    """
+    return normalize_arabic_name(value).casefold()
+
+
 def evaluate_extraction(provider: DeterministicProvider) -> dict[str, Any]:
-    """Claim-count accuracy, and entity precision and recall under a containment rule.
+    """Claim-count accuracy, and entity precision and recall on the EXACT span.
 
     Claim extraction is measured on the number of claims, because the provider
     splits a sentence at its relation term and the reviewer does not argue with
-    where the cut fell. Entity extraction is measured with a containment rule: a
-    predicted span counts as a hit when it contains a reviewed span. The
-    provider is known to propose over-long spans, and this rule scores that as
-    imprecise rather than pretending the boundary is agreed - which is why the
-    entity numbers here are a baseline, not a target.
+    where the cut fell.
+
+    Entity extraction is measured on the exact span: a proposed entity is a hit
+    when it IS a reviewed span, and a reviewed span is covered when it IS a
+    proposed entity. It used to be measured by containment - a proposal counted
+    when it CONTAINED a reviewed span - which is what let a proposal as long as a
+    whole sentence score as a hit. Containment could not tell a good boundary from
+    a bad one, and it is the reason `extraction.entity_precision` sat at 0.3333
+    while the provider proposed twelve candidates for six sentences.
+
+    The scoring rule changed with the provider in plan 016, so a
+    `entity_precision` from a report whose group notes still say containment is not
+    comparable with one from this report, and `entity_scoring` below says which
+    rule produced the number.
     """
     cases = load_cases("extraction_cases.jsonl")
     count_hits = 0
@@ -139,15 +162,22 @@ def evaluate_extraction(provider: DeterministicProvider) -> dict[str, Any]:
             count_hits += 1
         wanted = case["expected_entities"]
         expected_entities += len(wanted)
-        covered_entities += sum(1 for span in wanted if any(span in item.text for item in entities))
+        wanted_spans = {_exact_span(span) for span in wanted}
+        proposed_spans = {_exact_span(item.text) for item in entities}
+        # Set membership rather than a count of matches, so a provider that
+        # proposed the same span twice is charged for it twice in precision - it
+        # put two candidates in front of a reviewer - while coverage counts each
+        # reviewed span once.
+        covered_entities += len(wanted_spans & proposed_spans)
         predicted_entities += len(entities)
-        correct_entities += sum(1 for item in entities if any(span in item.text for span in wanted))
+        correct_entities += sum(1 for span in proposed_spans if span in wanted_spans)
 
     entity_precision = ratio(correct_entities, predicted_entities)
     entity_recall = ratio(covered_entities, expected_entities)
     metrics = {
         "cases": len(cases),
         "claim_count_accuracy": ratio(count_hits, len(cases)) if cases else 0.0,
+        "entity_scoring": "exact_span",
         "entity_precision": entity_precision,
         "entity_recall": entity_recall,
         "entity_f1": f1(entity_precision, entity_recall),
@@ -157,10 +187,23 @@ def evaluate_extraction(provider: DeterministicProvider) -> dict[str, Any]:
         "metrics": metrics,
         "thresholds": thresholds_for("extraction"),
         "notes": [
-            "Entity spans are scored by containment: an over-long proposal counts as a hit,"
-            " so it costs precision without costing recall.",
-            "Entity precision is low because the provider proposes over-long spans, not because"
-            " the labels are loose: the fixtures record what a reviewer would accept.",
+            "Entity spans are scored EXACTLY: a proposal is a hit when it is a reviewed span, "
+            "not when it contains one. entity_scoring in the metrics says which rule produced "
+            "the number, because a report from before plan 016 scored containment and the two "
+            "are not comparable.",
+            "Entity precision rose from a measured 0.3333 because the provider stopped "
+            "proposing whole sentences, not because the fixtures moved: the expected entities "
+            "in extraction_cases.jsonl are byte-identical to what the reviewer recorded, and no "
+            "threshold moved with the number.",
+            "The bounding costs recall on a bare personal name with no kunyah or nisbah marker "
+            "around it, which this lexical proposer no longer offers. Two of the six fixtures "
+            "(ext-003, ext-004) record an empty expected set for sentences that are nothing but "
+            "names in a relation, so that trade is the reviewer's and is measured here rather "
+            "than argued.",
+            f"A precision of {entity_precision} is {correct_entities} correct proposals out of "
+            f"{predicted_entities} across {len(cases)} fixtures. It is agreement with "
+            "internally authored labels on a small set, NOT a quality claim about entity "
+            "extraction, and it must not be quoted as one.",
         ],
     }
 
