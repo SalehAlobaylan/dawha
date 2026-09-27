@@ -116,14 +116,34 @@ def routing_group() -> dict[str, Any]:
     return {
         "metrics": metrics,
         "thresholds": thresholds_for("routing"),
+        # The label provenance and the mis-routes are siblings of the metrics, not
+        # prose beside the file, so a reader who opens report.json and reads nothing
+        # else still learns that the labels are internally authored and which cases
+        # the provider disagrees with. That is the whole reason they are here: this
+        # report is the artifact a decision gets quoted from.
+        "provenance": report["provenance"],
+        "coverage": report["coverage"],
+        "misroutes": report["misroutes"],
         "notes": [
-            "The reviewed routing cases are unchanged from before the baselines were added.",
+            "The fifteen cases reviewed before plan 015 are unchanged; plan 015 added "
+            f"{report['cases'] - 15} more and recorded provenance for all "
+            f"{report['cases']}. Every existing case still passes its own label.",
+            "The added cases target the fallback path, the ignore path and the "
+            "cheap/deep boundary, because those are what fifteen hand-written greetings "
+            "least cover. `coverage` reports how many fallback cases there are and which "
+            "of the six operations the set touches.",
+            f"{len(report['misroutes'])} case(s) disagree with their own label and are "
+            "KEPT. `misroutes` lists them with the shape each was written to exercise. A "
+            "fixture set curated against the provider would have removed them, and the "
+            "number would be higher and worthless.",
             "per_route carries the confusion counts so a drop can be traced to a route.",
-            "route_accuracy and query_type_accuracy are agreement with reviewed labels on "
-            "texts the reviewer wrote. They are not historical accuracy on real questions, "
-            "and must not be quoted as confidence in a historical claim.",
+            "route_accuracy, query_type_accuracy and reason_code_accuracy are agreement "
+            "with internally authored labels. They are not accuracy on real questions and "
+            "must not be quoted as confidence in a historical claim. Read `provenance` "
+            "before quoting any of them.",
         ],
     }
+
 
 
 def build_groups() -> dict[str, dict[str, Any]]:
@@ -229,6 +249,28 @@ def print_summary(report: dict[str, Any]) -> None:
             print(f"  {metric}: {value} (baseline {threshold}) {mark}")
         for note in group["notes"]:
             print(f"  note: {note}")
+        # The provenance and the mis-routes are printed here rather than left in the
+        # JSON, because the sentence a reader will quote from this run's output is
+        # this one and it must not be quotable without the limitation beside it.
+        provenance = group.get("provenance")
+        if provenance:
+            print(f"  labels: {provenance['labels']}")
+            print(f"  cases by origin: {json.dumps(provenance['by_origin'], ensure_ascii=False)}")
+            print(f"  cases derived from a real query set: {provenance['derived_from_real_query_set']}")
+            print(f"  a real query set is available: {'yes' if provenance['available_real_query_set'] else 'no'}")
+            print(f"  limitation: {provenance['limitation']}")
+        misroutes = group.get("misroutes") or []
+        if misroutes:
+            print(f"  mis-routes kept ({len(misroutes)}):")
+            for misroute in misroutes:
+                print(
+                    f"    {misroute['case_id']} {','.join(misroute['field'])}: "
+                    f"expected {misroute['expected']['route']}/"
+                    f"{misroute['expected']['query_type']}/{misroute['expected']['reason_code']}, "
+                    f"got {misroute['actual']['route']}/{misroute['actual']['query_type']}/"
+                    f"{misroute['actual']['reason_code']}"
+                )
+                print(f"      exercises: {misroute['exercises']}")
     if report["known_defects"]:
         print("\n[known defects] holding their thresholds, and still wrong:")
         for defect in report["known_defects"]:
