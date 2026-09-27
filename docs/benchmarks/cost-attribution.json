@@ -105,7 +105,7 @@
     "path": "../../../ai-research/evaluation/routing_cases.jsonl",
     "sha256": "33c5a15801093c63b3f2a1378211e55619bb0151f5d144e8318da93c2c41d282"
   },
-  "generated_at": "2026-09-27T12:10:09Z",
+  "generated_at": "2026-09-27T12:19:52Z",
   "label_decision_divergences": [],
   "label_decision_divergences_note": "Empty, and that is a result rather than an absence: over these thirty-three cases the Go fallback's route agrees with the reviewed label on every one, so grouping attributed cost by label and grouping it by decision give the same numbers. The label and the code still disagree about QUERY TYPE on four cases, which the evaluation reports in the routing group's `misroutes`; a query type does not change which route a case takes, so it does not move a cost figure. The two implementations of the decision also disagree with EACH OTHER on rt-019 - which implementation is routed to ignore a punctuation-only query - and that is recorded in TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses.",
   "per_case": [
@@ -469,7 +469,7 @@
     "why_not": "This difference is what routing was worth ON THIS FIXTURE SET under THIS cost model, in work units that are not money. It is not a saving, a budget, a forecast or a result. The criterion is about expensive model calls in production, and this report has no production traffic. The counterfactual is exact - the same function over the same payload - and it is exact about the wrong thing."
   },
   "report": "synthetic cost attribution over the labelled routing set",
-  "report_commit": "49c1d17",
+  "report_commit": "56737b9",
   "units": {
     "definition": "the work of carrying one thousand runes of this service's own JSON request payload at unit weight, multiplied by the declared weight of the operation and of the model",
     "name": "dawha work unit (dwu)",
