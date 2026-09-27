@@ -19,7 +19,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 011 | Prove the S3 adapter against MinIO, and record R2 as the production target | P2 | S | 008 | DONE (merged `2ddaa59`) |
 | 012 | Stop the test-data leak, and stop citing sources that do not answer | P1 | M | 004, 009 | DONE (merged `2314de1`) |
 | 013 | Close the V1 product gaps the status review found | P1 | L | 001, 002, 005, 010 | DONE (merged `e063bc3`) |
-| 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | TODO |
+| 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | DONE (merged `83eb658`) |
 | 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | TODO |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
@@ -79,10 +79,13 @@ started, and 14 of the 18 V1 steps proved outright — with three plans left to 
   against a raw column, the change-set composer V1 step 12 promised, and the two criteria the
   status document never mentioned. `docs/phase-status.md` now records all eighteen V1 steps as
   proved, and the only remaining limit is plan 014's.
-- **014** makes hybrid retrieval measurable. The vector leg is real code
-  (`retrieval.go:69-100`, combined at `rag_service.go:77-81`) and had nothing to score, because
-  no seeded passage carries an embedding. That is what blocks Phase 20's own criterion, not a
-  missing retrieval path.
+- **014** (done) made hybrid retrieval measurable, and the measurement refused to conclude. The
+  vector leg is real code (`retrieval.go:69-100`, combined at `rag_service.go:77-81`); a backfill
+  now embeds the corpus, and 29 labelled Arabic questions measure three arms. Multi-hop recall@5:
+  vector-only 0.118, hybrid 1.000, graph-augmented 1.000 — and **Phase 20 stays open**, because the
+  only embedding provider this repository may use returns a SHA-512 digest, so the vector arm is a
+  permutation and the difference is against a hash. `docs/retrieval-measurement.md` names the corpus
+  it would take (~381 judged cases per arm) to answer the question for real.
 - **015** addresses Phase 18's cost criterion, which needs production traffic this repository
   does not have; the deliverable is attribution, label provenance, and a measurement design,
   with the criterion left honestly open.
