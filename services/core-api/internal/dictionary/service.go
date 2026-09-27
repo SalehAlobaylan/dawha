@@ -435,7 +435,12 @@ func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
 		return `SELECT b.id, 'branch', b.canonical_name_ar, f.canonical_name_ar, NULL::text, (SELECT count(*) FROM branches child WHERE child.parent_branch_id = b.id) FROM branches b JOIN families f ON f.id = b.family_id WHERE ` + branchPredicate + ` AND ` + familyPredicate + ` AND (` + fmtCondition("b.normalized_name_ar", term) + ` OR f.normalized_name_ar ILIKE '%' || ` + term + ` || '%') ORDER BY b.canonical_name_ar LIMIT 100`, params.Args()
 	case "places":
 		placePredicate := policy.ReferencePredicate(params, "place", "p.id")
-		return `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE ` + placePredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
+		// A historical name is a name like any other, and it carries the same
+		// normalized column as the row it belongs to, so the term is matched against
+		// that column. db/migrations/0042 records leaving the index off this table, so
+		// reading the normalized column costs nothing the raw column was being read
+		// for.
+		return `SELECT p.id, 'place', p.canonical_name_ar, COALESCE((SELECT hp.name_ar FROM historical_place_names hp WHERE hp.place_id = p.id ORDER BY hp.created_at LIMIT 1), ''), p.place_type, (SELECT count(*) FROM historical_place_names hp WHERE hp.place_id = p.id) FROM places p WHERE ` + placePredicate + ` AND (` + fmtCondition("p.normalized_name_ar", term) + ` OR EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.normalized_name_ar ILIKE '%' || ` + term + ` || '%')) ORDER BY p.canonical_name_ar LIMIT 100`, params.Args()
 	case "sources":
 		sourcePredicate := policy.SourcePredicate(params, "s.id")
 		return `SELECT s.id, 'source', s.title_ar, COALESCE(s.author_ar, ''), s.source_type, (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id) FROM sources s WHERE ` + sourcePredicate + ` AND (` + term + ` = '' OR s.title_ar ILIKE '%' || ` + term + ` || '%' OR COALESCE(s.author_ar, '') ILIKE '%' || ` + term + ` || '%') ORDER BY s.title_ar LIMIT 100`, params.Args()
@@ -458,9 +463,17 @@ func indexQuery(kind, search string, policy visibility.Policy) (string, []any) {
 		// belongs in the join condition. An unreadable person does not join, the
 		// COALESCE fallback reports the id the row already exposes, and the name of a
 		// private draft person cannot reach the label or match the search term.
+		//
+		// The label and the match read different columns, and the difference is the
+		// whole point. A label is how the record spells its own name, so it stays the
+		// raw canonical column. A match compares the term ListIndex already normalized
+		// against the column that holds the same normalization, which is why this
+		// branch once answered a name containing ة in five indexes and not in this
+		// one. Nothing is re-normalized here: normalizing a stored column inside the
+		// predicate is the unindexed scan db/migrations/0042 declined to accept.
 		subjectPerson := policy.PersonPredicate(params, "ps.id")
 		objectPerson := policy.PersonPredicate(params, "po.id")
-		return `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id AND ` + subjectPerson + ` LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id AND ` + objectPerson + ` WHERE ` + claimPredicate + ` AND c.status IN ('disputed', 'contested') AND (` + term + ` = '' OR COALESCE(ps.canonical_name_ar, c.subject_id::text) ILIKE '%' || ` + term + ` || '%' OR COALESCE(po.canonical_name_ar, c.object_id::text) ILIKE '%' || ` + term + ` || '%') ORDER BY c.updated_at DESC LIMIT 100`, params.Args()
+		return `SELECT c.id, 'claim', COALESCE(ps.canonical_name_ar, c.subject_id::text) || ' ← ' || COALESCE(po.canonical_name_ar, c.object_id::text), c.predicate, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c LEFT JOIN people ps ON c.subject_type = 'person' AND ps.id = c.subject_id AND ` + subjectPerson + ` LEFT JOIN people po ON c.object_type = 'person' AND po.id = c.object_id AND ` + objectPerson + ` WHERE ` + claimPredicate + ` AND c.status IN ('disputed', 'contested') AND (` + term + ` = '' OR ps.normalized_name_ar ILIKE '%' || ` + term + ` || '%' OR po.normalized_name_ar ILIKE '%' || ` + term + ` || '%') ORDER BY c.updated_at DESC LIMIT 100`, params.Args()
 	}
 	return "", nil
 }

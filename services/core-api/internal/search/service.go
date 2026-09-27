@@ -239,7 +239,7 @@ func (s *Service) searchNames(ctx context.Context, policy visibility.Policy, que
 			FROM branches b JOIN families f ON f.id = b.family_id WHERE `+branchPredicate+` AND `+branchFamilyPredicate+` AND (`+personRef+` = '' OR b.id = `+personRef+`::uuid)
 			UNION ALL
 			SELECT p.id, 'place', p.canonical_name_ar, NULL::text, p.place_type,
-			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.name_ar ILIKE '%' || `+termRef+` || '%') THEN 85 ELSE 0 END, similarity(p.normalized_name_ar, `+termRef+`) * 70)
+			       GREATEST(CASE WHEN p.normalized_name_ar = `+termRef+` THEN 100 ELSE 0 END, CASE WHEN EXISTS (SELECT 1 FROM historical_place_names hp WHERE hp.place_id = p.id AND hp.normalized_name_ar ILIKE '%' || `+termRef+` || '%') THEN 85 ELSE 0 END, similarity(p.normalized_name_ar, `+termRef+`) * 70)
 			FROM places p WHERE `+placePredicate+` AND (`+personRef+` = '' OR p.id = `+personRef+`::uuid) AND (`+placeRef+` = '' OR p.id = `+placeRef+`::uuid)
 		)
 		SELECT page.id, page.kind, page.name,
@@ -311,6 +311,12 @@ func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, qu
 	// anonymous caller probe a private draft person: a hit reveals that the name
 	// exists and is attached to a claim. The person policy therefore gates the name
 	// match, so a hidden person cannot pull a claim into the result set.
+	//
+	// The match reads normalized_name_ar, not canonical_name_ar. The term was
+	// normalized once in validateInput, and this is the only claim stage that names a
+	// person, so a name spelled with ة was unreachable here while every other name
+	// stage found it. The stored column already holds that normalization, so nothing
+	// is computed inside the predicate.
 	matchedPerson := policy.PersonPredicate(params, "p.id")
 	termRef := params.Add(query)
 	statusRef := params.Add(input.Status)
@@ -324,7 +330,7 @@ func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, qu
 		SELECT c.id, c.predicate, COALESCE(c.notes_ar, ''), c.status,
 		       GREATEST(CASE WHEN c.predicate = `+termRef+` THEN 100 ELSE 0 END, similarity(c.predicate, `+termRef+`) * 70, CASE WHEN COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' THEN 60 ELSE 0 END) AS score
 		FROM claims c
-		WHERE (`+termRef+` = '' OR c.predicate ILIKE '%' || `+termRef+` || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND `+matchedPerson+` AND p.canonical_name_ar ILIKE '%' || `+termRef+` || '%'))
+		WHERE (`+termRef+` = '' OR c.predicate ILIKE '%' || `+termRef+` || '%' OR COALESCE(c.notes_ar, '') ILIKE '%' || `+termRef+` || '%' OR EXISTS (SELECT 1 FROM people p WHERE p.id IN (c.subject_id, c.object_id) AND `+matchedPerson+` AND p.normalized_name_ar ILIKE '%' || `+termRef+` || '%'))
 		  AND `+claimPredicate+`
 		  AND (`+statusRef+` = '' OR c.status = `+statusRef+`)
 		  AND (`+personRef+` = '' OR c.subject_id = `+personRef+`::uuid OR c.object_id = `+personRef+`::uuid)
