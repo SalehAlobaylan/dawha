@@ -21,7 +21,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 013 | Close the V1 product gaps the status review found | P1 | L | 001, 002, 005, 010 | DONE (merged `e063bc3`) |
 | 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | DONE (merged `83eb658`) |
 | 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | DONE (merged `6621961`) |
-| 016 | Fix the remaining correctness, privacy and consistency defects | P1 | M | 001, 002, 006, 009, 012, 015 | TODO |
+| 016 | Fix the remaining correctness, privacy and consistency defects | P1 | M | 001, 002, 006, 009, 012, 015 | DONE (merged `c6ddbf8`) |
 | 017 | Make the source-dependency measurements stable and bounded | P2 | M | 007, 009, 014 | TODO |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
@@ -99,3 +99,15 @@ started, and 14 of the 18 V1 steps proved outright — with three plans left to 
   synthetic workload and says in its own output that it is not a measured reduction in spend:
   **the criterion stays OPEN**, with a 28-day window, a ≥1,000-query floor, and a 20% deep-call-rate
   threshold stated before the data exists.
+
+## Deferred by decision, not by omission
+
+- **Object storage in production is Cloudflare R2; MinIO is the local and verification backend.**
+  `S3Store` is contract-tested against MinIO, including a presigned URL fetched over HTTP with
+  a plain client. R2 has never been contacted; `docs/storage-backends.md` holds the cutover
+  checklist.
+- **Redis is not being introduced.** The rate limiter is in-process and IP-keyed, so a
+  multi-replica deployment has one budget per replica and one per address behind NAT. That is a
+  recorded limit, not an oversight, and it stays until it is explicitly asked for.
+- **OCR** is discussed in `docs/ocr-and-import-decision.md` and is not on the critical path for
+  a family-tree import.
