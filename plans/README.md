@@ -18,6 +18,9 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 010 | Fix the V1 frontend defects the browser suite exposed | P1 | S | 004 | DONE (merged `3302f1e`) |
 | 011 | Prove the S3 adapter against MinIO, and record R2 as the production target | P2 | S | 008 | DONE (merged `2ddaa59`) |
 | 012 | Stop the test-data leak, and stop citing sources that do not answer | P1 | M | 004, 009 | DONE (merged `2314de1`) |
+| 013 | Close the V1 product gaps the status review found | P1 | L | 001, 002, 005, 010 | TODO |
+| 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | TODO |
+| 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | TODO |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -65,3 +68,21 @@ Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 - GraphRAG has no labelled corpus, so "multi-hop beats vector-only RAG" has no evidence path.
 - The disputed-claims dictionary index cannot be searched by a name containing ة.
 - Candidate passage text is inline, and `sourceprocessing.files`/`runs` order by `created_at` with no tiebreak.
+
+## Plans 013-015: closing the plan against itself
+
+A review of `IMPLEMENTATION_PLAN.md` against the code (not against `docs/phase-status.md`)
+found the plan substantially complete — 21 of 25 phases implemented, 4 partial, 0 not
+started, and 14 of the 18 V1 steps proved outright — with three plans left to write:
+
+- **013** closes the product gaps: the ة/ه index asymmetry that blocks V1 steps 13 and 14,
+  the review panel that cannot compose the typed change set V1 step 12 promises, and the two
+  criteria the status document never mentions (Phase 14's absent OCR stage, Phase 10's
+  absent date conversion).
+- **014** makes hybrid retrieval measurable. The vector leg is real code
+  (`retrieval.go:69-100`, combined at `rag_service.go:77-81`) and had nothing to score, because
+  no seeded passage carries an embedding. That is what blocks Phase 20's own criterion, not a
+  missing retrieval path.
+- **015** addresses Phase 18's cost criterion, which needs production traffic this repository
+  does not have; the deliverable is attribution, label provenance, and a measurement design,
+  with the criterion left honestly open.
