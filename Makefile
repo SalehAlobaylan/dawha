@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark e2e e2e-clean storage-up storage-down
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark retrieval-report e2e e2e-clean storage-up storage-down db-sweep
 
 install:
 	npm install
@@ -100,8 +100,33 @@ storage-down:
 db-migrate: db-up
 	@infra/local/migrate.sh
 
+# db-seed applies every db/seeds/*.sql in name order, in one psql session.
+#
+# It was one hardcoded file, which was the same thing as saying there could only
+# ever be one. It is a loop now, and the loop is over the directory rather than
+# over a list, so adding a seed file does not mean remembering to change this
+# target - the failure mode being a corpus that exists in the tree and is applied
+# nowhere.
+#
+# WHAT IS DELIBERATELY NOT HERE: the retrieval measurement corpus. It was, and
+# putting it here put 42 synthetic passages of geography into every seeded
+# environment - the developer's database, the E2E stack, `make verify-full` - and
+# broke apps/web/e2e/journeys/09-research-query.spec.ts, which asserts that a
+# query about nothing in the corpus is refused. A gate that adds fixture data to
+# the demo dataset is a gate that changes what the product shows, so the corpus
+# moved next to the labels that judge it
+# (services/core-api/internal/research/testdata/retrieval_corpus.sql) and
+# `make retrieval-report` provisions it into a schema it drops again.
+#
+# Every seed is insert-only (`ON CONFLICT DO NOTHING`), so this is safe to run
+# twice. It is NOT a way to change a row: a seed that has already been applied
+# leaves its old values in place, which is why an edit to a seed belongs in a new
+# file or in a migration, and why a fresh database is how a seed change is tested.
 db-seed:
-	@docker compose exec -T db psql -U $${POSTGRES_USER:-dawha} -d $${POSTGRES_DB:-dawha} -v ON_ERROR_STOP=1 < db/seeds/001_demo.sql
+	@for seed in db/seeds/*.sql; do \
+		printf 'seeding %s\n' "$$seed"; \
+		docker compose exec -T db psql -U $${POSTGRES_USER:-dawha} -d $${POSTGRES_DB:-dawha} -v ON_ERROR_STOP=1 -q < "$$seed" || exit $$?; \
+	done
 
 sqlc:
 	cd services/core-api && sqlc generate
@@ -346,6 +371,70 @@ graph-benchmark:
 		DAWHA_GRAPH_BENCH_ITERATIONS="$${DAWHA_GRAPH_BENCH_ITERATIONS:-20}" \
 		DAWHA_GRAPH_BENCH_REPORT="$(DAWHA_GRAPH_BENCH_REPORT)" \
 		go test ./internal/research -run '^TestGraphSourceDependency(Benchmark|NeighborhoodStaysBoundedAcrossGraphSizes)$$' -count=1 -v -timeout 30m
+
+# retrieval-report measures the three retrieval arms - vector-only, hybrid and
+# graph-augmented - over the labelled question set in
+# services/core-api/internal/research/testdata/retrieval_measurement_cases.jsonl,
+# and writes the JSON behind docs/retrieval-measurement.md.
+#
+# It needs two things, and each is a real prerequisite rather than a convenience:
+#
+#   1. A MIGRATED database, and nothing else. The command provisions its own
+#      corpus - services/core-api/internal/research/testdata/retrieval_corpus.sql
+#      - into an isolated schema, embeds it, measures it and drops the schema. So
+#      it works on a database that has only db/seeds/001_demo.sql applied, on a
+#      freshly migrated one, and on a developer's own database without changing
+#      it. The corpus is NOT in db/seeds/ on purpose: see the note on db-seed
+#      above for what happened when it was.
+#   2. The AI service running, because the two legs under measurement ARE an
+#      embedding call and a rerank call. A stub in their place would measure the
+#      stub, so the run fails when AI_RESEARCH_URL is unset instead of falling
+#      back to one.
+#
+# Once the corpus is provisioned the measurement itself is read-only: every leg it
+# calls is a SELECT and the graph traversal runs in a read-only transaction. The
+# only writes are the corpus and its embeddings, and both disappear with the
+# schema. DAWHA_RETRIEVAL_KEEP_CORPUS=1 leaves it in place for reading in psql.
+#
+#   COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=<a scratch database> make db-migrate
+#   cd services/ai-research && .venv/bin/python -m uvicorn app.main:app --port 8000 &
+#   COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=<the same scratch database> make retrieval-report
+#
+#   AI_RESEARCH_URL=http://127.0.0.1:8000 make retrieval-report
+#   DAWHA_RETRIEVAL_BENCH_REPORT=/tmp/arms.json make retrieval-report
+DAWHA_RETRIEVAL_BENCH_REPORT ?= $(CURDIR)/docs/benchmarks/retrieval-arms.json
+retrieval-report:
+	@if [ -z "$${AI_RESEARCH_URL:-}" ]; then \
+		printf '%s\n' "retrieval-report needs AI_RESEARCH_URL: the arms under measurement are an embedding call and a rerank call, and a stub in their place would measure the stub. Start it with: cd services/ai-research && .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000" >&2; \
+		exit 2; \
+	fi
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		AI_RESEARCH_URL="$${AI_RESEARCH_URL}" \
+		DAWHA_RETRIEVAL_BENCH=1 \
+		DAWHA_RETRIEVAL_BENCH_REPORT="$(DAWHA_RETRIEVAL_BENCH_REPORT)" \
+		go test ./internal/research -run '^TestRetrievalMeasurementReport$$' -count=1 -v -timeout 30m
+
+# db-embed writes embeddings onto the seeded passages that have none, so the
+# vector leg has something to score. It is idempotent, it refuses to finish while
+# anything in scope is unembedded, and it is a separate command rather than part of
+# db-seed because it needs the AI service and because it WRITES: a seed is pure
+# SQL and stays that way.
+#
+# Point it at a scratch database, not at the one the Go suite runs against.
+#
+#   COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=<a scratch database> make db-embed
+#   COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=<a scratch database> make db-embed-check
+db-embed:
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		AI_RESEARCH_URL="$${AI_RESEARCH_URL:-http://localhost:8000}" \
+		go run ./cmd/embedding-backfill
+
+db-embed-check:
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		go run ./cmd/embedding-backfill -check
 
 # Security scanning: dependency advisories and committed secrets.
 #

@@ -460,12 +460,19 @@ repository.**
 
 | Criterion | Evidence |
 | --- | --- |
-| **multi-hop research questions improve over vector-only RAG** | **no evidence exists, and none can be produced here.** The comparison needs two retrieval paths and a labelled judgement. There is one path. `evaluation/evaluate.py` reports `vector_baseline.available = false` with the reason. This is **Blocker 1**. |
+| **multi-hop research questions improve over vector-only RAG** | **measured, and the criterion is still open — this is Blocker 1, restated.** Both retrieval paths exist and both ran: `docs/retrieval-measurement.md` scores vector-only, hybrid and graph-augmented over 29 labelled Arabic questions and a 42-passage corpus that `make retrieval-report` provisions into an isolated schema and drops again. On the 17 multi-hop questions, vector-only reaches recall@5 0.118 (MRR 0.078), hybrid 1.000 (MRR 0.784), graph-augmented 1.000 (MRR 0.784), against a stated variance of 0.248. The difference is far outside the noise and is still **not** evidence for the criterion, because the only embedding provider this repository may use returns a SHA-512 hash of the input rather than a semantic vector: cosine(query, 42 other corpus texts) averages 0.068 and 28 of 42 come out positive. The "vector-only" arm is a permutation, so a difference against it is a difference against noise. |
 | graph traversal performant for bounded depth | measured: `docs/graph-benchmark.md`, 4.6-23.3ms p50 retrieval at and below the bounds, reproducible structurally and in allocations across two runs |
 | evidence path explainable | `internal/research/rag_types.go:156` `GraphPath.Explanation` per status, `TestGraphShortestRelationshipPathIsBoundedAndDirectional`, `TestGraphAncestorFrontierIsDeterministicAndAIIndependent` |
 
 **Remaining gap:** the first criterion, and it is the criterion the phase is named
-for. Everything else in this phase is done and measured.
+for. Everything else in this phase is done and measured. What changed under plan
+014 is that the gap is now a measurement rather than an absence: the corpus, the
+question set and the harness exist, the arms run, and the report says what the
+numbers do and do not support. Three preconditions stand between here and a signed
+criterion, and all three are named in `docs/retrieval-measurement.md`: a semantic
+embedding provider, graph evidence merged into the fused ranking rather than
+appended after it, and a few hundred judged multi-hop questions from a production
+query log.
 
 ### Phase 21: Source Dependency Analysis (`:1464-1501`)
 
@@ -564,8 +571,12 @@ out of date is the failure this document exists to prevent, so the correction is
 the same commit as the code.
 
 What is left is not a gap in the eighteen but a standing limit of the repository:
-nothing here claims multi-hop retrieval improves on vector-only retrieval, because
-there is no second retrieval path to compare against (**Blocker 1**).
+nothing here claims multi-hop retrieval improves on vector-only retrieval. The reason
+used to be that there was no second retrieval path to compare against, which was
+wrong - there are two, and plan 014 measured them. The reason now is that the only
+permitted embedding provider returns a hash, so the comparison has no semantic
+baseline (**Blocker 1**, restated with the numbers in
+`docs/retrieval-measurement.md`).
 
 ---
 
@@ -574,23 +585,64 @@ there is no second retrieval path to compare against (**Blocker 1**).
 In the order a reviewer should take them. Each is stated as a defect with a
 reproduction, not as a task.
 
-### Blocker 1 - GraphRAG's own acceptance criterion has no evidence path
+### Blocker 1 - GraphRAG's own acceptance criterion has no evidence path - RESTATED by plan 014
+
+**This text was wrong about the repository and is corrected here.** It used to say
+there is "one retrieval path in this repository (`internal/research/retrieval.go`, a
+lexical trigram and token-overlap reranker)" and that closing the blocker needed "a
+labelled Arabic question set with judged relevant passages, and a second retrieval
+path to run it against."
+
+The second retrieval path was never missing. `retrieveVectorPassages`
+(`internal/research/retrieval.go:70-122`) scores passages with
+`1 - (sp.embedding <=> $1::vector)`, `execute` has always called both legs and fused
+them (`internal/research/rag_service.go:77-85`), and `rag_service.go:387-392`
+persists `Score.Lexical`, `Score.Vector`, `Score.Rerank` and `Score.Combined`
+separately. What was missing was **data**: `source_passages` held three rows and none
+had an embedding, because `db/seeds/` is pure SQL and the only writer of that column
+is the source-processing worker. Every test, demo and benchmark had therefore been
+running the lexical leg alone, silently.
+
+Plan 014 supplied the data, the labels and the harness, and measured all three arms.
+The criterion is **still open**, and the reason is now specific:
 
 `IMPLEMENTATION_PLAN.md:1443` requires that "multi-hop research questions improve
-over vector-only RAG". There is one retrieval path in this repository
-(`internal/research/retrieval.go`, a lexical trigram and token-overlap reranker)
-and no labelled corpus to judge a second one against, so the comparison cannot be
-run at all. `evaluation/evaluate.py` reports `vector_baseline.available = false`
-with the reason, which is the honest form of the answer, and
-`docs/graph-benchmark.md` measures traversal cost rather than retrieval quality -
-a different question.
+over vector-only RAG". On 17 labelled multi-hop questions, hybrid beats vector-only
+by 0.882 recall@5 and graph-augmented matches hybrid exactly. That difference is real
+and it is not evidence, because `DeterministicProvider.embed` is a SHA-512 digest of
+the normalized text rather than a semantic embedding, so the vector-only arm ranks
+the corpus by coincidence. The graph leg contributed four passages across three of
+the seventeen cases and never changed a top five, for three separate reasons: nine
+cases where every cited passage was already in the hybrid's list, four `geographic_path`
+cases whose evidence refs carry no passage or statement id and are therefore
+uncitable, and one case whose only edge is an `unresolved` claim that
+`evidence_connection` filters out. The full numbers, the stated variance and the
+method are in `docs/retrieval-measurement.md`; the machine-readable run is
+`docs/benchmarks/retrieval-arms.json`.
 
-**Why it blocks:** the phase the product is named for cannot be signed off, and any
-claim that graph retrieval helps is currently unfalsifiable in this repository.
+**Why it still blocks:** the phase the product is named for cannot be signed off.
+The blocker is no longer "there is nothing to measure" - it is "the only permitted
+embedding provider cannot produce an embedding, so the comparison has no semantic
+baseline to improve on".
 
-**What would close it:** a labelled Arabic question set with judged relevant
-passages, and a second retrieval path to run it against. Both are new work; neither
-is a measurement of what exists.
+**What would close it**, in the order that matters:
+
+1. **A semantic embedding provider.** Without one there is no vector-only arm to
+   improve on, at any corpus size. This is a decision, not a measurement, and it is
+   the binding constraint today.
+2. **Graph evidence merged into the fused ranking.** `graphPassageCitations` appends
+   after a thirty-item fused list, so a graph passage cannot reach a top-five slot
+   while the passage legs return more than five candidates. No corpus size fixes
+   that; it is an ordering decision.
+3. **A few hundred judged multi-hop questions** from a production query log, with
+   judgements by somebody who did not write the questions. At 17 cases the bar is
+   0.248; clearing a ten-point difference needs about 381 cases per arm.
+
+`evaluation/evaluate.py` still reports `vector_baseline.available = false`, and that
+is still the honest form of the answer: the Python evaluation has no corpus and no
+provider, so the comparison lives in the Go harness and its report. The reason text
+there has been updated to point at the measurement rather than to claim there is
+nothing to measure.
 
 ### Blocker 2 - a source that does not answer the question is still cited - FIXED in plan 012
 
@@ -677,8 +729,8 @@ Stated explicitly, with the code as the authority.
 | `ARCHITECTURE.md:1127` lists PDFs among stored object types | `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json`, `application/xml`; a PDF is refused with 415. **Corrected in `ARCHITECTURE.md` by this change.** |
 | `IMPLEMENTATION_PLAN.md:947` asks for "Hijri or Gregorian display support where practical" | There is no calendar conversion in either direction, and the decision is deliberate rather than an omission: every temporal column is a bare `date` with no calendar, so there is nothing to convert FROM, and a converted date would be day-precise where the record is a decade. One date-display contract instead, in `internal/dates`. Reasoning under **Phase 10** above. |
 | `IMPLEMENTATION_PLAN.md:1144` names a "text/OCR extraction" pipeline stage | There is no OCR, no PDF and no image ingestion. `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json` and `application/xml` and refuses anything else with 415, which is the decision `plans/003-source-format-contract.md:57` required and `ARCHITECTURE.md:1139-1155` already states. Reasoning under **Phase 14** above. |
-| `IMPLEMENTATION_PLAN.md:978` asks for "semantic passage search" | `internal/research/retrieval.go` is lexical: trigram index plus token overlap. There is no embedding retrieval in the query path. |
-| `IMPLEMENTATION_PLAN.md:1443` requires improvement over vector-only RAG | No vector-only path exists, so nothing can be compared. See Blocker 1. |
+| `IMPLEMENTATION_PLAN.md:978` asks for "semantic passage search" | **Corrected by plan 014.** This row used to say "There is no embedding retrieval in the query path", and that was wrong. `internal/research/retrieval.go:70-122` scores passages with pgvector (`1 - (sp.embedding <=> $1::vector)`) and `rag_service.go:77-85` calls the lexical and vector legs and fuses them. What was true is narrower: the seeded corpus carried no embeddings, so the vector leg had nothing to score and every test, demo and benchmark had been running lexical-only. `cmd/embedding-backfill` fills the column through the same `/embed` contract the worker calls, and the semantic search is real - but it is real over hashed vectors, not semantic ones. See `docs/retrieval-measurement.md`. |
+| `IMPLEMENTATION_PLAN.md:1443` requires improvement over vector-only RAG | The vector-only path exists and was measured; the criterion is still open because the provider's embedding is a hash, so the baseline is a permutation. See Blocker 1 and `docs/retrieval-measurement.md`. |
 | `IMPLEMENTATION_PLAN.md:1362` asks for a measurable reduction in expensive model calls | What is measured is route agreement on fifteen self-authored fixtures and a `synthesis_skipped` count. No cost measurement exists. |
 | `plans/README.md` describes the disputed-claims defect as the index comparing the normalized term against the raw column | That is correct, and the same file's summary of Phase 2 leaves the impression that name search generally cannot match ة. It always could: the people, families, tribes and branches indexes match. The defect was confined to `disputed-claims`, to claim-name search, and to the two historical-place-name predicates - four sites, all now fixed. Verified above. |
 

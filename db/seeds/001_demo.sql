@@ -54,9 +54,17 @@ VALUES
   ('30000000-0000-0000-0000-000000000004', 'رسالة عن المواضع في نجد', 'مؤلف تجريبي', 'book', '1240-01-01', 'صفحة 19', 'مخطوط تجريبي', '{"synthetic":true}')
 ON CONFLICT (id) DO NOTHING;
 
+-- The normalized column is what `identity.NormalizeArabicName(text_ar)`
+-- produces, not a hand-written approximation of it: a query is normalized by
+-- that function before it is compared against this column, and the worker
+-- embeds this exact text, so a value here that the normalizer would not
+-- produce is a row the lexical leg scores against a spelling no query can
+-- carry. `cmd/embedding-backfill` refuses to embed a passage whose two columns
+-- disagree, which is how the one row that said "اشاره الى" instead of "اشارات
+-- الي" was found.
 INSERT INTO source_passages (id, source_id, sequence_number, page_number, locator_ar, text_ar, normalized_text_ar)
 VALUES
-  ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1, 121, 'ص 121', 'يذكر النص أن عبدالله يتصل بمحمد بن سعد، مع إشارات إلى رواية أخرى.', 'يذكر النص ان عبدالله يتصل بمحمد بن سعد مع اشاره الى روايه اخري'),
+  ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 1, 121, 'ص 121', 'يذكر النص أن عبدالله يتصل بمحمد بن سعد، مع إشارات إلى رواية أخرى.', 'يذكر النص ان عبدالله يتصل بمحمد بن سعد مع اشارات الي روايه اخري'),
   ('40000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', 1, 84, 'ص 84', 'يروي النص أن والد عبدالله صالح، ويضع الملاحظة في موضع مختلف.', 'يروي النص ان والد عبدالله صالح ويضع الملاحظه في موضع مختلف'),
   ('40000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000003', 1, NULL, NULL, 'النشر يعرض علاقة الأبوة بين محمد وعبدالله.', 'النشر يعرض علاقه الابوه بين محمد وعبدالله')
 ON CONFLICT (id) DO NOTHING;

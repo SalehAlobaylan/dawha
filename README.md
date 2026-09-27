@@ -185,7 +185,9 @@ day to one.
 | `make db-up` / `make db-down` | the container is running or stopped | n/a |
 | `make storage-up` / `make storage-down` | a local MinIO is running, with the storage suite's bucket created, or stopped. Opt-in: nothing else in this table starts it | n/a |
 | `make db-migrate` | the schema matches the tree, atomically and checksummed | yes |
-| `make db-seed` | `db/seeds/001_demo.sql` applies cleanly | yes |
+| `make db-seed` | every file in `db/seeds/` applies cleanly, in name order | yes |
+| `make db-embed` | the seeded passages carry embeddings, so the vector retrieval leg has something to score | no (needs the AI service, and it writes) |
+| `make retrieval-report` | the three retrieval arms measured over the labelled corpus; writes `docs/benchmarks/retrieval-arms.json` | no (needs the AI service; provisions and drops its own corpus) |
 | `make migration-check` | drift: nothing pending, every recorded checksum equals the file on disk | yes, read-only |
 | `make migration-test` | the runner's five cases: success, failure, rerun, checksum, concurrent run | yes, creates and drops its own |
 | `make db-verify` | the complete Go suite with the skip audit, without touching migrations | yes |
@@ -279,10 +281,14 @@ apps/web/                 the web app and the Playwright suite
 services/core-api/        the API, the workers, the graph and research code
 services/ai-research/     the AI service and its evaluation harness
 db/migrations/            the schema, one file per version, checksummed
-db/seeds/                 the development seed
+db/seeds/                 the development seed. Three passages, four sources, and
+                          nothing else: the demo dataset is deliberately small,
+                          because it is what `make db-seed` puts into a developer's
+                          database, the E2E stack and `make verify-full`
 infra/local/              the migration runner, the link checker
 docs/                     the phase status matrix, the graph benchmark record, the
-                          object storage decision and R2 cutover record
+                          retrieval measurement record, the object storage decision
+                          and R2 cutover record
 plans/                    the remediation plans and their status
 ```
 

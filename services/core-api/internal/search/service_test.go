@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
@@ -161,8 +162,55 @@ func TestSemanticSearchUsesPublicProvenance(t *testing.T) {
 	if len(stub.requests) != 1 || stub.requests[0].Text != "عبد الله" {
 		t.Fatalf("semantic query was not normalized: %+v", stub.requests)
 	}
-	if len(response.Groups[0].Items) != 2 {
-		t.Fatalf("expected two public passages, got %+v", response.Groups[0].Items)
+	// Every count and every index below is scoped to this test's own public
+	// source, and it has to be.
+	//
+	// `go test ./...` runs packages in parallel and fourteen of them write to the
+	// PUBLIC schema of the same DATABASE_URL, so an unrelated package's fixture
+	// source can be mid-flight while this test runs. Asserting a global count of
+	// public passages therefore made this test a coin flip that had nothing to do
+	// with what it is testing: it failed in `make verify-full` with
+	// `مصدر ثنائي قديم` - a source internal/sourceprocessing's integration test
+	// creates, with no cleanup - sitting in the results. Reproduced on an
+	// unmodified checkout by inserting one public source and two passages from
+	// outside the package, so the defect is the assertion's and not plan 014's.
+	// The from-year assertion was the second one to go the same way: a source with
+	// no publication dates survives a year filter, so a foreign row is exactly
+	// what a global count here counts by accident.
+	//
+	// Scoping makes these assertions STRICTER about this test's own rows (the
+	// exact pair of passage ids, no third) and independent of the rest of the
+	// database. The private-leak checks stay GLOBAL on purpose: those are the
+	// security assertions, and scoping them would be weakening them.
+	// Every group is walked rather than just the first, and an empty response is
+	// a legitimate answer here: a filter that excludes everything returns no
+	// groups, and a helper that indexed Groups[0] would turn that into a panic.
+	ownItems := func(response Response) []Result {
+		t.Helper()
+		items := make([]Result, 0, 2)
+		for _, group := range response.Groups {
+			for _, item := range group.Items {
+				if item.SourceID == publicSourceID.String() {
+					items = append(items, item)
+				}
+			}
+		}
+		return items
+	}
+	ownPassageIDs := func(response Response) []string {
+		t.Helper()
+		ids := make([]string, 0, 2)
+		for _, item := range ownItems(response) {
+			ids = append(ids, item.PassageID)
+		}
+		sort.Strings(ids)
+		return ids
+	}
+	own := ownPassageIDs(response)
+	expected := []string{publicPassageID.String(), unreviewedPassageID.String()}
+	sort.Strings(expected)
+	if len(own) != 2 || own[0] != expected[0] || own[1] != expected[1] {
+		t.Fatalf("expected exactly the two public passages of this test's own source %s, got %v from %+v", publicSourceID, own, response.Groups[0].Items)
 	}
 	var accepted, unreviewed bool
 	for _, item := range response.Groups[0].Items {
@@ -189,8 +237,20 @@ func TestSemanticSearchUsesPublicProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dependencyResponse.Groups[0].Items[0].DependencyStatus != "likely_dependent" {
-		t.Fatalf("needs-review dependency was not reflected: %+v", dependencyResponse.Groups[0].Items[0])
+	// Read this test's own passage rather than whatever is first, for the same
+	// reason the counts are scoped: another package's rows can outrank it.
+	ownItem := func(response Response) Result {
+		t.Helper()
+		for _, item := range ownItems(response) {
+			if item.PassageID == publicPassageID.String() {
+				return item
+			}
+		}
+		t.Fatalf("this test's public passage is missing from the results: %+v", response.Groups[0].Items)
+		return Result{}
+	}
+	if ownItem(dependencyResponse).DependencyStatus != "likely_dependent" {
+		t.Fatalf("needs-review dependency was not reflected: %+v", ownItem(dependencyResponse))
 	}
 	if _, err := pool.Exec(ctx, `UPDATE source_dependencies SET status = 'confirmed' WHERE source_id = $1 AND depends_on_source_id = $2`, publicSourceID, privateSourceID); err != nil {
 		t.Fatal(err)
@@ -199,37 +259,46 @@ func TestSemanticSearchUsesPublicProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if confirmedResponse.Groups[0].Items[0].DependencyStatus != "derived" {
-		t.Fatalf("confirmed dependency was not reflected: %+v", confirmedResponse.Groups[0].Items[0])
+	if ownItem(confirmedResponse).DependencyStatus != "derived" {
+		t.Fatalf("confirmed dependency was not reflected: %+v", ownItem(confirmedResponse))
 	}
 
 	filtered, err := service.Search(ctx, Input{Query: "عبد الله", Kind: "semantic", PersonID: personID.String(), Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered.Groups) != 1 || len(filtered.Groups[0].Items) != 1 || filtered.Groups[0].Items[0].PassageID != publicPassageID.String() {
+	if len(filtered.Groups) != 1 || len(ownItems(filtered)) != 1 || ownItems(filtered)[0].PassageID != publicPassageID.String() {
 		t.Fatalf("person filter was not applied: %+v", filtered.Groups)
 	}
 	malformedFiltered, err := service.Search(ctx, Input{Query: "عبد الله", Kind: "semantic", PersonID: malformedPersonID.String(), Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(malformedFiltered.Groups) != 0 {
+	// Scoped for the same reason, and the security meaning is intact: what must
+	// not happen is THIS test's public passage appearing because a private claim
+	// about it is malformed. A foreign public source appearing here is not a leak,
+	// it is another package's fixture.
+	if len(ownItems(malformedFiltered)) != 0 {
 		t.Fatalf("inconsistent private evidence influenced public results: %+v", malformedFiltered.Groups)
 	}
 	fromFiltered, err := service.Search(ctx, Input{Query: "عبد الله", Kind: "semantic", FromYear: 1250, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fromFiltered.Groups) != 1 || len(fromFiltered.Groups[0].Items) != 2 {
+	if len(fromFiltered.Groups) != 1 || len(ownItems(fromFiltered)) != 2 {
 		t.Fatalf("from-year filter was not applied: %+v", fromFiltered.Groups)
 	}
 	toFiltered, err := service.Search(ctx, Input{Query: "عبد الله", Kind: "semantic", ToYear: 1150, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(toFiltered.Groups) != 0 {
-		t.Fatalf("out-of-range to-year filter returned results: %+v", toFiltered.Groups)
+	// A source with no publication dates SURVIVES a year filter, correctly - the
+	// filter cannot exclude what it does not know. So "the database returned
+	// nothing at all" was asserting an accident of an empty database rather than a
+	// property of the filter. What the filter must do is exclude this test's own
+	// passages, and that is what is asserted.
+	if len(ownItems(toFiltered)) != 0 {
+		t.Fatalf("out-of-range to-year filter returned this test's own passages: %+v", toFiltered.Groups)
 	}
 }
 

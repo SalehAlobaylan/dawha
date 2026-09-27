@@ -1,0 +1,2585 @@
+{
+  "generated_at": "2026-09-27T11:03:20Z",
+  "command": "make retrieval-report",
+  "commit": "1c119c1a26f1f59439e7d281fd0e57bd24d20c75",
+  "corpus": {
+    "version": "plan-014-retrieval-v1",
+    "cases_file": "services/core-api/internal/research/testdata/retrieval_measurement_cases.jsonl",
+    "cases_sha256": "90f647338d24b4d2e1ac352bc4d8675ed0530e7b792eeeba7b517e92eb01d0e1",
+    "passages": 42,
+    "retrievable_passages": 42,
+    "embedded_passages": 42,
+    "sources": 13,
+    "distinct_judged_passages": 29,
+    "cases": 29,
+    "multi_hop_cases": 17,
+    "single_hop_cases": 7,
+    "lexical_control_cases": 5,
+    "reviewed_by": [
+      "plan-014-author, sole author of both the corpus and these labels"
+    ],
+    "author_caveat": "The same author wrote the corpus (db/seeds/002_retrieval_corpus.sql) and every label in the question set. There is no second reviewer. These are internal fixtures judged by the person who built the thing they judge, and every number below inherits that limitation."
+  },
+  "measurement": {
+    "depth": 5,
+    "multi_hop_cases": 17,
+    "variance_metric": "sum of the two arms' Wilson 95% half-widths for recall on the multi-hop subset, w_a + w_b, where w is the half-length of the score interval for a proportion observed over n cases",
+    "variance_value": 0.248,
+    "variance_meaning": "a difference in multi-hop recall at or below 0.248 is inside the noise of 17 cases and is reported as no measurable difference. One case is worth 0.059 on its own. The bar is deliberately conservative in two ways: it is an interval half-width rather than a point estimate, and the two arms are treated as independent samples even though they are scored over the same questions. A paired statistic would be tighter, and a criterion about multi-hop questions should not be met on a difference a tighter statistic would have called significant and this one would not.",
+    "method": "recall@5 is the fraction of each case's judged passages inside the arm's first five results; MRR is the mean reciprocal rank of the first judged passage; a question the arm cannot answer scores zero for both rather than being dropped, so an arm cannot raise its average by answering fewer questions"
+  },
+  "arms": {
+    "graph_augmented": {
+      "all": {
+        "cases": 29,
+        "answered": 29,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.848,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 4
+      },
+      "multi_hop": {
+        "cases": 17,
+        "answered": 17,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.784,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 4
+      },
+      "single_hop": {
+        "cases": 7,
+        "answered": 7,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.893,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "lexical_control": {
+        "cases": 5,
+        "answered": 5,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 1,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "per_case": [
+        {
+          "case_id": "mh-fam-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_passages_added": [
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 5 evidence ref(s), 1 citation(s) added"
+        },
+        {
+          "case_id": "mh-fam-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_passages_added": [
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 5 evidence ref(s), 1 citation(s) added"
+        },
+        {
+          "case_id": "mh-fam-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 2,
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 5 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 5 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-fam-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000104",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 5 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 5 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-fam-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000105",
+            "40000000-0000-0000-0000-000000000134",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_passages_added": [
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 5 evidence ref(s), 2 citation(s) added"
+        },
+        {
+          "case_id": "mh-fam-06",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000139"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000106"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 1 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-fam-07",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000111"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 3 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 3 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-fam-08",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "branch_claims: 1 path(s), 3 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 3 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-chain-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "evidence_connection: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 1 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-chain-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "evidence_connection: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 1 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-chain-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0,
+          "graph_status": "evidence_connection: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 1 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-chain-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000109"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0,
+          "graph_status": "evidence_connection: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal cited 1 citable passage(s) and all of them were already in the hybrid's 30 results, so it added nothing: graph citations are appended after the fused list rather than merged into its ranking"
+        },
+        {
+          "case_id": "mh-chain-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000142"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 2,
+          "graph_relevant": 0,
+          "graph_status": "evidence_connection: 0 path(s), 0 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal returned no path: every edge between these endpoints is filtered out before the query runs, so the relation is documented in an accepted statement that retrieval can reach and traversal cannot"
+        },
+        {
+          "case_id": "mh-geo-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000104",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000126"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "geographic_path: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal returned 1 path(s) whose evidence refs carry no passage or statement id (geographic_path reports 1 ref(s) of a non-citable layer), so the path can be shown to a reader but nothing in it can be cited as a passage"
+        },
+        {
+          "case_id": "mh-geo-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000140"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "geographic_path: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal returned 1 path(s) whose evidence refs carry no passage or statement id (geographic_path reports 1 ref(s) of a non-citable layer), so the path can be shown to a reader but nothing in it can be cited as a passage"
+        },
+        {
+          "case_id": "mh-geo-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0,
+          "graph_status": "geographic_path: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal returned 1 path(s) whose evidence refs carry no passage or statement id (geographic_path reports 1 ref(s) of a non-citable layer), so the path can be shown to a reader but nothing in it can be cited as a passage"
+        },
+        {
+          "case_id": "mh-geo-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "geographic_path: 1 path(s), 1 evidence ref(s), 0 citation(s) added",
+          "graph_note": "the traversal returned 1 path(s) whose evidence refs carry no passage or statement id (geographic_path reports 1 ref(s) of a non-citable layer), so the path can be shown to a reader but nothing in it can be cited as a passage"
+        },
+        {
+          "case_id": "sh-01",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000109"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-02",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000113"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-03",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000114"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-04",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000122"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000115"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-05",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-06",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000105",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000108"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "sh-07",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000122"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000133"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 4,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "lc-01",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "lc-02",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000125"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "lc-03",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "lc-04",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        },
+        {
+          "case_id": "lc-05",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000124"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0,
+          "graph_status": "no traversal on this case, so this arm is the hybrid arm"
+        }
+      ]
+    },
+    "hybrid": {
+      "all": {
+        "cases": 29,
+        "answered": 29,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.848,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "multi_hop": {
+        "cases": 17,
+        "answered": 17,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.784,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "single_hop": {
+        "cases": 7,
+        "answered": 7,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 0.893,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "lexical_control": {
+        "cases": 5,
+        "answered": 5,
+        "returned_nothing": 0,
+        "recall_at_5": 1,
+        "mrr": 1,
+        "recall_at_5_per_case": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "per_case": [
+        {
+          "case_id": "mh-fam-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 2,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000104",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000105",
+            "40000000-0000-0000-0000-000000000134",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-06",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000139"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000106"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-07",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000111"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-08",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000109"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000142"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 2,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000104",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000126"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000140"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-01",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000109"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-02",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000113"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-03",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000114"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-04",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000122"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000115"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-05",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-06",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000105",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000108"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-07",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000122"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000133"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 4,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-01",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-02",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000125"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-03",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-04",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-05",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000124"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        }
+      ]
+    },
+    "reversed": {
+      "all": {
+        "cases": 29,
+        "answered": 29,
+        "returned_nothing": 0,
+        "recall_at_5": 0,
+        "mrr": 0,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "multi_hop": {
+        "cases": 17,
+        "answered": 17,
+        "returned_nothing": 0,
+        "recall_at_5": 0,
+        "mrr": 0,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "single_hop": {
+        "cases": 7,
+        "answered": 7,
+        "returned_nothing": 0,
+        "recall_at_5": 0,
+        "mrr": 0,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "lexical_control": {
+        "cases": 5,
+        "answered": 5,
+        "returned_nothing": 0,
+        "recall_at_5": 0,
+        "mrr": 0,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "per_case": [
+        {
+          "case_id": "mh-fam-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000134"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-06",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000106"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-07",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000111"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-08",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000107"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000105",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000142"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000126"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000132"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-01",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000134"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-02",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000114"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000113"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-03",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000134",
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000108"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000114"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-04",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000109"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000115"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-05",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-06",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000104",
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-07",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000133"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-01",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000125"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-02",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000132"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-03",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-04",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000130",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000124"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-05",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        }
+      ]
+    },
+    "vector_only": {
+      "all": {
+        "cases": 29,
+        "answered": 29,
+        "returned_nothing": 0,
+        "recall_at_5": 0.103,
+        "mrr": 0.063,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "multi_hop": {
+        "cases": 17,
+        "answered": 17,
+        "returned_nothing": 0,
+        "recall_at_5": 0.118,
+        "mrr": 0.078,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "graph_passages_added": 0
+      },
+      "single_hop": {
+        "cases": 7,
+        "answered": 7,
+        "returned_nothing": 0,
+        "recall_at_5": 0.143,
+        "mrr": 0.071,
+        "recall_at_5_per_case": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "lexical_control": {
+        "cases": 5,
+        "answered": 5,
+        "returned_nothing": 0,
+        "recall_at_5": 0,
+        "mrr": 0,
+        "recall_at_5_per_case": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "graph_passages_added": 0
+      },
+      "per_case": [
+        {
+          "case_id": "mh-fam-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000115"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000101"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000134",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000121"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000132"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000103",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000104"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000119",
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000122"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000105"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-06",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000124"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000106"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 1,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-07",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000114",
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000111"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-fam-08",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000120",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000110"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000126",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000140"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000128",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000133"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000137"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000117",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000103"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000138"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000127",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-chain-05",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000121",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000142"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-01",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000132",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000126"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-02",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000123"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-03",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000128"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "mh-geo-04",
+          "class": "multi_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000106",
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000129",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000127"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000129"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 3,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-01",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000133",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "recall_at_5": 1,
+          "first_relevant_rank": 2,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-02",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000134"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000113"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-03",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000107"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000114"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-04",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000122",
+            "40000000-0000-0000-0000-000000000110",
+            "40000000-0000-0000-0000-000000000142",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000141"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000115"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-05",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000118",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000112"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000116"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-06",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000109",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000138",
+            "40000000-0000-0000-0000-000000000123",
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000131"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "sh-07",
+          "class": "single_hop",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000111",
+            "40000000-0000-0000-0000-000000000112",
+            "40000000-0000-0000-0000-000000000115",
+            "40000000-0000-0000-0000-000000000113",
+            "40000000-0000-0000-0000-000000000123"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000133"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-01",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000136"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000117"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-02",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000125",
+            "40000000-0000-0000-0000-000000000140",
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000118"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-03",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000107",
+            "40000000-0000-0000-0000-000000000102",
+            "40000000-0000-0000-0000-000000000101",
+            "40000000-0000-0000-0000-000000000116",
+            "40000000-0000-0000-0000-000000000123"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000119"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-04",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000137",
+            "40000000-0000-0000-0000-000000000141",
+            "40000000-0000-0000-0000-000000000131",
+            "40000000-0000-0000-0000-000000000139",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000120"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        },
+        {
+          "case_id": "lc-05",
+          "class": "lexical_control",
+          "returned_passages": [
+            "40000000-0000-0000-0000-000000000136",
+            "40000000-0000-0000-0000-000000000135",
+            "40000000-0000-0000-0000-000000000124",
+            "40000000-0000-0000-0000-000000000108",
+            "40000000-0000-0000-0000-000000000102"
+          ],
+          "relevant_passages": [
+            "40000000-0000-0000-0000-000000000130"
+          ],
+          "recall_at_5": 0,
+          "first_relevant_rank": 0,
+          "graph_relevant": 0
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "basis": "vector_only",
+    "rows": [
+      {
+        "subset": "all",
+        "arm": "hybrid",
+        "recall_at_5": 1,
+        "mrr": 0.848,
+        "delta_recall_vs_vector_only": 0.897,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "all",
+        "arm": "graph_augmented",
+        "recall_at_5": 1,
+        "mrr": 0.848,
+        "delta_recall_vs_vector_only": 0.897,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "all",
+        "arm": "reversed",
+        "recall_at_5": 0,
+        "mrr": 0,
+        "delta_recall_vs_vector_only": -0.103,
+        "delta_exceeds_stated_variance": false
+      },
+      {
+        "subset": "multi_hop",
+        "arm": "hybrid",
+        "recall_at_5": 1,
+        "mrr": 0.784,
+        "delta_recall_vs_vector_only": 0.882,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "multi_hop",
+        "arm": "graph_augmented",
+        "recall_at_5": 1,
+        "mrr": 0.784,
+        "delta_recall_vs_vector_only": 0.882,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "multi_hop",
+        "arm": "reversed",
+        "recall_at_5": 0,
+        "mrr": 0,
+        "delta_recall_vs_vector_only": -0.118,
+        "delta_exceeds_stated_variance": false
+      },
+      {
+        "subset": "single_hop",
+        "arm": "hybrid",
+        "recall_at_5": 1,
+        "mrr": 0.893,
+        "delta_recall_vs_vector_only": 0.857,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "single_hop",
+        "arm": "graph_augmented",
+        "recall_at_5": 1,
+        "mrr": 0.893,
+        "delta_recall_vs_vector_only": 0.857,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "single_hop",
+        "arm": "reversed",
+        "recall_at_5": 0,
+        "mrr": 0,
+        "delta_recall_vs_vector_only": -0.143,
+        "delta_exceeds_stated_variance": false
+      },
+      {
+        "subset": "lexical_control",
+        "arm": "hybrid",
+        "recall_at_5": 1,
+        "mrr": 1,
+        "delta_recall_vs_vector_only": 1,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "lexical_control",
+        "arm": "graph_augmented",
+        "recall_at_5": 1,
+        "mrr": 1,
+        "delta_recall_vs_vector_only": 1,
+        "delta_exceeds_stated_variance": true
+      },
+      {
+        "subset": "lexical_control",
+        "arm": "reversed",
+        "recall_at_5": 0,
+        "mrr": 0,
+        "delta_recall_vs_vector_only": 0,
+        "delta_exceeds_stated_variance": false
+      }
+    ],
+    "note": "Delta is against the vector-only arm on the same subset. Exceeds variance is judged against the stated variance for that pair, not against the hybrid-vs-vector one, because a graph arm that clears the bar is a different claim from a hybrid arm that clears it."
+  },
+  "decision": {
+    "phase_20_criterion": "multi-hop research questions improve over vector-only RAG (IMPLEMENTATION_PLAN.md:1458)",
+    "outcome": "still_open",
+    "statement": "Measured on the multi-hop subset: vector-only recall@5 0.118 (MRR 0.078), hybrid 1.000 (MRR 0.784), graph-augmented 1.000 (MRR 0.784), stated variance 0.248. The criterion is not met, and the reason that dominates the rest is: the only embedding provider this repository may use returns a hash of the input rather than a semantic vector, so the vector-only arm is not an embedding baseline and a difference against it is a difference against a permutation. This is recorded as a finding, not reframed.",
+    "corpus_and_reviewer": "29 cases (17 multi-hop, 7 single-hop, 5 lexical control) over 42 seeded passages, 42 of them retrievable, labelled by plan-014-author, sole author of both the corpus and these labels",
+    "variance": "a difference in multi-hop recall at or below 0.248 is inside the noise of 17 cases and is reported as no measurable difference. One case is worth 0.059 on its own. The bar is deliberately conservative in two ways: it is an interval half-width rather than a point estimate, and the two arms are treated as independent samples even though they are scored over the same questions. A paired statistic would be tighter, and a criterion about multi-hop questions should not be met on a difference a tighter statistic would have called significant and this one would not.",
+    "smallest_corpus_that_would_conclude": "At 17 multi-hop cases the bar is 0.248, and it shrinks roughly as 1/sqrt(n): clearing a ten-point difference needs about 381 judged multi-hop cases per arm and clearing a five-point difference needs about 1533. No synthetic corpus this repository can generate supplies those. They have to come from a production query log with judged results, which means real questions, relevance judgements by somebody who did not write the questions, and enough of them to matter. Until that exists the honest statement is that a corpus this size can rule an arm out and cannot rule one in."
+  },
+  "provider": {
+    "model": "deterministic-foundation",
+    "dimensions": 1536,
+    "semantic": false,
+    "semantic_evidence": "cosine(query, itself) = 1.0000; cosine(query, 42 other corpus texts) mean 0.0678, min -0.2573, max 0.3927, and 28 of 42 of them came out positive. Those numbers are the signature of a hash, not of an embedding: a deterministic provider that hashes its input scores a query against a passage by coincidence"
+  },
+  "warnings": [
+    "the configured provider's embedding is not semantic (cosine(query, itself) = 1.0000; cosine(query, 42 other corpus texts) mean 0.0678, min -0.2573, max 0.3927, and 28 of 42 of them came out positive. Those numbers are the signature of a hash, not of an embedding: a deterministic provider that hashes its input scores a query against a passage by coincidence), so the vector-only arm is a hash ranking and every difference against it is a difference against a permutation rather than against an embedding model"
+  ]
+}

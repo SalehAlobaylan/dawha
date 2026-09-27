@@ -51,6 +51,7 @@ DOCUMENTS = (
     "PRODUCT.md",
     "plans/README.md",
     "docs/graph-benchmark.md",
+    "docs/retrieval-measurement.md",
     "docs/phase-status.md",
     "docs/storage-backends.md",
     "apps/web/e2e/README.md",
@@ -194,7 +195,7 @@ def is_generated(target: str) -> str | None:
         ("dist/", "build output, created by make build"),
         (".data/", "local runtime directory, created by the API"),
         ("evaluation/report.json", "written by make ai-eval"),
-        ("docs/benchmarks/", "written by make graph-benchmark"),
+        ("docs/benchmarks/", "written by make graph-benchmark and make retrieval-report"),
     ):
         if target.endswith(marker) or f"/{marker}" in target or target.startswith(marker):
             return reason

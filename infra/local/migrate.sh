@@ -49,6 +49,16 @@
 #   MIGRATE_LOCK_TIMEOUT   how long to wait for the advisory lock, as a
 #                          PostgreSQL interval. Default 60s. A lock held by
 #                          something wedged is a loud failure, not a hang.
+#   DB_HEALTH_TIMEOUT      seconds to wait for the container's health status to
+#                          report healthy. Default 300. A recreated container
+#                          over a populated volume replays its WAL before it
+#                          accepts connections, and how long that takes is a
+#                          property of the volume rather than of this script.
+#   DB_READY_TIMEOUT       seconds to wait for a successful `SELECT 1` after the
+#                          container reports healthy. Default 300. This is the
+#                          gate that actually decides whether the run can work:
+#                          a container can be healthy while the database inside it
+#                          is still refusing connections.
 #
 # `check` needs the same database `apply` would write to, and it is what CI
 # uses to prove the tree and the database agree.
@@ -58,6 +68,8 @@ user="${POSTGRES_USER:-dawha}"
 database="${POSTGRES_DB:-dawha}"
 migrations_dir="${MIGRATIONS_DIR:-db/migrations}"
 lock_timeout="${MIGRATE_LOCK_TIMEOUT:-60s}"
+health_timeout="${DB_HEALTH_TIMEOUT:-300}"
+ready_timeout="${DB_READY_TIMEOUT:-300}"
 # 'DAWH' as a big-endian int32, and 1 as the class. A named constant rather than
 # a bare number because this value is written down here and nowhere else: two
 # runners only exclude each other if they use the same pair.
@@ -109,6 +121,15 @@ require_safe_checksum() {
   fi
 }
 
+case "$health_timeout" in
+  '' | *[!0-9]*) printf 'DB_HEALTH_TIMEOUT must be a whole number of seconds, got %s\n' "$health_timeout" >&2; exit 2 ;;
+esac
+case "$ready_timeout" in
+  '' | *[!0-9]*) printf 'DB_READY_TIMEOUT must be a whole number of seconds, got %s\n' "$ready_timeout" >&2; exit 2 ;;
+esac
+
+container_id="$(docker compose ps -q db)"
+
 files=''
 for file in "$migrations_dir"/*.sql; do
   [ -e "$file" ] || continue
@@ -119,26 +140,83 @@ if [ -z "$files" ]; then
   exit 2
 fi
 
-container_id="$(docker compose ps -q db)"
-attempt=0
-until [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)" = "healthy" ]; do
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 45 ]; then
-    printf '%s\n' "database did not become healthy" >&2
-    exit 1
-  fi
-  sleep 1
-done
+# Wait for the database, in two gates, and say what happened when it does not
+# arrive.
+#
+# Two gates because they answer different questions. The container's health status
+# answers "is this container running", and it is the cheap one: `docker inspect`
+# needs no exec. `SELECT 1` answers "can this script actually do its job", and it
+# is the one that matters - a container can report healthy while the database
+# inside it is still refusing connections on a target database it has not created
+# yet, which is exactly what happens when POSTGRES_DB names a database that does
+# not exist yet.
+#
+# Both are waited on with a WALL CLOCK deadline rather than an attempt count, and
+# both have a ceiling in the minutes rather than in the seconds. An attempt count
+# is the wrong unit: every readiness attempt is a `docker compose exec` round trip
+# that costs a few hundred milliseconds of its own, so "30 attempts" is a number
+# of round trips rather than a number of seconds, and it is a number nobody can
+# reason about when a run fails. A deadline is what a reader can reason about.
+#
+# The ceilings are long on purpose. A container that was removed and recreated
+# over a POPULATED volume has to replay its WAL and rebuild its visibility map
+# before it accepts connections, and that is tens of seconds of real work whose
+# duration depends on how much data is in the volume rather than on anything this
+# script controls. The old gate gave the health check 45 seconds and then gave up
+# on `SELECT 1` after 30 more, and a recreated container came up seconds after the
+# failure - so a developer running `make db-migrate` after `docker compose down`
+# was told the database was unavailable while it was coming up, with a sentence
+# that named no error and no elapsed time. Waiting longer is the whole fix; the
+# rest of this block is so that the next failure says something.
+#
+# On failure it prints the gate, how long it waited, the last health status it
+# saw, and the last error the database gave. A bare "database did not become
+# ready" is a sentence a reader can do nothing with.
+wait_for_database() {
+  started_at="$(date +%s)"
+  deadline=$((started_at + health_timeout))
+  last_status='(never observed)'
+  while :; do
+    last_status="$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)"
+    [ -n "$last_status" ] || last_status='(none reported)'
+    if [ "$last_status" = "healthy" ]; then
+      break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      printf 'the database container did not become healthy after %ss (last health status: %s, ceiling: DB_HEALTH_TIMEOUT=%ss)\n' \
+        "$(( $(date +%s) - started_at ))" "$last_status" "$health_timeout" >&2
+      printf '%s\n' "  a container with no healthcheck in its compose service reports no status at all; one that is 'unhealthy' has been started and is failing its own check" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  healthy_after=$(( $(date +%s) - started_at ))
 
-attempt=0
-until psql_exec -c "SELECT 1" >/dev/null 2>&1; do
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
-    printf '%s\n' "database did not become ready" >&2
-    exit 1
+  deadline=$(( $(date +%s) + ready_timeout ))
+  last_error='(none reported)'
+  while :; do
+    if last_error="$(psql_exec -c 'SELECT 1' 2>&1 >/dev/null)" && [ -z "$last_error" ]; then
+      break
+    fi
+    [ -n "$last_error" ] || last_error='(psql exited non-zero with no message)'
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      printf 'the database did not accept a SELECT 1 after %ss (container healthy after %ss, ceiling: DB_READY_TIMEOUT=%ss)\n' \
+        "$(( $(date +%s) - started_at ))" "$healthy_after" "$ready_timeout" >&2
+      printf 'last error from the database: %s\n' "$last_error" >&2
+      printf '%s\n' "  a target database named by POSTGRES_DB that does not exist yet is the usual cause: the container is healthy and the connection is refused because there is nothing to connect to" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  ready_after=$(( $(date +%s) - started_at ))
+  if [ "$ready_after" -gt 3 ]; then
+    # Said out loud, because a gate that silently waited forty seconds reads like
+    # a slow command and the next person to hit it will assume the tool hung.
+    printf 'waited %ss for the database (healthy after %ss)\n' "$ready_after" "$healthy_after"
   fi
-  sleep 1
-done
+  return 0
+}
+wait_for_database
 
 if [ "$mode" = "check" ]; then
   # One read-only statement reports every disagreement at once. A gate that

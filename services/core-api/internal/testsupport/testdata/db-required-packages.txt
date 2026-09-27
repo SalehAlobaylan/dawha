@@ -2,6 +2,7 @@ github.com/SalehAlobaylan/dawha/services/core-api/internal/analysisworker
 github.com/SalehAlobaylan/dawha/services/core-api/internal/auth
 github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration
 github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary
+github.com/SalehAlobaylan/dawha/services/core-api/internal/embeddingbackfill
 github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution
 github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence
 github.com/SalehAlobaylan/dawha/services/core-api/internal/geography

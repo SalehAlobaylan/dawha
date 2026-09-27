@@ -49,31 +49,56 @@ from evaluation.thresholds import (
     thresholds_for,
 )
 
-# VECTOR_BASELINE is the answer to a question this repository cannot answer.
+# VECTOR_BASELINE is the answer to a question this repository cannot answer *here*.
 #
-# A vector-only versus graph-augmented comparison needs two retrieval paths over
-# the same corpus and a labelled judgement of which is better. There is one path
-# here (a deterministic token-overlap reranker) and no labelled corpus, so any
-# number in this slot would be invented. Plan 004 established the precedent and
-# this file keeps it: the group is reported as unavailable, with the reason,
-# rather than filled with a number nobody measured.
+# It is `available: false` because this Python evaluation has no corpus and no
+# embedding provider, not because the repository has one retrieval path. That
+# distinction used to be blurred in this file's own comment, and the blur was
+# load-bearing: it is what let `docs/phase-status.md` record "there is no embedding
+# retrieval in the query path", which was false. `retrieveVectorPassages` has always
+# existed, `execute` has always called both legs, and plan 014 gave the vector leg a
+# corpus to score by backfilling embeddings through the same `/embed` contract the
+# worker calls.
+#
+# The comparison now exists, and it is somewhere else: `make retrieval-report` runs
+# it over the seeded corpus and a labelled Arabic question set, and
+# `docs/retrieval-measurement.md` holds the numbers. It is not here because this
+# harness measures a provider in isolation with hand-written fixtures, and a
+# retrieval comparison needs a database, a corpus with embeddings, and judged
+# relevance - none of which is what this file is for. Putting a number here would
+# mean inventing one.
+#
+# The field stays `false` and stays a failure rather than a pass, because an
+# unmeasured quality claim is the thing this report exists to prevent. What changed
+# is only that the reason now names where the measurement is instead of claiming
+# there is nothing to measure.
 VECTOR_BASELINE = {
     "available": False,
     "compared": "none",
     "reason": (
-        "There is one retrieval path in this repository - a deterministic token-overlap "
-        "reranker - and no labelled corpus to judge a second one against. A vector-only "
-        "baseline would need both."
+        "This harness evaluates the provider in isolation over hand-written fixtures. "
+        "It has no corpus, no database and no judged relevance, so it cannot compare "
+        "two retrieval paths; that comparison is not missing from the repository, it "
+        "lives in a different command. `make retrieval-report` scores vector-only, "
+        "hybrid and graph-augmented retrieval over the seeded corpus and a labelled "
+        "Arabic question set, and docs/retrieval-measurement.md holds the result."
     ),
     "consequence": (
         "No GraphRAG, embedding or hybrid-retrieval improvement is claimed or measured "
-        "here. The retrieval group measures the token-overlap reranker against reviewed "
-        "labels and nothing else, and the graph benchmark in docs/graph-benchmark.md "
-        "measures graph traversal, not retrieval quality."
+        "HERE. The retrieval group measures the token-overlap reranker against reviewed "
+        "labels and nothing else; docs/graph-benchmark.md measures graph traversal cost "
+        "rather than retrieval quality; and docs/retrieval-measurement.md measures "
+        "retrieval quality. Read all three before quoting any of them."
     ),
     "note": (
-        "This field predates plan 009 and is unchanged by it. What plan 009 adds is the "
-        "citations group, which is a grounding measurement and not a retrieval comparison."
+        "The measured result of that comparison, for a reader who lands here first: on "
+        "the seventeen multi-hop questions, hybrid beats vector-only by 0.882 recall@5 "
+        "against a stated variance of 0.248, and Phase 20's criterion is STILL OPEN. "
+        "The difference is not evidence, because this provider's embed is a SHA-512 "
+        "digest of the input rather than a semantic embedding, so the vector-only arm "
+        "is a permutation. This field predates plan 009 and plan 014 and remains false; "
+        "what plan 009 added is the citations group, and what plan 014 added is the "
+        "corpus, the labels and the three arms."
     ),
 }
 

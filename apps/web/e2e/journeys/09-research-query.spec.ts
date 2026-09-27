@@ -48,10 +48,30 @@ test.describe("run a research query", () => {
     await page.context().clearCookies();
     await page.goto("/research");
     const form = page.locator(".research-query-form");
-    // A word that appears nowhere in the seeded corpus. Retrieval is token based,
-    // so an unmatched query is the honest way to reach the no-evidence branch
-    // without depending on what earlier runs happened to save.
-    await form.locator("#research-question").fill("زرافاش");
+    // A term that appears nowhere in the corpus, AND that is too short for the
+    // retrieval index to manufacture a match for it.
+    //
+    // The length is load-bearing and it was learned the hard way. The passage legs
+    // score with pg_trgm CHARACTER trigrams - `similarity(normalized_text, query)`
+    // - and their only filter is `> 0`, so ANY query of three characters or more
+    // shares a trigram with something in a corpus of ordinary sentences and is
+    // therefore a candidate. This journey used to assert a seven character
+    // nonsense word; against the three-passage demo seed it matched nothing, and
+    // against a larger corpus it matched three passages and the product answered
+    // instead of refusing, which is correct behaviour and a broken journey.
+    //
+    // Two characters cannot produce a trigram, so this reaches the no-evidence
+    // branch for a reason that does not depend on what else is in the corpus.
+    // `docs/retrieval-measurement.md` records the same property from the other
+    // side: it is why a "nothing matches" query is not expressible as a long term
+    // at all.
+    //
+    // The other precondition is that the corpus carries no embeddings. A hashed
+    // embedding is positive for roughly half of any corpus, so an embedded corpus
+    // cannot reach this branch either - and `make e2e` does not embed, because the
+    // measurement corpus and its embeddings are provisioned by
+    // `make retrieval-report` into a schema it drops again.
+    await form.locator("#research-question").fill("زر");
     await form.getByRole("button", { name: /ابحث في الأدلة/ }).click();
 
     const result = page.locator(".research-result-card");
