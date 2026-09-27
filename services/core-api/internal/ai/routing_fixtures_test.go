@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,22 +15,51 @@ import (
 //
 // internal/ai/routing.go's FallbackRoute runs when the route call is unavailable;
 // services/ai-research/app/main.py's routing_decision is the provider that answers
-// it. They are the same decision written twice, in two languages, and nothing in
-// the build compares them. That is a real gap: a divergence between them means
-// the same question is routed one way when the AI service is up and another way
-// when it is down, which is exactly the kind of change nobody notices until an
-// incident.
+// it. They are the same decision written twice, in two languages, and they share a
+// VOCABULARY rather than a function: a shared runtime between a Go API and a
+// Python service is a dependency this repository should not take, and the two
+// languages cannot be merged either. So the decision stays written twice and the
+// agreement between the two is a test.
 //
-// So this reads the SAME labelled set the evaluation reads and asserts that the Go
-// fallback agrees with it - listing the cases where it does not, as declared
-// divergences rather than as a comment somebody has to notice. A new divergence
-// fails the test, so the list cannot rot into a fiction.
+// WHY THAT IS NOT A COMMENT.
 //
-// It reads the fixture from the sibling service rather than duplicating it, because
-// duplicating thirty-three cases is how two copies drift. A core-api checkout with
-// no ai-research directory beside it skips: the evaluation is the thing that needs
-// the set, and a routing package that will not build without a Python service's
-// data files is the wrong dependency direction.
+// A comment is an assertion nobody runs. The failure this file exists to prevent
+// is concrete: rt-019, a query carrying nothing but punctuation. Go's
+// normalizer folded punctuation to nothing and ignored the query; the provider
+// kept the punctuation, matched no term, and routed it cheap. The same question
+// therefore took one path with the AI service up and another with it down, and
+// the only thing in the build that noticed was a declared list in a test file -
+// which was right, and which had to be read to be believed.
+//
+// THE TEST NOW DERIVES BOTH DECISIONS.
+//
+// The declared list could only ever be as good as whoever wrote it. The test
+// below runs the provider itself, over the same thirty-three labelled cases, and
+// compares the two decisions field by field for every one of them. The
+// divergence set is therefore derived rather than declared, and a new divergence
+// fails the build instead of waiting to be noticed.
+//
+// THE AUTHORITY, since a reader should not have to guess which number came from
+// where.
+//
+//   - For a ROUTE, the labelled case is the authority: expected_route in
+//     routing_cases.jsonl says what a question of that shape should do, and both
+//     implementations are measured against it. Three cases disagree with their
+//     own label and are kept; see knownGoFallbackLabelDivergences.
+//   - For the NORMALIZATION the two implementations share, this package's
+//     identity.NormalizeArabicName is the specification, and the provider's
+//     normalized_routing_text is that function's step list. Its comment carries
+//     the same list.
+//   - Neither implementation is the authority over the other. The provider
+//     answers when it is up; the fallback answers when it is not; and the
+//     property that matters is that a question does not change route because of
+//     which one answered.
+//
+// It reads the fixture from the sibling service rather than duplicating it,
+// because duplicating thirty-three cases is how two copies drift. A core-api
+// checkout with no ai-research directory beside it skips: the evaluation is the
+// thing that needs the set, and a routing package that will not build without a
+// Python service's data files is the wrong dependency direction.
 func goFallbackRoutingCases(t *testing.T) []fallbackCase {
 	t.Helper()
 	path := filepath.Join("..", "..", "..", "ai-research", "evaluation", "routing_cases.jsonl")
@@ -76,6 +106,68 @@ type fallbackCase struct {
 	ExpectedRoute      string `json:"expected_route"`
 	ExpectedQueryType  string `json:"expected_query_type"`
 	ExpectedReasonCode string `json:"expected_reason_code"`
+	// Fallback marks a case that is routed through the fallback path, which is
+	// what the Go side has for every case and what the provider is asked for on
+	// exactly these cases.
+	Fallback bool `json:"fallback"`
+}
+
+// providerDecision is what the Python provider decided for one case.
+type providerDecision struct {
+	CaseID     string `json:"case_id"`
+	Route      string `json:"route"`
+	QueryType  string `json:"query_type"`
+	ReasonCode string `json:"reason_code"`
+}
+
+// providerRoutingDecisions asks the ai-research service what IT decides for
+// every labelled case, by running the module that exists for the purpose.
+//
+// It is a subprocess rather than an HTTP call because the point is to compare
+// two implementations, and an HTTP round trip would compare this package's client
+// against the provider, which is a third thing. It is the same interpreter the
+// evaluation runs on, so there is one provider and one set of fixtures.
+//
+// Skips, rather than fails, when the interpreter is not beside this package. The
+// same rule as the fixture reader above, and for the same reason: the evaluation
+// is what needs the Python service, and a Go package must not require one to
+// build. `make test` runs both halves - `go test ./...` and the service's own
+// pytest - so a checkout that has the service installed runs both comparisons.
+func providerRoutingDecisions(t *testing.T) map[string]providerDecision {
+	t.Helper()
+	serviceDir := filepath.Join("..", "..", "..", "ai-research")
+	interpreter := filepath.Join(serviceDir, ".venv", "bin", "python")
+	if _, err := os.Stat(interpreter); err != nil {
+		t.Skipf("the ai-research interpreter is not beside this package (%s); `make install` creates it and the service's own tests cover the provider half", err)
+	}
+	// Absolute, because the command runs in the service directory and os/exec
+	// resolves a relative Path against the working directory it was given, not
+	// against the process's own. Resolved from the package directory, the same
+	// path would climb out of the repository and fail with a bare ENOENT.
+	absolute, err := filepath.Abs(interpreter)
+	if err != nil {
+		t.Fatalf("resolve the ai-research interpreter: %v", err)
+	}
+	command := exec.Command(absolute, "-m", "evaluation.provider_routes")
+	command.Dir = serviceDir
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("ask the provider for its decisions: %v\n%s", err, stderr.String())
+	}
+	var answers []providerDecision
+	if err := json.Unmarshal(output, &answers); err != nil {
+		t.Fatalf("the provider's decisions are not JSON: %v\n%s", err, output)
+	}
+	if len(answers) == 0 {
+		t.Fatal("the provider returned no decisions; an empty set would agree with everything")
+	}
+	byCase := make(map[string]providerDecision, len(answers))
+	for _, answer := range answers {
+		byCase[answer.CaseID] = answer
+	}
+	return byCase
 }
 
 // knownGoFallbackLabelDivergences are the cases where internal/ai/routing.go's
@@ -91,39 +183,91 @@ type fallbackCase struct {
 //   - rt-010: a singular/plural gap. The relationship term is "علاقة" (a relation)
 //     and the text says "العلاقات" (relations), so the relationship score is zero and
 //     the source term "نص" inside "النص" decides the query type on its own.
-//   - rt-012: the relationship term "رواية" (an account or a lineage) matches "الرواية"
-//     in a question about an account. The term list cannot tell the two apart, and
-//     the label says this question is not about a relationship.
+//   - rt-012: the relationship term "رواية" (an account or a lineage) matches
+//     "الرواية" in a question about an account rather than a lineage.
 //   - rt-025: a substring false positive in the query-type scorer. The identity term
 //     "لقب" (surname) occurs inside the Arabic word for tribe, so a question about a
-//     tribe's migration is scored as an identity question. The Go term table has the
-//     same term and therefore the same false positive.
+//     tribe's migration is scored as an identity question.
+//
+// These are a shared weakness of ONE vocabulary, which is what sharing a
+// vocabulary means by construction: a defect in the term tables is a defect in
+// both. They are not a disagreement between the two implementations, and
+// TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase says so
+// by deriving both decisions rather than inferring it from two reports.
 var knownGoFallbackLabelDivergences = map[string]string{
 	"rt-010": "query_type: the relationship term علاقة does not match the plural العلاقات, so the source term نص inside النص decides alone",
 	"rt-012": "query_type: the relationship term رواية (an account) matches الرواية in a question about an account rather than a lineage",
 	"rt-025": "query_type: the identity term لقب occurs inside the word for tribe, in this package's term table as in the provider's",
 }
 
-// knownGoPythonDisagreements are the cases where THIS PACKAGE and the ai-research
-// provider reach DIFFERENT decisions. That is a worse finding than either of them
-// being wrong on its own, because it means the same question is routed one way when
-// the AI service answers and another way when it does not, and a deployment
-// degrades into a different product rather than into an error.
+// TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase is the
+// pin. It derives BOTH decisions for every labelled case and requires the
+// divergence set to be empty.
 //
-// It is a short list, and that is the finding. Across the thirty-three reviewed
-// cases the two implementations reach the same route, query type and reason code
-// everywhere except here.
+// The empty set is the property, and it is checked in two directions so neither
+// side can drift alone: a case the provider decides that this package does not
+// decide the same way, and a case this package decides that the provider does
+// not. Both are named in the failure message, because "they disagree somewhere"
+// is not a finding anybody can act on.
 //
-// The list is derived from two asserted sets rather than by running both
-// implementations in one process: the evaluation reports the provider's
-// divergences from these labels (rt-010, rt-012, rt-019, rt-025 - see the
-// `misroutes` field of `make ai-eval`), and the test above asserts this package's
-// (rt-010, rt-012, rt-025). A case in the first set and not the second is a
-// disagreement between the implementations.
-var knownGoPythonDisagreements = map[string]string{
-	"rt-019": "a question carrying no word at all, only punctuation. This package's normalizer reduces it to nothing and the fallback ignores it; the provider normalizes only Arabic script, keeps the punctuation, matches no term and routes it cheap/simple_lookup. Both are defensible answers to a degenerate input and they are not the same answer, so the routing of a junk query depends on whether the AI service is up.",
+// There is no allow-list. A declared divergence is what this file used to carry,
+// and a list is a thing a reader has to believe; deriving the set means a new
+// divergence cannot be absorbed by adding a line. The vocabulary the two share
+// is the place to fix a disagreement - the term tables, or the normalization -
+// and both of those are visible in the failure message below.
+func TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase(t *testing.T) {
+	cases := goFallbackRoutingCases(t)
+	provider := providerRoutingDecisions(t)
+
+	diverged := make([]string, 0)
+	for _, testCase := range cases {
+		answer, answered := provider[testCase.CaseID]
+		if !answered {
+			t.Fatalf("the provider returned no decision for %s. Every labelled case has to be answered by both implementations, or the comparison is over a smaller set than the labels.", testCase.CaseID)
+		}
+		here := FallbackRoute(RoutingRequest{
+			Text:        testCase.Text,
+			Context:     testCase.Context,
+			Operation:   testCase.Operation,
+			SourceCount: testCase.SourceCount,
+		})
+		var wrong []string
+		if here.Route != answer.Route {
+			wrong = append(wrong, "route")
+		}
+		if here.QueryType != answer.QueryType {
+			wrong = append(wrong, "query_type")
+		}
+		if here.ReasonCode != answer.ReasonCode {
+			wrong = append(wrong, "reason_code")
+		}
+		if len(wrong) == 0 {
+			continue
+		}
+		diverged = append(diverged, strings.Join([]string{
+			testCase.CaseID + " (" + strings.Join(wrong, ",") + ")",
+			"go=" + here.Route + "/" + here.QueryType + "/" + here.ReasonCode,
+			"provider=" + answer.Route + "/" + answer.QueryType + "/" + answer.ReasonCode,
+		}, "  "))
+	}
+	if len(diverged) > 0 {
+		sort.Strings(diverged)
+		t.Fatalf("the Go fallback and the provider reach different decisions on %d of the %d labelled cases, so the route a question takes depends on whether the AI service is up:\n  %s\n\n"+
+			"The shared vocabulary is where a fix belongs. This package's identity.NormalizeArabicName is the specification for the normalization and the provider's normalized_routing_text is its step list; "+
+			"the term tables are duplicated in both files by design. Changing either side without the other is what this test is here to stop.",
+			len(diverged), len(cases), strings.Join(diverged, "\n  "))
+	}
+
+	// A comparison over an empty set would pass. The provider has to have
+	// answered every case, and the fixture has to still be the size it was.
+	if len(provider) != len(cases) {
+		t.Fatalf("the provider answered %d of the %d labelled cases, so the comparison above could pass without covering the set", len(provider), len(cases))
+	}
 }
 
+// TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses holds this
+// package against the labels directly, so a divergence from the provider can
+// never be mistaken for an improvement.
 func TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses(t *testing.T) {
 	cases := goFallbackRoutingCases(t)
 	seen := map[string]bool{}
@@ -178,32 +322,6 @@ func TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses(t *testing.T)
 	sort.Strings(stale)
 	if len(stale) > 0 {
 		t.Fatalf("these declared divergences are stale and must be deleted: %s", strings.Join(stale, "; "))
-	}
-}
-
-// TestTheFallbackAndTheProviderAgreeExceptWhereDeclared is the assertion behind
-// knownGoPythonDisagreements: a case listed there must NOT be one this package
-// already fails, because then the two implementations would agree and the entry
-// would be claiming a disagreement that does not exist.
-//
-// It is a one-line test that stops the most interesting sentence in this file from
-// becoming untrue by accident.
-func TestTheFallbackAndTheProviderAgreeExceptWhereDeclared(t *testing.T) {
-	for caseID, reason := range knownGoPythonDisagreements {
-		if _, bothWrong := knownGoFallbackLabelDivergences[caseID]; bothWrong {
-			t.Fatalf("%s is listed both as a divergence from the label and as a disagreement between the "+
-				"two implementations. If both are wrong the same way, they AGREE, and the disagreement "+
-				"entry is false: %s", caseID, reason)
-		}
-	}
-	// And the degenerate input the disagreement is about really does take the two
-	// different paths, so the entry cannot rot into a claim about a case that has
-	// since been edited.
-	decision := FallbackRoute(RoutingRequest{Text: "؟؟؟"})
-	if decision.Route != RoutingRouteIgnore {
-		t.Fatalf("this package's fallback no longer ignores a punctuation-only query; it returns %q. "+
-			"rt-019 is listed as an implementation disagreement because the two differ here, and they "+
-			"now agree. Delete the entry and record the finding.", decision.Route)
 	}
 }
 

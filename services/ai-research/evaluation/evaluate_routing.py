@@ -16,9 +16,13 @@ Three things this file exists to say, in the JSON rather than beside the JSON:
    that grows one case at a time and silently mixes a reviewed set with something
    nobody reviewed.
 3. **Cases that expose a mis-route are kept.** The set is not curated against the
-   provider. Two cases in it are expected to fail and say so in their own text; they
-   are in the set because a curated set would have removed exactly the evidence
-   this phase needs.
+   provider. Three cases in it are expected to fail and say so in their own text;
+   they are in the set because a curated set would have removed exactly the
+   evidence this phase needs. A fourth, rt-019, used to be one of them and is not:
+   the label did not change, the provider did, and the case stayed so that the
+   set can find the next disagreement rather than having had this one removed from
+   it. The `authority` block in the report says which side is authoritative for
+   what, because a reader should not have to infer where a number came from.
 
 The expected route, query type and reason code of a case are the LABEL. The
 provider's answer is the MEASUREMENT. Nothing in this file compares them in the
@@ -237,6 +241,36 @@ def evaluate() -> dict[str, object]:
             "they are the cases the original fifteen hand-written greetings did not cover. "
             "Removing one would raise the number and delete the evidence."
         ),
+        "authority": {
+            "for_a_route": (
+                "The labelled case is the authority. expected_route, expected_query_type and "
+                "expected_reason_code say what a question of that shape should do, and this "
+                "provider is measured against them. A case that disagrees is kept and reported, "
+                "never repaired."
+            ),
+            "for_the_normalization": (
+                "internal/ai/routing.go's identity.NormalizeArabicName is the specification, and "
+                "app/main.py's normalized_routing_text is that function's step list applied to the "
+                "routing path. The two implementations share this vocabulary rather than a "
+                "function: a shared runtime between a Go API and a Python service is a dependency "
+                "this repository does not take, and the two languages cannot be merged. The step "
+                "list is written out in both places."
+            ),
+            "neither_implementation_over_the_other": (
+                "The provider answers when it is up and ai.FallbackRoute answers when it is not. "
+                "Neither is the authority over the other; the property that matters is that a "
+                "question does not change route because of which one answered."
+            ),
+            "how_the_agreement_is_checked": (
+                "TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase in "
+                "services/core-api/internal/ai derives BOTH decisions for all "
+                f"{total} labelled cases - by running this service's own provider through "
+                "evaluation.provider_routes - and requires the divergence set to be empty. It was "
+                "a declared list of one case until plan 016; deriving it means a new divergence "
+                "fails a build rather than waiting to be noticed. The provider's own half is "
+                "pinned by tests/test_routing_agreement.py."
+            ),
+        },
     }
 
 

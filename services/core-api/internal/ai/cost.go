@@ -248,14 +248,25 @@ func RouteFromContext(ctx context.Context) telemetry.AIRoute {
 // path was unreachable for it too and its counterfactual is zero as well, not
 // because routing saved something but because there was nothing to save.
 //
-// It is declared rather than computed so the correspondence is a list a reviewer
-// can read in one place, and so that changing the RAG service's switch is a
-// review that has to touch this map. It is not on the request path: nothing in
-// the request path calls it.
+// WHY IT IS DECLARED AND NOT CALLED.
 //
-// If internal/research/rag_service.go changes which operations a route calls,
-// THIS MAP IS WRONG until it is changed in the same commit. docs/cost-measurement.md
-// carries that as a maintenance note.
+// The two packages cannot share a source. internal/research imports internal/ai,
+// so importing it back would be a cycle. The other direction would compile, and
+// it is the one worth naming: rag_service.go asking this package which operation
+// a route costs. It is not done, because the two switches answer different
+// questions. This one asks what a route COSTS; the RAG service's asks what a
+// route DOES, and two of its three answers are not model calls at all - the
+// cheap route and the ignore route each return one of two fixed sentences. A
+// shared function would have to carry the product's answer strings up here or
+// this package's operation vocabulary down there, and either one would tell the
+// next reader that the price table and the product behaviour are one decision.
+// They are not.
+//
+// So this stays declared data, and TestTheCostModelPricesTheRoutesTheRagService-
+// ActuallyRuns reads the RAG service's switch and derives, per route, which model
+// operations that route calls, then requires this map and that derivation to
+// agree in both directions. The correspondence is therefore a check rather than a
+// review somebody has to remember to do.
 var routeWork = map[string]telemetry.AIOperation{
 	RoutingRouteDeep: telemetry.AIOperationResearchQuery,
 }

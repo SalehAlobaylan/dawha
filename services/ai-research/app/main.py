@@ -129,6 +129,77 @@ def normalized_text(value: str) -> str:
     return normalize_arabic_name(value).casefold()
 
 
+# THE ROUTING NORMALIZATION IS A SHARED VOCABULARY, AND THE SPECIFICATION IS
+# identity.NormalizeArabicName in services/core-api/internal/identity.
+#
+# The routing decision exists twice: `routing_decision` here, and
+# `ai.FallbackRoute` in services/core-api/internal/ai/routing.go, which is what
+# runs when this service cannot be reached. The two cannot be one function - they
+# are two languages and a shared runtime between a Go API and a Python service is
+# not a dependency this repository should take - so they share a *vocabulary*
+# instead, and the vocabulary is a written list of steps that both implement.
+#
+# The steps, in order:
+#
+#   1. NFKC normalization.
+#   2. Drop combining marks (the Arabic diacritics, including the tatweel).
+#   3. أ إ آ ٱ -> ا, ى -> ي, ة -> ه.
+#   4. Every space, every punctuation mark becomes a single space. This is
+#      the step the two implementations used to disagree about, and it is
+#      load-bearing: a query carrying no word at all, only punctuation, reduces
+#      to nothing here, so `not value` holds and the route is `ignore` with the
+#      reason code `noise`. It is exactly the answer fixture rt-019 is labelled
+#      with, and exactly what the Go fallback already did.
+#
+#      "Punctuation" means the Unicode general categories Go's `unicode.IsPunct`
+#      covers - Pc, Pd, Pe, Pf, Pi, Po, Ps - and not the symbol categories, so
+#      the predicate is written against the categories rather than against a
+#      hand-listed set of characters that would silently stop covering the next
+#      script. A digit is not punctuation and a letter is not punctuation, so
+#      Arabic text and Arabic-Indic digits survive step 4 and only the marks
+#      around them go.
+#   5. Collapse runs of whitespace and trim.
+#
+# Step 4 is why this is a function of its own rather than a tweak to
+# `normalize_arabic_name`. That function is the one behind the name-normalization
+# endpoint, entity resolution, embedding and claim extraction, and it PRESERVES
+# punctuation on purpose: a stored or displayed name keeps the punctuation the
+# record spells it with. Changing it would change those responses, which is a
+# different decision with a different blast radius. Routing is the one place that
+# asks "what words did this mean", and it is the only place that needs
+# punctuation to disappear.
+#
+# The one invariant a term table has to hold for both sides to agree: no term may
+# normalize to the empty string, because an empty needle is contained in
+# everything. Every entry in `_ROUTING_QUERY_TERMS`, `_ROUTING_DEEP_TERMS`,
+# `_CONTRADICTION_TERMS` and `_ROUTING_NOISE` is an Arabic or English word, and
+# `TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase` is
+# what would notice if one stopped being true.
+#
+# `TestTheGoFallbackAndTheProviderReachTheSameDecisionOnEveryLabelledCase` in
+# services/core-api/internal/ai runs both implementations over all thirty-three
+# labelled cases and requires them to agree on every one. That test is what keeps
+# this list honest, and it is also what a reader should run first before editing
+# either side.
+def normalized_routing_text(value: str) -> str:
+    """`value` folded the way the routing decision needs it, on both sides.
+
+    See the note above: the specification is `identity.NormalizeArabicName`, and
+    this is that function's step list applied to the routing path only.
+    """
+    normalized = unicodedata.normalize("NFKC", value.strip())
+    normalized = _DIACRITICS.sub("", normalized)
+    normalized = normalized.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    normalized = normalized.replace("ٱ", "ا").replace("ى", "ي").replace("ة", "ه")
+    folded = []
+    for character in normalized:
+        if character.isspace() or unicodedata.category(character).startswith("P"):
+            folded.append(" ")
+        else:
+            folded.append(character)
+    return _SPACES.sub(" ", "".join(folded)).strip().casefold()
+
+
 def tokenize(value: str) -> set[str]:
     return {token for token in re.findall(r"[\w؀-ۿ]+", normalized_text(value)) if token}
 
@@ -321,15 +392,22 @@ def content_tokens(value: str) -> set[str]:
     return tokenize(value) - _FUNCTION_WORDS
 
 
-def contains_any(value: str, terms: tuple[str, ...]) -> bool:
-    normalized = normalized_text(value)
-    return any(normalized_text(term) in normalized for term in terms)
+def routing_contains_any(value: str, terms: tuple[str, ...]) -> bool:
+    """Whether a routing value carries any of the routing terms.
+
+    The value and the terms both go through `normalized_routing_text`, so a term
+    matches the same way it does in the Go fallback's `routingContainsAny`.
+    """
+    normalized = normalized_routing_text(value)
+    return any(normalized_routing_text(term) in normalized for term in terms)
 
 
 def routing_query_type(value: str) -> str:
-    normalized = normalized_text(value)
+    normalized = normalized_routing_text(value)
     scores = {
-        query_type: sum(normalized_text(term) in normalized for term in terms)
+        query_type: sum(
+            normalized_routing_text(term) in normalized for term in terms
+        )
         for query_type, terms in _ROUTING_QUERY_TERMS.items()
     }
     best_type = "general"
@@ -344,12 +422,12 @@ def routing_query_type(value: str) -> str:
 def routing_decision(
     request: "RoutingRequest", fallback: bool = False
 ) -> "RoutingDecision":
-    value = normalized_text(request.text)
+    value = normalized_routing_text(request.text)
     query_type = routing_query_type(value)
     source_bearing = request.source_count > 0 or bool((request.context or "").strip())
-    contradiction = (
-        contains_any(value, _CONTRADICTION_TERMS) or request.operation == "contradiction"
-    )
+    contradiction = routing_contains_any(
+        value, _CONTRADICTION_TERMS
+    ) or request.operation == "contradiction"
     if not value or (not source_bearing and value in _ROUTING_NOISE):
         route = "ignore"
         reason_code = "noise"
@@ -362,7 +440,7 @@ def routing_decision(
         route = "deep"
         reason_code = "operation_requires_deep"
         score = 0.82
-    elif contains_any(value, _ROUTING_DEEP_TERMS):
+    elif routing_contains_any(value, _ROUTING_DEEP_TERMS):
         route = "deep"
         reason_code = "multi_step"
         score = 0.86
