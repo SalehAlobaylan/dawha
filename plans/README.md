@@ -20,7 +20,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 012 | Stop the test-data leak, and stop citing sources that do not answer | P1 | M | 004, 009 | DONE (merged `2314de1`) |
 | 013 | Close the V1 product gaps the status review found | P1 | L | 001, 002, 005, 010 | DONE (merged `e063bc3`) |
 | 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | DONE (merged `83eb658`) |
-| 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | TODO |
+| 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | DONE (merged `6621961`) |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -86,6 +86,11 @@ started, and 14 of the 18 V1 steps proved outright — with three plans left to 
   only embedding provider this repository may use returns a SHA-512 digest, so the vector arm is a
   permutation and the difference is against a hash. `docs/retrieval-measurement.md` names the corpus
   it would take (~381 judged cases per arm) to answer the question for real.
-- **015** addresses Phase 18's cost criterion, which needs production traffic this repository
-  does not have; the deliverable is attribution, label provenance, and a measurement design,
-  with the criterion left honestly open.
+- **015** (done) addressed Phase 18's cost criterion. `dawha_ai_cost_units` was a counter that could
+  only ever be passed `0`; it now carries `{operation, route, model}` in **dawha work units** —
+  declared weights, not money, because no provider is configured and the one permitted embedder
+  hashes its input. The routing set grew 15 → 33 cases with per-case provenance now a gate, and
+  `route_accuracy` fell 1.0 → 0.9697 with all four disagreeing cases kept. `make cost-report` runs a
+  synthetic workload and says in its own output that it is not a measured reduction in spend:
+  **the criterion stays OPEN**, with a 28-day window, a ≥1,000-query floor, and a 20% deep-call-rate
+  threshold stated before the data exists.
