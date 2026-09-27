@@ -55,6 +55,7 @@ DOCUMENTS = (
     "docs/cost-measurement.md",
     "docs/phase-status.md",
     "docs/storage-backends.md",
+    "docs/ocr-and-import-decision.md",
     "apps/web/e2e/README.md",
     "infra/security/scanner-exceptions.md",
     "services/core-api/platform/ratelimit/ratelimit.go",
