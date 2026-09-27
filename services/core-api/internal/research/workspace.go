@@ -529,10 +529,94 @@ func workspaceEntityAliases(ctx context.Context, q workspaceExecutor, policy vis
 	}
 }
 
+// THE ENTITY RESTRICTION, AND WHY IT IS BUILT ONCE HERE.
+//
+// Three of this file's loaders - claims, evidence and sources - answer the same
+// question about a different table: "of the material this question has, keep what
+// concerns the workspace's subject". They used to answer it three times, and all
+// three answers were built out of bare equalities against an argument that is
+// NULL whenever the workspace resolved no subject:
+//
+//	($2 = '' OR ((c.subject_type = $2 AND c.subject_id = $3::uuid) OR ...))
+//
+// That shape is wrong twice over, and the two failures are different:
+//
+//   - It tests for the EMPTY STRING. The argument is not an empty string; it is
+//     NULL, because a subject that was not resolved is passed as NULL. A
+//     comparison of NULL with a string is NULL, never true, so a filter naming a
+//     type and no id matched nothing at all and the workspace reported a question
+//     with no claims as though the question had none. This is the same defect
+//     `search_sources` in the research agent had.
+//   - loadWorkspaceEvidence and loadWorkspaceSources had NO escape clause at all.
+//     Their predicate was `c.subject_type = $n` with no "or no subject" branch, so
+//     the ordinary case - a question whose subject did not resolve, which is a
+//     question whose linked claims are about a place rather than a person -
+//     silently excluded EVERY claim. The workspace then rendered claims with an
+//     empty evidence list, which is exactly the shape of a claim that has no
+//     evidence, and Phase 19's own criterion is that every finding is traceable
+//     to one. A broken filter and an answer are not allowed to look alike.
+//
+// So the restriction is written once, in the form the rest of this file already
+// uses for the same job - an explicit "is this argument absent" test, not an
+// empty-string test - and the three loaders share it. The subject's type and id
+// are the placeholders `$2` and `$3` in every query that uses it, so the fragment
+// is one string rather than three that have to be read together to be believed.
+
+// workspaceEntityRestriction is the shared restriction, for a claim row reached
+// through the SQL expression claimReference. It names a claim's subject or object
+// and asks whether it is the workspace's subject.
+//
+// A NULL $2 means the workspace resolved no subject, and that is "no restriction"
+// rather than "exclude everything". A non-NULL $2 is a subject, and $3 is then
+// non-NULL too, because workspaceEntityArgs refuses the half-specified pair
+// before the query is built.
+//
+// The claim table is aliased vis_claim because the fragment is embedded in the
+// caller's query: a caller's own `c` would shadow it, and the reference to the
+// caller's row would then compare the inner claim's id with ITSELF and every claim
+// would pass. That is not hypothetical - it is what the first version of this
+// fragment did, and it made the restriction a no-op that widened rather than
+// narrowed. The prefix is the same discipline internal/visibility uses for the
+// same reason.
+func workspaceEntityRestriction(claimReference string) string {
+	return `(
+		$2::text IS NULL
+		OR EXISTS (
+			SELECT 1 FROM claims vis_claim
+			WHERE vis_claim.id = ` + claimReference + `
+			  AND ((vis_claim.subject_type = $2 AND vis_claim.subject_id = $3::uuid)
+			    OR (vis_claim.object_type = $2 AND vis_claim.object_id = $3::uuid))
+		)
+	)`
+}
+
+// workspaceEntityArgs turns the resolved subject into the two arguments the
+// restriction above reads, and refuses a subject that is only half named.
+//
+// A type with no id cannot be satisfied by any claim, so a query that carried it
+// would return nothing and the caller would read that as "this question has no
+// material". It is an error instead, at the point the arguments are built, which
+// is before any of the three loaders can turn a mistake into an empty answer.
+//
+// The pair is produced by resolveWorkspaceEntity, which sets both halves or
+// neither, and by validateWorkspaceInput, which refuses a request that names one
+// half. This function is the third gate, and it is the one that does not depend on
+// either of the others: a future caller of any of the three loaders gets the
+// refusal rather than an empty list.
+func workspaceEntityArgs(entityType, entityID string) (any, any, error) {
+	if entityType == "" && entityID == "" {
+		return nil, nil, nil
+	}
+	if entityType == "" || entityID == "" {
+		return nil, nil, ErrValidation
+	}
+	return entityType, entityID, nil
+}
+
 func loadWorkspaceClaims(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, entityType, entityID string) ([]WorkspaceClaim, error) {
-	entityArg := any(nil)
-	if entityID != "" {
-		entityArg = entityID
+	entityTypeArg, entityIDArg, err := workspaceEntityArgs(entityType, entityID)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := q.Query(ctx, `
 		SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id,
@@ -545,10 +629,10 @@ func loadWorkspaceClaims(ctx context.Context, q workspaceExecutor, questionID uu
 			JOIN question_findings qf ON qf.finding_id = fc.finding_id
 			WHERE qf.question_id = $1
 		)
-		  AND ($2 = '' OR ((c.subject_type = $2 AND c.subject_id = $3::uuid) OR (c.object_type = $2 AND c.object_id = $3::uuid)))
+		  AND `+workspaceEntityRestriction("c.id")+`
 		ORDER BY c.updated_at DESC, c.id
 		LIMIT 60
-	`, questionID, entityType, entityArg)
+	`, questionID, entityTypeArg, entityIDArg)
 	if err != nil {
 		return nil, err
 	}
@@ -575,9 +659,9 @@ func loadWorkspaceClaims(ctx context.Context, q workspaceExecutor, questionID uu
 }
 
 func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, entityType, entityID string, actorUUID uuid.UUID, canResearch bool) (map[string][]WorkspaceEvidence, error) {
-	entityArg := any(nil)
-	if entityID != "" {
-		entityArg = entityID
+	entityTypeArg, entityIDArg, err := workspaceEntityArgs(entityType, entityID)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := q.Query(ctx, `
 		SELECT ce.claim_id, ce.id, 'evidence', ce.relation,
@@ -600,11 +684,9 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 			JOIN question_findings qf ON qf.finding_id = fc.finding_id
 			WHERE qf.question_id = $1
 		)
-		  AND ($4 = '' OR EXISTS (
-			SELECT 1 FROM claims c WHERE c.id = ce.claim_id AND ((c.subject_type = $4 AND c.subject_id = $5::uuid) OR (c.object_type = $4 AND c.object_id = $5::uuid))
-		  ))
-		  AND (s.visibility = 'public' OR ($2::uuid IS NOT NULL AND (s.created_by = $2 OR $3)))
-		  AND (ss.review_status = 'accepted' OR ss.id IS NULL OR $3)
+		  AND `+workspaceEntityRestriction("ce.claim_id")+`
+		  AND (s.visibility = 'public' OR ($4::uuid IS NOT NULL AND (s.created_by = $4 OR $5)))
+		  AND (ss.review_status = 'accepted' OR ss.id IS NULL OR $5)
 		UNION ALL
 		SELECT cce.claim_id, cce.id, 'counter_evidence', 'contradicts',
 		       COALESCE(ss.source_id, sp.source_id), s.title_ar, ss.id, ss.statement_text_ar,
@@ -626,12 +708,10 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 			JOIN question_findings qf ON qf.finding_id = fc.finding_id
 			WHERE qf.question_id = $1
 		)
-		  AND ($4 = '' OR EXISTS (
-			SELECT 1 FROM claims c WHERE c.id = cce.claim_id AND ((c.subject_type = $4 AND c.subject_id = $5::uuid) OR (c.object_type = $4 AND c.object_id = $5::uuid))
-		  ))
-		  AND (s.visibility = 'public' OR ($2::uuid IS NOT NULL AND (s.created_by = $2 OR $3)))
-		  AND (ss.review_status = 'accepted' OR ss.id IS NULL OR $3)
-	`, questionID, nullableUUID(actorUUID), canResearch, entityType, entityArg)
+		  AND `+workspaceEntityRestriction("cce.claim_id")+`
+		  AND (s.visibility = 'public' OR ($4::uuid IS NOT NULL AND (s.created_by = $4 OR $5)))
+		  AND (ss.review_status = 'accepted' OR ss.id IS NULL OR $5)
+	`, questionID, entityTypeArg, entityIDArg, nullableUUID(actorUUID), canResearch)
 	if err != nil {
 		return nil, err
 	}
@@ -664,9 +744,9 @@ func loadWorkspaceEvidence(ctx context.Context, q workspaceExecutor, questionID 
 }
 
 func loadWorkspaceSources(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, entityType, entityID string, actorUUID uuid.UUID, canResearch bool) ([]WorkspaceSource, error) {
-	entityArg := any(nil)
-	if entityID != "" {
-		entityArg = entityID
+	entityTypeArg, entityIDArg, err := workspaceEntityArgs(entityType, entityID)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := q.Query(ctx, `
 		SELECT s.id, s.title_ar, s.author_ar, s.source_type,
@@ -679,7 +759,7 @@ func loadWorkspaceSources(ctx context.Context, q workspaceExecutor, questionID u
 		       (SELECT count(*) FROM source_passages sp WHERE sp.source_id = s.id),
 		       (SELECT count(*) FROM source_statements ss WHERE ss.source_id = s.id)
 		FROM sources s
-		WHERE (s.visibility = 'public' OR ($2::uuid IS NOT NULL AND (s.created_by = $2 OR $3)))
+		WHERE (s.visibility = 'public' OR ($4::uuid IS NOT NULL AND (s.created_by = $4 OR $5)))
 		  AND (
 			s.id IN (SELECT source_id FROM question_sources WHERE question_id = $1)
 			OR EXISTS (
@@ -693,9 +773,7 @@ func loadWorkspaceSources(ctx context.Context, q workspaceExecutor, questionID u
 					JOIN question_findings qf ON qf.finding_id = fc.finding_id
 					WHERE qf.question_id = $1
 				)
-				  AND ($4 = '' OR EXISTS (
-					SELECT 1 FROM claims c WHERE c.id = ce.claim_id AND ((c.subject_type = $4 AND c.subject_id = $5::uuid) OR (c.object_type = $4 AND c.object_id = $5::uuid))
-				  ))
+				  AND `+workspaceEntityRestriction("ce.claim_id")+`
 				  AND COALESCE(ss.source_id, sp.source_id) = s.id
 			)
 			OR EXISTS (
@@ -709,15 +787,13 @@ func loadWorkspaceSources(ctx context.Context, q workspaceExecutor, questionID u
 					JOIN question_findings qf ON qf.finding_id = fc.finding_id
 					WHERE qf.question_id = $1
 				)
-				  AND ($4 = '' OR EXISTS (
-					SELECT 1 FROM claims c WHERE c.id = ce.claim_id AND ((c.subject_type = $4 AND c.subject_id = $5::uuid) OR (c.object_type = $4 AND c.object_id = $5::uuid))
-				  ))
+				  AND `+workspaceEntityRestriction("ce.claim_id")+`
 				  AND COALESCE(ss.source_id, sp.source_id) = s.id
 			)
 		  )
 		ORDER BY s.title_ar
 		LIMIT 50
-	`, questionID, nullableUUID(actorUUID), canResearch, entityType, entityArg)
+	`, questionID, entityTypeArg, entityIDArg, nullableUUID(actorUUID), canResearch)
 	if err != nil {
 		return nil, err
 	}
