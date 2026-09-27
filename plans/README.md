@@ -22,7 +22,7 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 014 | Make hybrid retrieval measurable, and run the comparison the plan requires | P1 | L | 004, 007, 009 | DONE (merged `83eb658`) |
 | 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | DONE (merged `6621961`) |
 | 016 | Fix the remaining correctness, privacy and consistency defects | P1 | M | 001, 002, 006, 009, 012, 015 | DONE (merged `c6ddbf8`) |
-| 017 | Make the source-dependency measurements stable and bounded | P2 | M | 007, 009, 014 | TODO |
+| 017 | Make the source-dependency measurements stable and bounded | P2 | M | 007, 009, 014 | DONE (merged `2be2996`) |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -106,6 +106,11 @@ started, and 14 of the 18 V1 steps proved outright — with three plans left to 
   `S3Store` is contract-tested against MinIO, including a presigned URL fetched over HTTP with
   a plain client. R2 has never been contacted; `docs/storage-backends.md` holds the cutover
   checklist.
+- **Above the graph bound, which 200 candidate edges are selected is still uuid-ordered.** The
+  fingerprint is now stable and the partition is order-independent, but `ORDER BY edge_id LIMIT 200`
+  hands two builds of the same corpus different subgraphs. One `ORDER BY (source_id,
+  depends_on_source_id, dependency_type)` would fix it with no schema change, and it is recorded as
+  a decision rather than made, because it changes which edges a truncated graph returns.
 - **Redis is not being introduced.** The rate limiter is in-process and IP-keyed, so a
   multi-replica deployment has one budget per replica and one per address behind NAT. That is a
   recorded limit, not an oversight, and it stays until it is explicitly asked for.
