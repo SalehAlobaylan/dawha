@@ -96,7 +96,9 @@ def load_cases() -> list[dict[str, object]]:
         seen_ids.add(case["case_id"])
         cases.append(case)
     if not cases:
-        raise ValueError("routing_cases.jsonl is empty; an empty set would report a perfect accuracy")
+        raise ValueError(
+            "routing_cases.jsonl is empty; an empty set would report a perfect accuracy"
+        )
     return cases
 
 

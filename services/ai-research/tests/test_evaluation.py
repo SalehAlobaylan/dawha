@@ -51,14 +51,41 @@ FIXTURE_FILES = (
     "citation_cases.jsonl",
 )
 
-# The routing fixtures are the oldest set. They identify a case by its text
-# rather than by an id, and they predate the convention every later fixture
-# follows: a `reviewed_by` and a note saying why the case is there. They are left
-# as they are - they predate this file and the plan asked for them to be kept -
-# and the exemption is named here, with its reason, so "every reviewed case says
-# who reviewed it" stays true of every set except one that is visibly an
-# exception rather than an unnoticed gap.
+# The routing fixtures are the oldest set, and they predate the convention every
+# later fixture follows: an `id`, a `reviewed_by` and a note saying why the case is
+# there. Plan 015 gave them a `case_id`, an `origin` and a `labelled_by`, so the
+# `reviewed_by` exemption below is the only part of the old convention still
+# outstanding, and it is named here with its reason so "every reviewed case says who
+# reviewed it" stays true of every set except one that is visibly an exception
+# rather than an unnoticed gap.
 LEGACY_FIXTURES = ("routing_cases.jsonl",)
+
+
+def _routing_case_identity(case: dict[str, Any]) -> tuple[Any, ...]:
+    """What makes a routing case the same case as another one.
+
+    This used to be the case's text alone, because the set had no ids and a text
+    was the only thing that identified a case. Plan 015 gave every case a `case_id`,
+    and added cases that deliberately REPEAT a question under a different decision:
+    the same text through the fallback path rather than the provider, and the same
+    text at one source and at two. Those are the cheap/deep boundary and the
+    fallback path expressed as paired cases, and paraphrasing them into nine
+    near-identical questions would have made them nine different questions.
+
+    So the identity is the whole input, which is strictly sharper than the text: two
+    cases that agree on all of it are the same case however they are labelled, and
+    two that differ in any field are different cases even when the text repeats. The
+    guarantee this test exists to provide - no redundant case quietly inflating an
+    accuracy - is kept, and the text check it replaces could not have expressed it.
+    """
+    return (
+        case.get("case_id"),
+        case.get("text"),
+        case.get("context", ""),
+        case.get("operation"),
+        case.get("source_count", 0),
+        bool(case.get("fallback", False)),
+    )
 
 
 def test_every_fixture_file_parses_and_is_not_empty() -> None:
@@ -66,9 +93,22 @@ def test_every_fixture_file_parses_and_is_not_empty() -> None:
         cases = load_cases(name)
         assert cases, f"{name} has no cases"
         if name in LEGACY_FIXTURES:
-            assert len(cases) == len({case["text"] for case in cases}), (
-                f"{name} has a duplicate case"
+            # Two halves. Unique case ids, so a case is nameable; unique full
+            # identities, so no case is repeated.
+            #
+            # There is deliberately NO "no two cases share a text and its expected
+            # labels" check here, because a fallback case is required to do
+            # exactly that. rt-028 repeats rt-001's text AND rt-001's labels, and
+            # that is its entire claim: the Go fallback reaches the same decision
+            # the provider does. A check that forbade it would forbid the only
+            # evidence that the two implementations agree. The full-identity check
+            # above covers the case it was actually for - two cases that are the
+            # same question down the same path counting one judgement twice.
+            assert len(cases) == len({case.get("case_id") for case in cases}), (
+                f"{name} has a duplicate case id"
             )
+            identities = [_routing_case_identity(case) for case in cases]
+            assert len(cases) == len(set(identities)), f"{name} has a duplicate case"
             continue
         assert len(cases) == len({case["id"] for case in cases}), f"{name} has a duplicate case id"
 

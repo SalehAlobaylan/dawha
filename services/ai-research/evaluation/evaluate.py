@@ -138,9 +138,9 @@ def routing_group() -> dict[str, Any]:
             "number would be higher and worthless.",
             "per_route carries the confusion counts so a drop can be traced to a route.",
             "route_accuracy, query_type_accuracy and reason_code_accuracy are agreement "
-            "with internally authored labels. They are not accuracy on real questions and "
-            "must not be quoted as confidence in a historical claim. Read `provenance` "
-            "before quoting any of them.",
+            "with internally authored labels. They are not accuracy on real questions, and "
+            "they are not historical accuracy: they must not be quoted as confidence in a "
+            "historical claim. Read `provenance` before quoting any of them.",
         ],
     }
 
@@ -255,9 +255,12 @@ def print_summary(report: dict[str, Any]) -> None:
         provenance = group.get("provenance")
         if provenance:
             print(f"  labels: {provenance['labels']}")
-            print(f"  cases by origin: {json.dumps(provenance['by_origin'], ensure_ascii=False)}")
-            print(f"  cases derived from a real query set: {provenance['derived_from_real_query_set']}")
-            print(f"  a real query set is available: {'yes' if provenance['available_real_query_set'] else 'no'}")
+            by_origin = json.dumps(provenance["by_origin"], ensure_ascii=False)
+            print(f"  cases by origin: {by_origin}")
+            derived = provenance["derived_from_real_query_set"]
+            available = "yes" if provenance["available_real_query_set"] else "no"
+            print(f"  cases derived from a real query set: {derived}")
+            print(f"  a real query set is available: {available}")
             print(f"  limitation: {provenance['limitation']}")
         misroutes = group.get("misroutes") or []
         if misroutes:
