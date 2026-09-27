@@ -175,7 +175,8 @@ func TestNoMetricLabelCanCarryRequestContent(t *testing.T) {
 	// the two that take a string.
 	registry := newTestMetrics(t)
 	registry.HTTPRequest(MethodFor("POST"), RouteFor("/api/v1/research/query"), StatusClassFor(200), 12*time.Millisecond)
-	registry.AICall(AIOperationFor("/v1/research/query"), AIOutcomeOK, 1200*time.Millisecond, 812)
+	registry.AICall(AIOperationFor("/v1/research/query"), AIOutcomeOK, 1200*time.Millisecond)
+	registry.AICost(AIOperationFor("/v1/research/query"), AIRouteDeep, AIModelDeterministicFoundation, 812)
 	registry.QueueJob(JobTypeFor("source_process"), JobCompleted, 3*time.Second)
 	registry.DatabaseQuery(QueryOperationFor("select"), 2*time.Millisecond)
 	registry.QueueDepth(JobTypeFor("source_process"), 4)
@@ -239,8 +240,8 @@ func TestTheLabelSetIsBoundedAndEveryEnumerationIsTotal(t *testing.T) {
 		{"dawha_db_queries_total", 5},
 		{"dawha_queue_depth", 5},
 		{"dawha_queue_jobs_total", 5 * 5},
-		{"dawha_ai_calls_total", 10 * 3},
-		{"dawha_ai_cost_units", 10},
+		{"dawha_ai_calls_total", 11 * 3},
+		{"dawha_ai_cost_units", 11 * 4 * 4},
 		{"dawha_research_runs_total", 4},
 	}
 	for _, testCase := range cases {
@@ -277,9 +278,20 @@ func TestTheLabelSetIsBoundedAndEveryEnumerationIsTotal(t *testing.T) {
 		}
 	}
 	for _, operation := range []AIOperation{AIOperationNormalizeName, AIOperationEmbed, AIOperationClassify, AIOperationExtractEntities,
-		AIOperationExtractClaims, AIOperationResolveEntity, AIOperationContradiction, AIOperationRerank, AIOperationResearchQuery, AIOperationOther} {
+		AIOperationExtractClaims, AIOperationResolveEntity, AIOperationContradiction, AIOperationRerank, AIOperationResearchQuery,
+		AIOperationRoute, AIOperationOther} {
 		if !validAIOperations[operation] {
 			t.Fatalf("the ai operation %q is not in its enumeration", operation)
+		}
+	}
+	for _, model := range []AIModel{AIModelDeterministicFoundation, AIModelDeterministicRouting, AIModelGoFallbackRouting, AIModelUnpriced} {
+		if !validAIModels[model] {
+			t.Fatalf("the ai model %q is not in its enumeration", model)
+		}
+	}
+	for _, route := range []AIRoute{AIRouteIgnore, AIRouteCheap, AIRouteDeep, AIRouteUnrouted} {
+		if !validAIRoutes[route] {
+			t.Fatalf("the ai route %q is not in its enumeration", route)
 		}
 	}
 }
@@ -319,7 +331,10 @@ func assertLabelsAreEnumerated(t *testing.T, line string) {
 				t.Fatalf("method %q is not an enumeration member: %s", value, line)
 			}
 		case "route":
-			if !validRoutes[Route(value)] {
+			// Two enumerations carry a label called route: the HTTP route family
+			// and the JEV route an AI call was attributed to. They are disjoint
+			// sets of values, so accepting either is not a hole.
+			if !validRoutes[Route(value)] && !validAIRoutes[AIRoute(value)] {
 				t.Fatalf("route %q is not an enumeration member: %s", value, line)
 			}
 		case "status":
@@ -342,6 +357,10 @@ func assertLabelsAreEnumerated(t *testing.T, line string) {
 			if !validQueryOperations[QueryOperation(value)] {
 				t.Fatalf("statement %q is not an enumeration member: %s", value, line)
 			}
+		case "model":
+			if !validAIModels[AIModel(value)] {
+				t.Fatalf("model %q is not an enumeration member: %s", value, line)
+			}
 		case "le":
 			// A histogram bound, not a label the caller chose.
 		default:
@@ -353,11 +372,76 @@ func assertLabelsAreEnumerated(t *testing.T, line string) {
 // ---------------------------------------------------------------------------
 // The metrics themselves.
 
+func TestTheCostCounterAttributesToARouteAndAModelAndNothingElse(t *testing.T) {
+	registry := newTestMetrics(t)
+	registry.AICall(AIOperationResearchQuery, AIOutcomeOK, time.Second)
+	registry.AICost(AIOperationResearchQuery, AIRouteDeep, AIModelDeterministicFoundation, 4)
+	registry.AICost(AIOperationResearchQuery, AIRouteCheap, AIModelDeterministicFoundation, 4)
+	// A model the cost model does not price is a visible size, not a price.
+	registry.AICost(AIOperationEmbed, AIRouteUnrouted, AIModelUnpriced, 1)
+	// A call that costs nothing contributes no series here and is still counted.
+	registry.AICall(AIOperationRoute, AIOutcomeOK, time.Millisecond)
+	registry.AICost(AIOperationRoute, AIRouteIgnore, AIModelGoFallbackRouting, 0)
+
+	exposition := registry.Text()
+	for _, want := range []string{
+		`dawha_ai_cost_units{model="deterministic-foundation",operation="research_query",route="cheap"} 4`,
+		`dawha_ai_cost_units{model="deterministic-foundation",operation="research_query",route="deep"} 4`,
+		`dawha_ai_cost_units{model="unpriced",operation="embed",route="unrouted"} 1`,
+		`dawha_ai_calls_total{operation="route",outcome="ok"} 1`,
+	} {
+		if !strings.Contains(exposition, want) {
+			t.Fatalf("the exposition is missing %q:\n%s", want, exposition)
+		}
+	}
+	// The two routes are separate series rather than one total, which is the whole
+	// point: a summed total could not answer which route a call was made under.
+	// Every cost series carries all three labels, and there is no fourth one.
+	costSeries := 0
+	for _, line := range strings.Split(exposition, "\n") {
+		if !strings.HasPrefix(line, "dawha_ai_cost_units{") {
+			continue
+		}
+		costSeries++
+		for _, label := range []string{`model="`, `operation="`, `route="`} {
+			if !strings.Contains(line, label) {
+				t.Fatalf("a cost series is missing the %s label: %s", label, line)
+			}
+		}
+	}
+	if costSeries != 3 {
+		t.Fatalf("cost series = %d, want 3 (two routes plus one unpriced embed):\n%s", costSeries, exposition)
+	}
+	// A model name the cost model does not know is unreachable through the typed
+	// API, and the guard is at the storage boundary.
+	registry.record("dawha_ai_cost_units", 5, "research_query", "deep", "gpt-something")
+	if strings.Contains(exposition, "gpt-something") {
+		t.Fatalf("a model name reached a label:\n%s", exposition)
+	}
+}
+
+func TestAIRouteForNeverInventsARoute(t *testing.T) {
+	for _, given := range []string{"ignore", "cheap", "deep"} {
+		if got := AIRouteFor(given); string(got) != given {
+			t.Fatalf("AIRouteFor(%q) = %q", given, got)
+		}
+	}
+	// Anything else, including the empty string a call made under no routing
+	// decision reports, is unrouted. Filing it under a route that did not choose
+	// it would put a number where a fact is missing.
+	for _, given := range []string{"", "  ", "DEEP", "true", "cheap,deep", "تم تجاهل"} {
+		if got := AIRouteFor(given); got != AIRouteUnrouted {
+			t.Fatalf("AIRouteFor(%q) = %q, want unrouted", given, got)
+		}
+	}
+}
+
 func TestARequestRunEmitsTheDocumentedMetrics(t *testing.T) {
 	registry := newTestMetrics(t)
 	handler := Middleware(registry, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The AI calls and the enqueue a request makes, in the same context.
-		registry.AICall(AIOperationFor("/v1/embed"), AIOutcomeOK, 40*time.Millisecond, 1024)
+		registry.AICall(AIOperationFor("/v1/embed"), AIOutcomeOK, 40*time.Millisecond)
+		registry.AICost(AIOperationFor("/v1/embed"), AIRouteUnrouted, AIModelDeterministicFoundation, 1024)
 		PropagateRequestID(r.Context(), map[string]any{})
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -379,7 +463,7 @@ func TestARequestRunEmitsTheDocumentedMetrics(t *testing.T) {
 		"dawha_http_request_duration_seconds_count",
 		"dawha_http_request_duration_seconds_sum",
 		"dawha_ai_calls_total{operation=\"embed\",outcome=\"ok\"} 2",
-		"dawha_ai_cost_units{operation=\"embed\"} 2048",
+		"dawha_ai_cost_units{model=\"deterministic-foundation\",operation=\"embed\",route=\"unrouted\"} 2048",
 		"dawha_ai_duration_seconds_count",
 		"dawha_queue_jobs_total{job_type=\"source_process\",outcome=\"completed\"} 1",
 		"dawha_queue_depth{job_type=\"source_process\"} 3",
@@ -471,7 +555,8 @@ func TestTheExporterIsOffByDefaultAndOffCostsNothing(t *testing.T) {
 		t.Fatal("a registry built with enabled=false reports itself enabled")
 	}
 	registry.HTTPRequest(MethodPost, RouteAuth, Status4xx, time.Second)
-	registry.AICall(AIOperationEmbed, AIOutcomeError, time.Second, 99)
+	registry.AICall(AIOperationEmbed, AIOutcomeError, time.Second)
+	registry.AICost(AIOperationEmbed, AIRouteUnrouted, AIModelUnpriced, 99)
 	registry.QueueJob(JobSourceProcess, JobFailed, time.Second)
 	registry.DatabaseQuery(QuerySelect, time.Second)
 	registry.ResearchRun(ResearchFailed, time.Second)

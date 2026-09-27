@@ -249,7 +249,7 @@ func (p *HTTPProvider) NormalizeName(ctx context.Context, value string) (NameNor
 		return NameNormalization{}, err
 	}
 	var result NameNormalization
-	err := p.post(ctx, "/v1/normalize-name", map[string]string{"value": value}, &result)
+	err := p.post(ctx, "/v1/normalize-name", map[string]string{"value": value}, &result, nil)
 	if err == nil {
 		err = validateNameNormalization(result)
 	}
@@ -261,7 +261,7 @@ func (p *HTTPProvider) Embed(ctx context.Context, input EmbeddingRequest) (Embed
 		return EmbeddingResponse{}, err
 	}
 	var result EmbeddingResponse
-	err := p.post(ctx, "/v1/embed", input, &result)
+	err := p.post(ctx, "/v1/embed", input, &result, nil)
 	if err == nil {
 		err = validateEmbedding(result)
 	}
@@ -273,7 +273,7 @@ func (p *HTTPProvider) Classify(ctx context.Context, input ClassificationRequest
 		return ClassificationResponse{}, err
 	}
 	var result ClassificationResponse
-	err := p.post(ctx, "/v1/classify", input, &result)
+	err := p.post(ctx, "/v1/classify", input, &result, nil)
 	if err == nil {
 		err = validateClassification(result)
 	}
@@ -285,7 +285,7 @@ func (p *HTTPProvider) ExtractEntities(ctx context.Context, input ExtractionRequ
 		return EntityExtractionResponse{}, err
 	}
 	var result EntityExtractionResponse
-	err := p.post(ctx, "/v1/extract/entities", input, &result)
+	err := p.post(ctx, "/v1/extract/entities", input, &result, nil)
 	if err == nil {
 		err = validateEntityExtraction(result)
 	}
@@ -297,7 +297,7 @@ func (p *HTTPProvider) ExtractClaims(ctx context.Context, input ExtractionReques
 		return ClaimExtractionResponse{}, err
 	}
 	var result ClaimExtractionResponse
-	err := p.post(ctx, "/v1/extract/claims", input, &result)
+	err := p.post(ctx, "/v1/extract/claims", input, &result, nil)
 	if err == nil {
 		err = validateClaimExtraction(result)
 	}
@@ -309,7 +309,7 @@ func (p *HTTPProvider) ResolveEntity(ctx context.Context, input EntityResolution
 		return EntityResolutionResponse{}, err
 	}
 	var result EntityResolutionResponse
-	err := p.post(ctx, "/v1/resolve/entity", input, &result)
+	err := p.post(ctx, "/v1/resolve/entity", input, &result, nil)
 	if err == nil {
 		err = validateEntityResolution(result)
 	}
@@ -321,7 +321,7 @@ func (p *HTTPProvider) AnalyzeContradiction(ctx context.Context, input Contradic
 		return ContradictionResponse{}, err
 	}
 	var result ContradictionResponse
-	err := p.post(ctx, "/v1/analyze/contradiction", input, &result)
+	err := p.post(ctx, "/v1/analyze/contradiction", input, &result, nil)
 	if err == nil {
 		err = validateContradiction(result)
 	}
@@ -333,7 +333,7 @@ func (p *HTTPProvider) Rerank(ctx context.Context, input RerankRequest) (RerankR
 		return RerankResponse{}, err
 	}
 	var result RerankResponse
-	err := p.post(ctx, "/v1/rerank", input, &result)
+	err := p.post(ctx, "/v1/rerank", input, &result, nil)
 	if err == nil {
 		err = validateRerank(result)
 	}
@@ -345,7 +345,7 @@ func (p *HTTPProvider) ResearchQuery(ctx context.Context, input ResearchQueryReq
 		return ResearchQueryResponse{}, err
 	}
 	var result ResearchQueryResponse
-	err := p.post(ctx, "/v1/research/query", input, &result)
+	err := p.post(ctx, "/v1/research/query", input, &result, nil)
 	if err == nil {
 		err = validateResearchQuery(result)
 	}
@@ -424,28 +424,60 @@ func callClient[T any](c *Client, ctx context.Context, call func(context.Context
 }
 
 // post is the single choke point every AI call goes through, which is why it is
-// also the single place a call is measured. The measurement is three things: the
+// also the single place a call is measured. The measurement is four things: the
 // endpoint (as an enumeration, never the path a caller chose), how long it took,
-// and whether it worked - plus, where the provider reports usage, the number of
-// units it was billed. The request body is not measured, not sampled and not
-// logged: an AI call's input is exactly the source text this repository exists to
-// keep careful, and a telemetry package that grew a field for it would be a bug
-// nobody would find by reading the metric names.
-func (p *HTTPProvider) post(ctx context.Context, path string, input, output any) error {
-	operation := telemetry.AIOperationFor(path)
+// whether it worked, and what it cost - the cost coming from the cost model rather
+// than from the caller, so the figure is the same whoever records it. The request
+// body is not measured, not sampled and not logged: an AI call's input is exactly
+// the source text this repository exists to keep careful, and a telemetry package
+// that grew a field for it would be a bug nobody would find by reading the metric
+// names.
+//
+// decidedRoute, when non-nil, names the route this call's own response selected.
+// Only /v1/route passes one. Every other operation's response says nothing about
+// routing, and giving one a value would put a route label on a call that has no
+// route behind it; they are attributed to whatever the context carries, which is
+// AIRouteUnrouted when the caller was not acting on a routing decision.
+//
+// The routing call is attributed to the route it DECIDED because that decision is
+// its entire result, and because it is what makes the counterfactual computable:
+// the cost of the deep path for the questions it did not send there is known from
+// the same counter, priced by the same model.
+func (p *HTTPProvider) post(ctx context.Context, path string, input, output any, decidedRoute func() string) error {
 	started := time.Now()
 	err := p.postOnce(ctx, path, input, output)
-	if p.Metrics.Enabled() {
-		outcome := telemetry.AIOutcomeOK
-		switch {
-		case errors.Is(err, context.DeadlineExceeded), errors.Is(ctx.Err(), context.DeadlineExceeded):
-			outcome = telemetry.AIOutcomeTimeout
-		case err != nil:
-			outcome = telemetry.AIOutcomeError
+	route := RouteFromContext(ctx)
+	if decidedRoute != nil {
+		if named := telemetry.AIRouteFor(decidedRoute()); named != telemetry.AIRouteUnrouted {
+			route = named
 		}
-		p.Metrics.AICall(operation, outcome, time.Since(started), 0)
 	}
+	p.measure(ctx, path, input, output, route, time.Since(started), err)
 	return err
+}
+
+// measure records one call. It is separate from post so that the route is read
+// after the response is decoded, and it starts by asking whether recording is on -
+// a provider with no telemetry set should not pay to marshal a request just to
+// price it.
+func (p *HTTPProvider) measure(ctx context.Context, path string, input, output any, route telemetry.AIRoute, duration time.Duration, err error) {
+	if !p.Metrics.Enabled() {
+		return
+	}
+	operation := telemetry.AIOperationFor(path)
+	outcome := telemetry.AIOutcomeOK
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(ctx.Err(), context.DeadlineExceeded):
+		outcome = telemetry.AIOutcomeTimeout
+	case err != nil:
+		outcome = telemetry.AIOutcomeError
+	}
+	p.Metrics.AICall(operation, outcome, duration)
+	// A failed call has no decoded response, so it prices as unpriced: the size of
+	// the request is known, what the provider charged for it is not, and recording
+	// a price here would be the one number nobody could check.
+	model := ModelFor(responseModel(output))
+	p.Metrics.AICost(operation, route, model, AttributedCost(operation, input, model).Units)
 }
 
 func (p *HTTPProvider) postOnce(ctx context.Context, path string, input, output any) error {

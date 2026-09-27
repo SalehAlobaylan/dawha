@@ -85,7 +85,9 @@ func (p *HTTPProvider) Route(ctx context.Context, input RoutingRequest) (Routing
 		return RoutingDecision{}, err
 	}
 	var result RoutingDecision
-	if err := p.post(ctx, "/v1/route", input, &result); err != nil {
+	// The routing call is measured against the route it decided, which post reads
+	// out of result after the response is decoded.
+	if err := p.post(ctx, "/v1/route", input, &result, func() string { return result.Route }); err != nil {
 		return RoutingDecision{}, err
 	}
 	if err := ValidateRoutingDecision(result); err != nil {

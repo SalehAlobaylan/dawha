@@ -56,19 +56,43 @@ func (m *Metrics) QueueJob(jobType JobType, outcome JobOutcome, duration time.Du
 
 // AICall records one call to the AI service.
 //
-// costUnits is whatever the provider bills in - tokens, characters, requests -
-// and it is a NUMBER on purpose. A cost is the one thing here that has to be
-// comparable across calls, and it cannot be compared if it is a string that
-// sometimes contains a model name.
-func (m *Metrics) AICall(operation AIOperation, outcome AIOutcome, duration time.Duration, costUnits float64) {
+// There is no cost parameter, and that is the correction this signature carries:
+// a call's cost is not a number the caller owns. It is derived by the cost model
+// from the request, the operation and the model that answered, so it is the same
+// figure whoever records it and a caller cannot report a price it invented.
+// Record it with AICost, which takes the figure the model produced.
+func (m *Metrics) AICall(operation AIOperation, outcome AIOutcome, duration time.Duration) {
 	if !m.Enabled() {
 		return
 	}
 	m.record("dawha_ai_calls_total", 1, string(operation), string(outcome))
 	m.observe("dawha_ai_duration_seconds", duration.Seconds(), DefaultBuckets, string(operation))
-	if costUnits > 0 {
-		m.record("dawha_ai_cost_units", costUnits, string(operation))
+}
+
+// AICost records what one call cost, attributed to the operation, to the JEV
+// route whose decision it was made under, and to the model that answered.
+//
+// The three labels are what make the figure attributable rather than a total. The
+// model label is why a figure from one model is never silently added to a figure
+// from another; the route label is why a question routed cheap and the same
+// question routed deep can be compared at all.
+//
+// A route here is operational classification. It is read at the moment of the
+// call, it is written only to this counter, and nothing reads it back - which is
+// the guardrail Phase 18 exists to hold, expressed in the shape of the API rather
+// than only in a test.
+func (m *Metrics) AICost(operation AIOperation, route AIRoute, model AIModel, units float64) {
+	if !m.Enabled() {
+		return
 	}
+	if units <= 0 {
+		// A call that costs nothing - the Go fallback route runs no model - is
+		// still counted by AICall. It contributes no series here, and a
+		// reconciliation that sums this family still balances, because the
+		// counterfactual it is checked against prices the same call at zero.
+		return
+	}
+	m.record("dawha_ai_cost_units", units, string(operation), string(route), string(model))
 }
 
 // ResearchRun records a research run's terminal outcome.

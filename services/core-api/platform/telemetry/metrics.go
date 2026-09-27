@@ -32,6 +32,8 @@ type JobType string
 type JobOutcome string
 type AIOperation string
 type AIOutcome string
+type AIModel string
+type AIRoute string
 type ResearchOutcome string
 type QueryOperation string
 
@@ -115,6 +117,7 @@ const (
 	AIOperationContradiction   AIOperation = "contradiction"
 	AIOperationRerank          AIOperation = "rerank"
 	AIOperationResearchQuery   AIOperation = "research_query"
+	AIOperationRoute           AIOperation = "route"
 	AIOperationOther           AIOperation = "other"
 )
 
@@ -123,6 +126,42 @@ const (
 	AIOutcomeOK      AIOutcome = "ok"
 	AIOutcomeError   AIOutcome = "error"
 	AIOutcomeTimeout AIOutcome = "timeout"
+)
+
+// AIModel values are the models this repository's COST MODEL knows how to price.
+//
+// A model name is the one label value that arrives from outside: the AI service
+// names itself in every response. So a name is never used as a label directly.
+// The cost model maps whatever arrived onto this closed set, and a name it does
+// not recognise becomes AIModelUnpriced - which is a visible "this figure is a
+// size, not a price" rather than a silent guess. A provider swap therefore shows
+// up as unpriced before anybody has had to update a number.
+//
+// The two deterministic names are two endpoints of one implementation, and the
+// Go fallback runs no model at all. They are separate members because their
+// weights differ, and a report that merged them would hide that.
+const (
+	AIModelDeterministicFoundation AIModel = "deterministic-foundation"
+	AIModelDeterministicRouting    AIModel = "deterministic-semantic-control-v1"
+	AIModelGoFallbackRouting       AIModel = "go-deterministic-routing-v1"
+	AIModelUnpriced                AIModel = "unpriced"
+)
+
+// AIRoute values are the JEV routes, repeated here rather than imported, because
+// telemetry is the package everything depends on and internal/ai depends on it.
+//
+// unrouted is not a failure: most calls in this repository are not made under a
+// routing decision, and a cost figure with no route behind it is worth recording
+// as its own thing rather than filed under a route that did not choose it.
+//
+// A route here is operational classification, read once at the moment of a call
+// and written only to a metric. It is never persisted, never read back and never
+// consulted by anything that decides a status.
+const (
+	AIRouteIgnore   AIRoute = "ignore"
+	AIRouteCheap    AIRoute = "cheap"
+	AIRouteDeep     AIRoute = "deep"
+	AIRouteUnrouted AIRoute = "unrouted"
 )
 
 // ResearchOutcome values.
@@ -165,9 +204,14 @@ var (
 		AIOperationNormalizeName: true, AIOperationEmbed: true, AIOperationClassify: true,
 		AIOperationExtractEntities: true, AIOperationExtractClaims: true, AIOperationResolveEntity: true,
 		AIOperationContradiction: true, AIOperationRerank: true, AIOperationResearchQuery: true,
-		AIOperationOther: true,
+		AIOperationRoute: true, AIOperationOther: true,
 	}
-	validAIOutcomes       = map[AIOutcome]bool{AIOutcomeOK: true, AIOutcomeError: true, AIOutcomeTimeout: true}
+	validAIOutcomes = map[AIOutcome]bool{AIOutcomeOK: true, AIOutcomeError: true, AIOutcomeTimeout: true}
+	validAIModels   = map[AIModel]bool{
+		AIModelDeterministicFoundation: true, AIModelDeterministicRouting: true,
+		AIModelGoFallbackRouting: true, AIModelUnpriced: true,
+	}
+	validAIRoutes         = map[AIRoute]bool{AIRouteIgnore: true, AIRouteCheap: true, AIRouteDeep: true, AIRouteUnrouted: true}
 	validResearchOutcomes = map[ResearchOutcome]bool{ResearchCompleted: true, ResearchFailed: true, ResearchTruncated: true, ResearchCancelled: true}
 	validQueryOperations  = map[QueryOperation]bool{QuerySelect: true, QueryInsert: true, QueryUpdate: true, QueryDelete: true, QueryOther: true}
 )
@@ -213,6 +257,19 @@ func JobTypeFor(jobType string) JobType {
 		return candidate
 	}
 	return JobOther
+}
+
+// AIRouteFor normalizes a JEV route onto the enumeration. Anything this package
+// does not recognise - including the empty string, which is what a call made
+// under no routing decision at all reports - becomes AIRouteUnrouted. That is the
+// honest default: filing a call under a route that did not choose it would put a
+// number where a fact is missing.
+func AIRouteFor(route string) AIRoute {
+	candidate := AIRoute(strings.TrimSpace(route))
+	if validAIRoutes[candidate] {
+		return candidate
+	}
+	return AIRouteUnrouted
 }
 
 // RouteFor classifies a request path onto the enumeration.
@@ -295,6 +352,8 @@ func AIOperationFor(path string) AIOperation {
 		return AIOperationRerank
 	case "/v1/research/query":
 		return AIOperationResearchQuery
+	case "/v1/route":
+		return AIOperationRoute
 	default:
 		return AIOperationOther
 	}
@@ -431,8 +490,14 @@ func NewMetrics(service string, enabled bool) *Metrics {
 		"Wall-clock duration of a call to the AI service, by operation.",
 		[]string{"operation"}, aiOperations())
 	registry.register("dawha_ai_cost_units", kindCounter,
-		"AI work in the units the provider bills, by operation. A NUMBER, never a model name or a prompt.",
-		[]string{"operation"}, aiOperations())
+		"Attributed cost in dawha work units, by operation, by the JEV route in whose context the call was made, "+
+			"and by the model that answered. Not money and not a provider's own billing unit: one unit is one "+
+			"thousand runes of this service's own request payload at unit weight, and the weight per operation and "+
+			"per model lives in internal/ai. The model label is why a figure from one model is never added to a "+
+			"figure from another. A series whose model is \"unpriced\" is the SIZE of the request, not a price: "+
+			"the cost model does not know what that model charges, and says so rather than guessing. The route "+
+			"is operational classification, read at the moment of the call and written only here.",
+		[]string{"operation", "route", "model"}, aiOperations(), aiRoutes(), aiModels())
 	registry.register("dawha_research_runs_total", kindCounter,
 		"Research runs by terminal outcome.",
 		[]string{"outcome"}, researchOutcomes())
@@ -479,6 +544,14 @@ func aiOperations() labelEnum {
 
 func aiOutcomes() labelEnum {
 	return labelEnum{size: len(validAIOutcomes), valid: func(value string) bool { return validAIOutcomes[AIOutcome(value)] }}
+}
+
+func aiModels() labelEnum {
+	return labelEnum{size: len(validAIModels), valid: func(value string) bool { return validAIModels[AIModel(value)] }}
+}
+
+func aiRoutes() labelEnum {
+	return labelEnum{size: len(validAIRoutes), valid: func(value string) bool { return validAIRoutes[AIRoute(value)] }}
 }
 
 func researchOutcomes() labelEnum {
