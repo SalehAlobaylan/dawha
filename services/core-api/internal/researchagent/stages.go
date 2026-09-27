@@ -56,6 +56,24 @@ func decomposeQuestion(input RunInput) ([]PlanStep, []string) {
 	return plan, terms
 }
 
+// searchSources reads the accepted statements of qualified public sources.
+//
+// THE OPTIONAL SOURCE ID IS NULL, NOT AN EMPTY STRING.
+//
+// nullableUUIDValue returns a nil argument for an absent id, so the source
+// constraint arrives as SQL NULL. The predicate that used to test the empty
+// string is then a comparison of NULL with a string, which is NULL and never
+// true, so a run scoped to a person with no source id found no source
+// statements at all: the stage answered "there is nothing" about material it had
+// not been asked to exclude. Writing the test as "this argument is NULL" says
+// what it means - no source constraint - and it is the form the question id two
+// clauses below already used, through COALESCE.
+//
+// The other optional arguments in this file are text and are never NULL, so
+// testing them against the empty string is true for an absent tree version, at
+// searchGraph and at inspectChronology alike. Only the arguments that go through
+// nullableUUIDValue were ever NULL, and of those only this one had the wrong
+// shape.
 func searchSources(ctx context.Context, q queryer, stage stageContext) ([]EvidenceRef, error) {
 	rows, err := q.Query(ctx, `
 		SELECT ss.id, ss.source_id, s.title_ar, ss.source_passage_id, ss.statement_text_ar
@@ -69,7 +87,7 @@ func searchSources(ctx context.Context, q queryer, stage stageContext) ([]Eviden
 			WHERE sd.status IN ('needs_review', 'confirmed')
 			  AND sd.source_id = s.id
 		  )
-		  AND ($1 = '' OR s.id = $1::uuid)
+		  AND ($1::uuid IS NULL OR s.id = $1::uuid)
 		  AND (COALESCE(cardinality($2::uuid[]), 0) = 0 OR s.id = ANY($2::uuid[]))
 		  AND (COALESCE(cardinality($3::text[]), 0) = 0 OR EXISTS (
 			SELECT 1 FROM unnest($3::text[]) AS term(value)

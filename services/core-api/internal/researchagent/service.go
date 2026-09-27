@@ -393,6 +393,22 @@ func (s *Service) runEvidence(ctx context.Context, runID uuid.UUID) ([]EvidenceR
 // One transaction per stage is the whole resume story. There is no window in which
 // a step says it ran but its evidence is missing, and no window in which the
 // evidence is on the row but the step that explains it is not.
+//
+// THE STEP'S evidence_count IS WHAT IT WROTE, NOT WHAT IT WAS OFFERED.
+//
+// research_agent_evidence is UNIQUE on (run_id, reference_type, reference_id,
+// stance) and that key does NOT include step_id, so evidence an earlier stage
+// already cited is not written a second time: the insert conflicts, DO NOTHING
+// swallows it, and the row keeps the first step's id. A count taken from
+// len(refs) in memory therefore reported an item the step did not write, and
+// could report more evidence than the run holds at all.
+//
+// So the step row is written with a zero count, the evidence is inserted, and
+// the count is set from the inserts that actually happened - all inside this one
+// transaction, so the step is never observable carrying a number it did not
+// write. A stage that only re-cites what an earlier stage already holds reports
+// zero, which is the truth: it wrote no evidence of its own, and the row that
+// holds the evidence says which step put it there.
 func (s *Service) persistStage(ctx context.Context, claim jobs.Lease, runID uuid.UUID, planStep PlanStep, stageInput, output map[string]any, unresolved bool, startedAt time.Time, refs []EvidenceRef) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -415,12 +431,22 @@ func (s *Service) persistStage(ctx context.Context, claim jobs.Lease, runID uuid
 	}
 	completedAt := time.Now().UTC()
 	stepID := uuid.New()
-	if _, err := tx.Exec(ctx, `INSERT INTO research_agent_steps (id, run_id, step_order, stage, tool_name, status, input, output, evidence_count, started_at, completed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, stepID, runID, planStep.Order, planStep.Stage, planStep.Tool, status, mustJSON(stageInput), mustJSON(output), len(refs), startedAt, completedAt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO research_agent_steps (id, run_id, step_order, stage, tool_name, status, input, output, evidence_count, started_at, completed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10)`, stepID, runID, planStep.Order, planStep.Stage, planStep.Tool, status, mustJSON(stageInput), mustJSON(output), startedAt, completedAt); err != nil {
 		return err
 	}
+	written := 0
 	for _, item := range refs {
 		item.StepID = stepID.String()
-		if err := persistEvidence(ctx, tx, runID, item); err != nil {
+		inserted, err := persistEvidence(ctx, tx, runID, item)
+		if err != nil {
+			return err
+		}
+		if inserted {
+			written++
+		}
+	}
+	if written > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE research_agent_steps SET evidence_count = $1 WHERE id = $2`, written, stepID); err != nil {
 			return err
 		}
 	}
@@ -990,9 +1016,19 @@ func loadCandidateSourceIDs(ctx context.Context, q queryer, input RunInput) ([]u
 	return items, rows.Err()
 }
 
-func persistEvidence(ctx context.Context, tx pgx.Tx, runID uuid.UUID, item EvidenceRef) error {
-	_, err := tx.Exec(ctx, `INSERT INTO research_agent_evidence (run_id, step_id, layer, stance, reference_type, reference_id, source_id, statement_id, claim_id, excerpt, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING`, runID, item.StepID, item.Layer, item.Stance, item.ReferenceType, item.ReferenceID, nullableUUIDValue(item.SourceID), nullableUUIDValue(item.StatementID), nullableUUIDValue(item.ClaimID), item.Excerpt, mustJSON(item.Metadata))
-	return err
+// persistEvidence writes one evidence row and reports whether it wrote it.
+//
+// The boolean is the whole point of the function's signature. ON CONFLICT DO
+// NOTHING makes the insert a no-op when this run already holds that
+// (run_id, reference_type, reference_id, stance), and the caller has to be able
+// to tell that case from a real write: the step's evidence_count is the number
+// of rows that persisted, not the number of rows it offered.
+func persistEvidence(ctx context.Context, tx pgx.Tx, runID uuid.UUID, item EvidenceRef) (bool, error) {
+	tag, err := tx.Exec(ctx, `INSERT INTO research_agent_evidence (run_id, step_id, layer, stance, reference_type, reference_id, source_id, statement_id, claim_id, excerpt, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING`, runID, item.StepID, item.Layer, item.Stance, item.ReferenceType, item.ReferenceID, nullableUUIDValue(item.SourceID), nullableUUIDValue(item.StatementID), nullableUUIDValue(item.ClaimID), item.Excerpt, mustJSON(item.Metadata))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func writeAudit(ctx context.Context, tx pgx.Tx, actor uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any, reason string) error {
