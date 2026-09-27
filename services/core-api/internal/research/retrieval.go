@@ -152,13 +152,51 @@ func scanPassage(row pgx.Row) (Citation, float64, error) {
 	return item, score, nil
 }
 
+// fuseAndRerank merges the two legs' candidates, scores them, reranks them and
+// returns them in a DEFINED order.
+//
+// # Why the order is built rather than inherited
+//
+// The merge used to accumulate candidates in a `map[string]*Citation` and then
+// walk that map to build the slice it sorted. Go randomises map iteration, so the
+// slice started in a different order on every call, and both sorts here are
+// STABLE - which means equal scores kept whatever order the map happened to
+// produce. Two candidates that tie therefore came back in an arbitrary relative
+// order, on every request, forever.
+//
+// That is two problems and only one of them is cosmetic:
+//
+//   - It is product-visible. A researcher who refreshes a research answer can see
+//     the same passages in a different order, with no change to the question and
+//     no change to any score. A list that reorders itself reads as the platform
+//     being unsure, which is the opposite of what a source-grounded product is
+//     for.
+//   - It made a measurement artifact undiffable. The retrieval measurement's
+//     `per_case` lists differ between two runs of the same commit on the same
+//     corpus, so a reviewer learns that a diff in that file means nothing.
+//
+// The fix is ORDERING ONLY. No score, threshold, weight, cap or membership
+// changes: the same passages are returned with the same numbers, and every
+// ordering decision below is a tie-break between candidates the previous code
+// already considered equally good.
+//
+// The total order is: rerank score, then combined score, then passage id. The
+// passage id is the last key because it is unique, stable across runs and already
+// the final tie-break inside the retrieval SQL (`ORDER BY ... , id`), so the Go
+// layer now agrees with the layer beneath it instead of contradicting it.
 func (s *Service) fuseAndRerank(ctx context.Context, retrieval retrievalContext, lexical, vectorResults []Citation) ([]Citation, RetrievalStats, error) {
+	// `order` is the sequence the candidates were added in - lexical first, then
+	// whatever the vector leg added that the lexical leg did not - and it is what
+	// makes the pre-sort order defined. `byPassage` stays a map because looking a
+	// candidate up by id is what it is good at; it is never walked.
 	byPassage := make(map[string]*Citation, len(lexical)+len(vectorResults))
+	order := make([]string, 0, len(lexical)+len(vectorResults))
 	add := func(candidate Citation) {
 		current, found := byPassage[candidate.PassageID]
 		if !found {
 			copy := candidate
 			byPassage[candidate.PassageID] = &copy
+			order = append(order, candidate.PassageID)
 			return
 		}
 		if candidate.Score.Lexical > 0 {
@@ -174,8 +212,9 @@ func (s *Service) fuseAndRerank(ctx context.Context, retrieval retrievalContext,
 	for _, candidate := range vectorResults {
 		add(candidate)
 	}
-	items := make([]Citation, 0, len(byPassage))
-	for _, candidate := range byPassage {
+	items := make([]Citation, 0, len(order))
+	for _, passageID := range order {
+		candidate := byPassage[passageID]
 		if candidate.Score.Lexical > 0 && candidate.Score.Vector > 0 {
 			candidate.Score.Combined = candidate.Score.Lexical*0.55 + candidate.Score.Vector*0.45
 		} else if candidate.Score.Lexical > 0 {
@@ -185,7 +224,12 @@ func (s *Service) fuseAndRerank(ctx context.Context, retrieval retrievalContext,
 		}
 		items = append(items, *candidate)
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Score.Combined > items[j].Score.Combined })
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Score.Combined == items[j].Score.Combined {
+			return items[i].PassageID < items[j].PassageID
+		}
+		return items[i].Score.Combined > items[j].Score.Combined
+	})
 	if len(items) > 30 {
 		items = items[:30]
 	}
@@ -202,8 +246,12 @@ func (s *Service) fuseAndRerank(ctx context.Context, retrieval retrievalContext,
 		return nil, stats, err
 	}
 	byID := make(map[string]Citation, len(items))
+	// The reranked slice's own order, so a document the reranker did not return is
+	// appended in the order it was fused in rather than in map order.
+	remaining := make([]string, 0, len(items))
 	for _, item := range items {
 		byID[item.PassageID] = item
+		remaining = append(remaining, item.PassageID)
 	}
 	final := make([]Citation, 0, len(reranked.Documents))
 	for _, document := range reranked.Documents {
@@ -215,14 +263,19 @@ func (s *Service) fuseAndRerank(ctx context.Context, retrieval retrievalContext,
 		final = append(final, item)
 		delete(byID, document.ID)
 	}
-	for _, item := range byID {
-		final = append(final, item)
+	for _, passageID := range remaining {
+		if item, found := byID[passageID]; found {
+			final = append(final, item)
+		}
 	}
 	sort.SliceStable(final, func(i, j int) bool {
-		if final[i].Score.Rerank == final[j].Score.Rerank {
+		if final[i].Score.Rerank != final[j].Score.Rerank {
+			return final[i].Score.Rerank > final[j].Score.Rerank
+		}
+		if final[i].Score.Combined != final[j].Score.Combined {
 			return final[i].Score.Combined > final[j].Score.Combined
 		}
-		return final[i].Score.Rerank > final[j].Score.Rerank
+		return final[i].PassageID < final[j].PassageID
 	})
 	for index := range final {
 		final[index].Rank = index + 1

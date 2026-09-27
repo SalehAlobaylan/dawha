@@ -156,6 +156,23 @@ service uses.
    `execute`.
 3. **graph-augmented** — the hybrid, plus the graph citations `execute` appends.
 
+**The order is defined, not emergent.** All three arms return their results in the
+order `fuseAndRerank` produces, and that order is a total one: rerank score, then
+combined score, then passage id. This is worth stating because it was not always
+so, and because a measurement whose per-case lists reorder between runs is a
+measurement nobody can diff. `fuseAndRerank` used to accumulate candidates in a
+`map[string]*Citation` and walk that map to build the slice it sorted; Go
+randomises map iteration and both of its sorts are stable, so every candidate that
+tied kept whatever order the map happened to produce. With a hashed provider almost
+every score ties, which is why the first recorded artifact had two `per_case` lists
+differ between two runs of the same commit on the same corpus. The fix is ordering
+only — no score, threshold, weight, cap or membership changed, and the aggregate
+numbers in this document are the same before and after it — and it is pinned by
+`TestFusedOrderIsIdenticalAcrossRuns` and
+`TestFusedOrderBreaksTiesByPassageID`, which fail against the pre-fix code. It also
+matters to a reader of the product rather than of this document: a researcher
+refreshing an answer used to see the same passages in a different order.
+
 The graph arm reproduces `execute`'s ordering rather than a better one.
 `graphPassageCitations` appends graph citations **after** the fused list with
 `Rerank: 0.5, Combined: 0.5` and does not re-sort, so in the shipped product a
@@ -361,6 +378,11 @@ out and cannot rule one in.
   change is tested against a fresh database or not at all.
 
 ## Maintenance
+
+The committed artifact is byte-identical between runs apart from `generated_at` and
+`commit`, and both of those are meant to move. If a future run produces any other
+diff in this file, something is not deterministic and that is a finding rather than
+noise — which is the whole reason the ordering above was fixed.
 
 Re-run `make retrieval-report` when any of these change: the fusion weights in
 `fuseAndRerank`, the scoring in either leg, the ordering in `graphPassageCitations`,
