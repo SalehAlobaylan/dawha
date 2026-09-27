@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark retrieval-report e2e e2e-clean storage-up storage-down db-sweep
+.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
 
 install:
 	npm install
@@ -414,6 +414,49 @@ retrieval-report:
 		DAWHA_RETRIEVAL_BENCH=1 \
 		DAWHA_RETRIEVAL_BENCH_REPORT="$(DAWHA_RETRIEVAL_BENCH_REPORT)" \
 		go test ./internal/research -run '^TestRetrievalMeasurementReport$$' -count=1 -v -timeout 30m
+
+# cost-report writes docs/benchmarks/cost-attribution.json: the SYNTHETIC cost
+# workload behind Phase 18's first criterion, "measurable reduction in
+# expensive model calls" (IMPLEMENTATION_PLAN.md:1368).
+#
+# Read the report's `what_this_is` and `what_this_is_not` before quoting any number
+# from it. It measures the ROUTING LOGIC'S COST BEHAVIOUR over the labelled routing
+# set in services/ai-research/evaluation/routing_cases.jsonl. It does NOT measure a
+# reduction in real spend, it is not in money, and it does not close the criterion:
+# the report says all three in its own output rather than in a document beside it.
+#
+# What it needs, and does not need:
+#
+#   * NO database, NO network, NO provider, NO credential. The cost model prices a
+#     call from the request this repository builds, so it can price a call that was
+#     never made - which is what makes the all-deep counterfactual computable rather
+#     than hypothetical. The only provider configured in this repository is the
+#     deterministic one in services/ai-research, and this command does not call it.
+#   * The labelled routing set, read from the sibling service. That coupling is why
+#     the command is a documented measurement and not a unit test: a cost figure
+#     per route is only meaningful against the labels the routing group is judged
+#     with, and duplicating the fixture would create a second copy to drift.
+#
+# It is not in `verify` or `verify-full`. A report is not a tree property, and the
+# number it prints is a claim about a phase rather than a gate on a change. The
+# ASSERTIONS behind it are in verify on every build: the cost model's totality, the
+# reconciliation of the live counter against it per series, the cheap/deep
+# difference, and the property that a route is a label and never a price.
+#
+#   make cost-report
+#   DAWHA_COST_REPORT_PATH=/tmp/cost.json make cost-report
+#   DAWHA_COST_REPORT_COMMIT=$(git rev-parse --short HEAD) make cost-report
+#
+# DAWHA_COST_REPORT_PATH defaults to the file in docs/benchmarks/. The commit is not
+# invented when it is not supplied: an unrecorded report says "unspecified" rather
+# than claiming provenance nobody gave it.
+DAWHA_COST_REPORT_PATH ?= $(CURDIR)/docs/benchmarks/cost-attribution.json
+cost-report:
+	cd services/core-api && \
+		DAWHA_COST_REPORT=1 \
+		DAWHA_COST_REPORT_PATH="$(DAWHA_COST_REPORT_PATH)" \
+		DAWHA_COST_REPORT_COMMIT="$${DAWHA_COST_REPORT_COMMIT:-}" \
+		go test ./internal/ai -run '^TestCostMeasurementReport$$' -count=1 -v -timeout 5m
 
 # db-embed writes embeddings onto the seeded passages that have none, so the
 # vector leg has something to score. It is idempotent, it refuses to finish while

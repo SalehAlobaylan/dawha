@@ -52,6 +52,7 @@ DOCUMENTS = (
     "plans/README.md",
     "docs/graph-benchmark.md",
     "docs/retrieval-measurement.md",
+    "docs/cost-measurement.md",
     "docs/phase-status.md",
     "docs/storage-backends.md",
     "apps/web/e2e/README.md",

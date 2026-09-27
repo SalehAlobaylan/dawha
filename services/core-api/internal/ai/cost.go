@@ -62,7 +62,19 @@ const (
 	modelNameDeterministicFoundation = "deterministic-foundation"
 	modelNameDeterministicRouting    = "deterministic-semantic-control-v1"
 	modelNameGoFallbackRouting       = "go-deterministic-routing-v1"
+
+	// ModelNameDeterministicFoundation is the name the one configured provider
+	// answers with, and the model a synthesis call would be served by in this
+	// repository. Exported because the measurement report has to name it, and a
+	// report that spelled it out by hand would be a second source for a name.
+	ModelNameDeterministicFoundation = modelNameDeterministicFoundation
 )
+
+// ConfiguredSynthesisModel is the model a research_query call is served by in this
+// repository. There is exactly one configured provider and it is deterministic;
+// nothing in this repository requires a credential, and this constant is where a
+// reader looks to see that.
+const ConfiguredSynthesisModel = telemetry.AIModelDeterministicFoundation
 
 var (
 	// operationWeight is the relative price of one operation as a multiplier on

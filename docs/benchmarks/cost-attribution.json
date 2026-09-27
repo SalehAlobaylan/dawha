@@ -1,0 +1,497 @@
+{
+  "attributed_cost_by_decision": {
+    "cheap": {
+      "cases": 14,
+      "synthesis_calls": 0,
+      "attributed_units": 0,
+      "mean_attributed_units": 0,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "none: this route sends nothing to a model"
+    },
+    "deep": {
+      "cases": 13,
+      "synthesis_calls": 13,
+      "attributed_units": 104,
+      "mean_attributed_units": 8,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "research_query"
+    },
+    "ignore": {
+      "cases": 6,
+      "synthesis_calls": 0,
+      "attributed_units": 0,
+      "mean_attributed_units": 0,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "none: this route sends nothing to a model"
+    }
+  },
+  "attributed_cost_by_labelled_route": {
+    "cheap": {
+      "cases": 14,
+      "synthesis_calls": 0,
+      "attributed_units": 0,
+      "mean_attributed_units": 0,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "none: this route sends nothing to a model"
+    },
+    "deep": {
+      "cases": 13,
+      "synthesis_calls": 13,
+      "attributed_units": 104,
+      "mean_attributed_units": 8,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "research_query"
+    },
+    "ignore": {
+      "cases": 6,
+      "synthesis_calls": 0,
+      "attributed_units": 0,
+      "mean_attributed_units": 0,
+      "model": "deterministic-foundation",
+      "model_priced": true,
+      "operation_when_expensive": "none: this route sends nothing to a model"
+    }
+  },
+  "command": "make cost-report",
+  "cost_model": {
+    "model_weights": {
+      "deterministic-foundation": 1,
+      "deterministic-semantic-control-v1": 1,
+      "go-deterministic-routing-v1": 0,
+      "unpriced": 1
+    },
+    "operation_weights": {
+      "classify": 0.5,
+      "contradiction": 2,
+      "embed": 1,
+      "extract_claims": 1.5,
+      "extract_entities": 1.5,
+      "normalize_name": 0.25,
+      "other": 1,
+      "rerank": 2,
+      "research_query": 4,
+      "resolve_entity": 1.25,
+      "route": 0.5
+    },
+    "single_source": true,
+    "source": "services/core-api/internal/ai/cost.go",
+    "weights_are": "DECLARED, not measured. No provider in this repository bills anything, so there is no invoice to measure them against, and a reader who wants a real figure replaces the table and re-runs the same counters."
+  },
+  "criterion": {
+    "closed_by_this_report": false,
+    "name": "measurable reduction in expensive model calls",
+    "source": "IMPLEMENTATION_PLAN.md:1368",
+    "status": "OPEN",
+    "what_would_close_it": "The real-traffic measurement designed in docs/cost-measurement.md: dawha_ai_cost_units over a stated window of production traffic, priced by the same cost model, compared against the same traffic's all-deep counterfactual, at the threshold and over the window the design fixes BEFORE the data exists. A synthetic figure does not close it and this report does not claim to.",
+    "who_collects_it": "The operator of a deployment, from the same counters, over a window long enough for the confounds the design names - question mix over time, provider price changes, and traffic volume - to be held still or corrected. This repository has no such deployment, no production traffic and no configured provider, so it cannot be collected here."
+  },
+  "fixture_set": {
+    "by_labeller": {
+      "plan-004-executor": 15,
+      "plan-015-executor": 18
+    },
+    "by_origin": {
+      "hand_written": 33
+    },
+    "cases": 33,
+    "derived_from_a_real_query_set": false,
+    "labels": "internally_authored",
+    "limitation": "Every case was hand-written by an author of this repository, and the route, query type and reason code in each case are that author's labels rather than a reviewed judgement about a real question. Grouping attributed cost by a labelled route therefore groups it by the author's expectation, and `attributed_cost_by_decision` is the same figure grouped by what the code actually did. The two differ by the cases in `label_decision_divergences`. Neither grouping is a statement about a real user, and this report must not be quoted as one.",
+    "path": "../../../ai-research/evaluation/routing_cases.jsonl",
+    "sha256": "33c5a15801093c63b3f2a1378211e55619bb0151f5d144e8318da93c2c41d282"
+  },
+  "generated_at": "2026-09-27T12:10:09Z",
+  "label_decision_divergences": [],
+  "label_decision_divergences_note": "Empty, and that is a result rather than an absence: over these thirty-three cases the Go fallback's route agrees with the reviewed label on every one, so grouping attributed cost by label and grouping it by decision give the same numbers. The label and the code still disagree about QUERY TYPE on four cases, which the evaluation reports in the routing group's `misroutes`; a query type does not change which route a case takes, so it does not move a cost figure. The two implementations of the decision also disagree with EACH OTHER on rt-019 - which implementation is routed to ignore a punctuation-only query - and that is recorded in TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses.",
+  "per_case": [
+    {
+      "case_id": "rt-001",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-002",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-003",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-004",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-005",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-006",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-007",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-008",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-009",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-010",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-011",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-012",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-013",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-014",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-015",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-016",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-017",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-018",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-019",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-020",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-021",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-022",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-023",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-024",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-025",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-026",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-027",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-028",
+      "origin": "hand_written",
+      "labelled_route": "ignore",
+      "decided_route": "ignore",
+      "attributed_units": 0,
+      "counterfactual_units": 0,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-029",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-030",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-031",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-032",
+      "origin": "hand_written",
+      "labelled_route": "deep",
+      "decided_route": "deep",
+      "attributed_units": 8,
+      "counterfactual_units": 8,
+      "synthesis_calls": 1,
+      "decision_matches_label": true
+    },
+    {
+      "case_id": "rt-033",
+      "origin": "hand_written",
+      "labelled_route": "cheap",
+      "decided_route": "cheap",
+      "attributed_units": 0,
+      "counterfactual_units": 8,
+      "synthesis_calls": 0,
+      "decision_matches_label": true
+    }
+  ],
+  "produced_by": "TestCostMeasurementReport in services/core-api/internal/ai",
+  "providers": {
+    "configured": [
+      "deterministic (services/ai-research/app/main.py DeterministicProvider)"
+    ],
+    "credential_required": false,
+    "real_provider": false,
+    "routing_model": "go-deterministic-routing-v1 (this package's fallback, which runs no model at all)",
+    "synthesis_model": "deterministic-foundation",
+    "when_a_real_provider_is_configured": "The same counters produce the real-traffic number with no code change to the recording path. That is a MECHANISM, not a result: the cost model would need that provider's weights in model_weights, and until it does, a series labelled unpriced is the request SIZE and not a price. See docs/cost-measurement.md."
+  },
+  "reconciliation": {
+    "attributed_units_summed_by_route": 104,
+    "attributed_units_summed_from_rows": 104,
+    "cases_priced": 33,
+    "holds": true,
+    "live_reconciliation_test": "TestAttributedCostReconcilesWithTheNumberOfCallsMade",
+    "synthesis_calls_priced": 13,
+    "what_it_proves": "The per-route totals are the per-case figures added up, so no figure here is an average nobody can trace to a case, and `per_case` carries every case so a reader can add them up again. The LIVE equivalent - the recorded counter against what the cost model independently predicts, per series - is the test named above, in cost_test.go, which runs on every build and is not this command."
+  },
+  "reduction": {
+    "attributed_units": 104,
+    "counterfactual": "every labelled question answered by the deep path instead",
+    "counterfactual_units": 216,
+    "difference_units": 112,
+    "is_a_measured_reduction_in_spend": false,
+    "why_not": "This difference is what routing was worth ON THIS FIXTURE SET under THIS cost model, in work units that are not money. It is not a saving, a budget, a forecast or a result. The criterion is about expensive model calls in production, and this report has no production traffic. The counterfactual is exact - the same function over the same payload - and it is exact about the wrong thing."
+  },
+  "report": "synthetic cost attribution over the labelled routing set",
+  "report_commit": "49c1d17",
+  "units": {
+    "definition": "the work of carrying one thousand runes of this service's own JSON request payload at unit weight, multiplied by the declared weight of the operation and of the model",
+    "name": "dawha work unit (dwu)",
+    "not": "not money, not a provider's billing unit, not tokens, and not comparable across models without the model label",
+    "recompute_by_hand": "units == (1 + ceil(payload_runes / 1000)) * operation_weight * model_weight; both tables are in services/core-api/internal/ai/cost.go",
+    "why_this_input": "The counterfactual cost of a call that never happened has to be computable, and it cannot depend on a provider response that was never received. Both arms are priced from the same payload by the same function, which is what makes the counterfactual a number rather than a story."
+  },
+  "what_this_is": "A SYNTHETIC WORKLOAD. It runs this repository's own routing logic over a labelled routing set and prices both arms of the comparison with the cost model, so it measures the ROUTING LOGIC'S COST BEHAVIOUR: which routes spend model work, how much, and what the all-deep baseline would have cost for the same payloads.",
+  "what_this_is_not": [
+    "It is NOT a measurement of a reduction in real spend. There is no production traffic, no configured provider and no invoice in this repository, and this report has no way to acquire any of the three.",
+    "It is NOT measured in money, and no field in this report may be quoted as an amount paid or an amount saved. The unit is a dawha work unit, defined in services/core-api/internal/ai/cost.go.",
+    "It is NOT measured over a real question mix. The question mix is the fixture set, which the same author wrote, so the proportions of cheap and deep questions below are that author's proportions and not a deployment's.",
+    "It does NOT close IMPLEMENTATION_PLAN.md:1368. The `criterion` field below says so, and says what would."
+  ],
+  "workload": {
+    "routing_implementation": "services/core-api/internal/ai/routing.go FallbackRoute",
+    "synthesis_payload": {
+      "contexts": 2,
+      "is_a_real_one": false,
+      "note": "The same payload is priced in both arms. It is a fixture, so a real payload mix would move the absolute figures - though not the shape, because both arms scale with it.",
+      "source": "a fixed two-passage payload in this test"
+    },
+    "why_the_fallback": "It is this repository's routing decision, it needs no provider and no network, and it is what a deployment actually runs when the route call is unavailable. Its decisions are grouped separately from the reviewed labels, and the two groupings differ by label_decision_divergences, which is reported rather than smoothed away."
+  }
+}

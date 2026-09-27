@@ -63,12 +63,16 @@ func goFallbackRoutingCases(t *testing.T) []fallbackCase {
 }
 
 type fallbackCase struct {
-	CaseID             string `json:"case_id"`
-	Origin             string `json:"origin"`
-	Text               string `json:"text"`
-	Context            string `json:"context"`
-	Operation          string `json:"operation"`
+	CaseID    string `json:"case_id"`
+	Origin    string `json:"origin"`
+	Text      string `json:"text"`
+	Context   string `json:"context"`
+	Operation string `json:"operation"`
+	// SourceCount is 0 when the field is absent, which is the same default the
+	// provider applies, so an omitted field and an explicit zero are one case
+	// rather than two.
 	SourceCount        int    `json:"source_count"`
+	LabelledBy         string `json:"labelled_by"`
 	ExpectedRoute      string `json:"expected_route"`
 	ExpectedQueryType  string `json:"expected_query_type"`
 	ExpectedReasonCode string `json:"expected_reason_code"`
