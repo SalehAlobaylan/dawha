@@ -203,7 +203,7 @@ func scanGraphSourceDependencyNeighborhoodRow(row pgx.Row, rootSourceID string) 
 		path.Status = "partial"
 	}
 	path.Explanation = graphExplanation(path.Operation, path.Status, path.StructuralOnly)
-	path.ID = graphSourceDependencyPathID(rootSourceID, path, nodes, edges, truncated, nodesTruncated, edgesTruncated, traversalSaturated, depthTruncated, cycleDetected)
+	path.ID = graphSourceDependencyPathID(rootSourceID, path, nodes, graphSourceDependencyEdgeSetFingerprint(path.Edges), truncated, nodesTruncated, edgesTruncated, traversalSaturated, depthTruncated, cycleDetected)
 	return graphSourceDependencyRow{Path: path, NodesTruncated: nodesTruncated, EdgesTruncated: edgesTruncated, TraversalSaturated: traversalSaturated, DepthTruncated: depthTruncated, CycleDetected: cycleDetected}, nil
 }
 
@@ -216,8 +216,8 @@ func hasSourceDependencyUnresolvedStatus(edges []GraphEdge) bool {
 	return false
 }
 
-func graphSourceDependencyPathID(rootSourceID string, path GraphPath, nodes, edges []byte, truncated, nodesTruncated, edgesTruncated, traversalSaturated, depthTruncated, cycleDetected bool) string {
-	key := strings.Join([]string{path.Operation, rootSourceID, path.Status, fmt.Sprintf("%d", path.Depth), fmt.Sprintf("%t", path.Truncated), fmt.Sprintf("%t", truncated), fmt.Sprintf("%t", nodesTruncated), fmt.Sprintf("%t", edgesTruncated), fmt.Sprintf("%t", traversalSaturated), fmt.Sprintf("%t", depthTruncated), fmt.Sprintf("%t", cycleDetected), string(nodes), string(edges)}, "|")
+func graphSourceDependencyPathID(rootSourceID string, path GraphPath, nodes []byte, edgeSetFingerprint string, truncated, nodesTruncated, edgesTruncated, traversalSaturated, depthTruncated, cycleDetected bool) string {
+	key := strings.Join([]string{path.Operation, rootSourceID, path.Status, fmt.Sprintf("%d", path.Depth), fmt.Sprintf("%t", path.Truncated), fmt.Sprintf("%t", truncated), fmt.Sprintf("%t", nodesTruncated), fmt.Sprintf("%t", edgesTruncated), fmt.Sprintf("%t", traversalSaturated), fmt.Sprintf("%t", depthTruncated), fmt.Sprintf("%t", cycleDetected), string(nodes), edgeSetFingerprint}, "|")
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(key)).String()
 }
 
@@ -323,14 +323,47 @@ func firstGraphNodeID(path GraphPath) string {
 	return path.Nodes[0].ID
 }
 
+// graphSourceDependencyEdgeSetFingerprint identifies the dependency statements a
+// neighborhood is made of.
+//
+// WHAT MAKES TWO NEIGHBORHOODS THE SAME: the same root source reaching the same
+// sources through the same set of dependency statements. That is the property
+// this fingerprint exists to protect, and it used to be implied by an
+// implementation detail instead of stated. A dependency statement is identified
+// here by (from, to, predicate, status) - the two sources it joins, what it
+// claims about the join, and whether a reviewer has accepted it - which is the
+// graph's own identity for a statement. source_dependencies.id is NOT part of it.
+// That column is gen_random_uuid(), so hashing it made this a hash of row ids
+// rather than of the graph: two databases holding the same corpus returned
+// different fingerprints, and the recorded run in docs/graph-benchmark.md said so
+// in as many words. The rows are storage. The statements between sources are the
+// graph. A fingerprint that cannot tell one of those from the other cannot answer
+// the only question anybody asks of it, which is whether anything changed.
+//
+// The statements are sorted, so the fingerprint is a property of the SET and not
+// of the order the query returned it in. That order is an artifact: the
+// neighborhood query ranks candidate edges by that same random id. This is the
+// same defect plan 014 fixed one layer down in retrieval, where a missing final
+// tie-break left Go's map iteration order as the answer.
 func graphSourceDependencyEdgeSetFingerprint(edges []GraphEdge) string {
-	values := make([]string, 0, len(edges))
+	statements := make([]string, 0, len(edges))
 	for _, edge := range edges {
-		values = append(values, strings.Join([]string{edge.ID, edge.FromNodeID, edge.ToNodeID, edge.Predicate, edge.Status}, "|"))
+		statements = append(statements, graphSourceDependencyStatementKey(edge))
 	}
-	sort.Strings(values)
-	sum := sha256.Sum256([]byte(strings.Join(values, "||")))
+	sort.Strings(statements)
+	sum := sha256.Sum256([]byte(strings.Join(statements, "||")))
 	return hex.EncodeToString(sum[:])
+}
+
+// graphSourceDependencyStatementKey is one dependency statement's identity.
+//
+// The four values are the graph's, not the row's: sources are nodes and a source
+// id is a node's name, a predicate and a review status are what a statement says
+// and how settled it is. No value here can contain the separator - a source id is
+// a uuid, a predicate and a status come from check constraints - so two different
+// statements cannot render as one key.
+func graphSourceDependencyStatementKey(edge GraphEdge) string {
+	return strings.Join([]string{edge.FromNodeID, edge.ToNodeID, edge.Predicate, edge.Status}, "|")
 }
 
 func graphSourceDependencyInputFingerprint(input GraphSourceDependencyNeighborhoodInput) string {

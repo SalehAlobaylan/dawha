@@ -353,10 +353,19 @@ func graphSourceDependencyCommunityKey(members []string) string {
 	return strings.Join(members, ",")
 }
 
+// graphSourceDependencyCommunityPathID identifies the path a community partition
+// was computed over.
+//
+// It hashes the same canonical edge-set fingerprint the neighborhood operation
+// uses rather than the raw edge JSON, for the same reason and with the same
+// contract: two partitions describe the same neighborhood when the same root
+// reaches the same sources through the same dependency statements, and the
+// returned edge order plus the random source_dependencies row ids are storage
+// facts. The node list is still hashed directly - a source is a node, and its id
+// is that node's name, so it belongs in a path's identity.
 func graphSourceDependencyCommunityPathID(rootSourceID string, path GraphPath, partitionFingerprint string) string {
 	nodes := mustJSON(path.Nodes)
-	edges := mustJSON(path.Edges)
-	key := strings.Join([]string{path.Operation, rootSourceID, path.Status, fmt.Sprintf("%d", path.Depth), fmt.Sprintf("%t", path.Truncated), partitionFingerprint, string(nodes), string(edges)}, "|")
+	key := strings.Join([]string{path.Operation, rootSourceID, path.Status, fmt.Sprintf("%d", path.Depth), fmt.Sprintf("%t", path.Truncated), partitionFingerprint, string(nodes), graphSourceDependencyEdgeSetFingerprint(path.Edges)}, "|")
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(key)).String()
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/google/uuid"
 )
@@ -231,4 +232,220 @@ func TestNormalizeGraphSourceDependencyNeighborhoodInput(t *testing.T) {
 	if _, err := normalizeGraphSourceDependencyNeighborhoodInput(GraphSourceDependencyNeighborhoodInput{SourceID: "30000000-0000-0000-0000-000000000002", MaxDepth: -1}); !errors.Is(err, ErrValidation) {
 		t.Fatalf("expected negative source dependency depth validation error, got %v", err)
 	}
+}
+
+// The corpus the fingerprint test writes twice. Four sources and five dependency
+// statements, all public and all inside the depth bound, so the neighborhood is
+// the whole graph and nothing is truncated.
+//
+// The ids are literals rather than uuid.New() because "the same corpus" has to
+// mean the same sources. Two databases that invented different source ids would
+// be two different graphs, and comparing fingerprints across them would prove
+// nothing about the fingerprint.
+//
+// The two statements between a and b are deliberate: a dependency statement is
+// identified by the pair of sources and its predicate, not by the pair alone, so
+// a fingerprint that ignored the predicate would call two different graphs one.
+var (
+	graphFingerprintRootID     = uuid.MustParse("31000000-0000-0000-0000-000000000000")
+	graphFingerprintFirstID    = uuid.MustParse("31000000-0000-0000-0000-000000000001")
+	graphFingerprintSecondID   = uuid.MustParse("31000000-0000-0000-0000-000000000002")
+	graphFingerprintThirdID    = uuid.MustParse("31000000-0000-0000-0000-000000000003")
+	graphFingerprintStatements = []struct {
+		from, to  uuid.UUID
+		predicate string
+		status    string
+	}{
+		{graphFingerprintRootID, graphFingerprintFirstID, "cites", "confirmed"},
+		{graphFingerprintRootID, graphFingerprintSecondID, "derived_from", "needs_review"},
+		{graphFingerprintFirstID, graphFingerprintSecondID, "cites", "confirmed"},
+		{graphFingerprintFirstID, graphFingerprintSecondID, "likely_paraphrase", "confirmed"},
+		{graphFingerprintSecondID, graphFingerprintThirdID, "shared_origin", "confirmed"},
+	}
+)
+
+// seedGraphFingerprintCorpus writes the corpus into one schema, in the order
+// asked for.
+//
+// It never supplies source_dependencies.id, so each schema gets its own
+// gen_random_uuid() row ids. That is the point of the test rather than an
+// inconvenience: a fingerprint that survives two schemas has to survive
+// different storage row ids, and seeding explicit ids here would remove the
+// thing being measured. Insertion order is reversed in the second schema so an
+// order-dependent fingerprint fails too, and not only a uuid-dependent one.
+func seedGraphFingerprintCorpus(t *testing.T, fixture *testsupport.Fixture, reverse bool) {
+	t.Helper()
+	sourceIDs := []uuid.UUID{graphFingerprintRootID, graphFingerprintFirstID, graphFingerprintSecondID, graphFingerprintThirdID}
+	if reverse {
+		sourceIDs = []uuid.UUID{graphFingerprintThirdID, graphFingerprintSecondID, graphFingerprintFirstID, graphFingerprintRootID}
+	}
+	for _, sourceID := range sourceIDs {
+		fixture.Exec(`INSERT INTO sources (id, title_ar, source_type, visibility)
+			VALUES ($1, 'مصدر بصمة الجوار', 'article', 'public')`, sourceID)
+	}
+	statements := graphFingerprintStatements
+	if reverse {
+		statements = make([]struct {
+			from, to  uuid.UUID
+			predicate string
+			status    string
+		}, 0, len(graphFingerprintStatements))
+		for index := len(graphFingerprintStatements) - 1; index >= 0; index-- {
+			statements = append(statements, graphFingerprintStatements[index])
+		}
+	}
+	for _, statement := range statements {
+		fixture.Exec(`INSERT INTO source_dependencies (source_id, depends_on_source_id, dependency_type, status)
+			VALUES ($1, $2, $3, $4)`, statement.from, statement.to, statement.predicate, statement.status)
+	}
+	fixture.Exec(`ANALYZE sources`)
+	fixture.Exec(`ANALYZE source_dependencies`)
+}
+
+// graphFingerprintEdgeRowIDs is the corpus's storage row ids, so the test can
+// state as a fact that the two schemas really were seeded with different ones.
+// Without this check a green result could mean the two schemas happened to be
+// seeded identically, which would make the test a tautology.
+//
+// Scoped to the corpus's own four sources because every fixture schema also
+// carries the demo seed, and one of its rows is somebody else's dependency.
+func graphFingerprintEdgeRowIDs(t *testing.T, fixture *testsupport.Fixture) []string {
+	t.Helper()
+	corpus := []uuid.UUID{graphFingerprintRootID, graphFingerprintFirstID, graphFingerprintSecondID, graphFingerprintThirdID}
+	rows, err := fixture.Pool().Query(fixture.Ctx(), `SELECT id::text FROM source_dependencies
+		WHERE source_id = ANY($1::uuid[]) OR depends_on_source_id = ANY($1::uuid[])
+		ORDER BY id::text`, corpus)
+	if err != nil {
+		t.Fatalf("read dependency row ids: %v", err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan dependency row id: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read dependency row ids: %v", err)
+	}
+	return ids
+}
+
+// graphFingerprintReading is everything a caller can compare between two
+// measurements of a neighborhood: the identities and the graph content.
+type graphFingerprintReading struct {
+	pathID               string
+	inputFingerprint     string
+	edgeSetFingerprint   string
+	partitionFingerprint string
+	communityPathID      string
+	nodes                int
+	edges                int
+	communities          int
+}
+
+func readGraphFingerprints(t *testing.T, service *Service, ctx context.Context) graphFingerprintReading {
+	t.Helper()
+	input := GraphSourceDependencyNeighborhoodInput{SourceID: graphFingerprintRootID.String(), MaxDepth: GraphMaxDepth}
+	neighborhood, err := service.GraphSourceDependencyNeighborhood(ctx, input, "")
+	if err != nil {
+		t.Fatalf("source dependency neighborhood: %v", err)
+	}
+	communities, err := service.GraphSourceDependencyCommunities(ctx, GraphSourceDependencyCommunitiesInput{SourceID: graphFingerprintRootID.String(), MaxDepth: GraphMaxDepth, MinCommunitySize: 2}, "")
+	if err != nil {
+		t.Fatalf("source dependency communities: %v", err)
+	}
+	return graphFingerprintReading{
+		pathID:               neighborhood.Summary.PathID,
+		inputFingerprint:     neighborhood.Summary.InputFingerprint,
+		edgeSetFingerprint:   neighborhood.Summary.EdgeSetFingerprint,
+		partitionFingerprint: communities.Summary.PartitionFingerprint,
+		communityPathID:      communities.Summary.PathID,
+		nodes:                len(neighborhood.Path.Nodes),
+		edges:                len(neighborhood.Path.Edges),
+		communities:          communities.Summary.ReportedCommunityCount,
+	}
+}
+
+func (reading graphFingerprintReading) String() string {
+	return "path=" + reading.pathID + " edges=" + reading.edgeSetFingerprint + " partition=" + reading.partitionFingerprint + " communities=" + reading.communityPathID
+}
+
+// TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas is the test
+// that a fingerprint is a property of the graph.
+//
+// It builds the same corpus twice, in two separately created schemas on the same
+// server, with different random source_dependencies row ids and in opposite
+// insertion order, and requires the two measurements to be equal. A test that
+// only compares two calls inside one database is the test that let a
+// random-uuid fingerprint through: inside one database the rows do not change,
+// so it cannot tell a fingerprint of the graph from a fingerprint of the row
+// ids.
+//
+// Three things are asserted, and the third is the one that makes the first two
+// mean something: the same corpus in two schemas is equal, the same corpus read
+// repeatedly is equal, and a DIFFERENT neighborhood is not equal. Without the
+// third, a fingerprint that returned a constant would pass this test.
+func TestGraphSourceDependencyFingerprintIsTheSameGraphInTwoSchemas(t *testing.T) {
+	first := testsupport.New(t)
+	second := testsupport.New(t)
+	seedGraphFingerprintCorpus(t, first, false)
+	seedGraphFingerprintCorpus(t, second, true)
+
+	// The premise, stated as an assertion: the two schemas hold the same graph
+	// over different storage rows.
+	firstRowIDs := graphFingerprintEdgeRowIDs(t, first)
+	secondRowIDs := graphFingerprintEdgeRowIDs(t, second)
+	if len(firstRowIDs) != len(graphFingerprintStatements) || len(secondRowIDs) != len(graphFingerprintStatements) {
+		t.Fatalf("the corpus seeded %d and %d dependency rows, wanted %d in each schema", len(firstRowIDs), len(secondRowIDs), len(graphFingerprintStatements))
+	}
+	shared := 0
+	for _, id := range firstRowIDs {
+		for _, other := range secondRowIDs {
+			if id == other {
+				shared++
+			}
+		}
+	}
+	if shared != 0 {
+		t.Fatalf("the two schemas were seeded with %d identical dependency row ids, so this run is not comparing two databases' worth of random ids", shared)
+	}
+
+	firstReading := readGraphFingerprints(t, &Service{Pool: first.Pool()}, first.Ctx())
+	secondReading := readGraphFingerprints(t, &Service{Pool: second.Pool()}, second.Ctx())
+	if firstReading.nodes != 4 || firstReading.edges != len(graphFingerprintStatements) {
+		t.Fatalf("the corpus is not the graph this test meant to build: %d nodes and %d edges", firstReading.nodes, firstReading.edges)
+	}
+	if firstReading.String() != secondReading.String() {
+		t.Fatalf("the same graph in two separately created schemas produced two different fingerprints.\n  first:  %s\n  second: %s", firstReading, secondReading)
+	}
+
+	// Repeated measurement of one corpus, in one database, must also be equal.
+	// This is the property the old test asserted, kept because a content
+	// fingerprint can still be unstable within a database if something in the
+	// computation is order-dependent rather than id-dependent.
+	for attempt := 0; attempt < 3; attempt++ {
+		again := readGraphFingerprints(t, &Service{Pool: first.Pool()}, first.Ctx())
+		if again.String() != firstReading.String() {
+			t.Fatalf("reading %d of the same corpus returned different fingerprints.\n  first: %s\n  again: %s", attempt+1, firstReading, again)
+		}
+	}
+
+	// The control. One more dependency statement is a different neighborhood, and
+	// a different neighborhood must not share a fingerprint - otherwise everything
+	// above would pass with a fingerprint that never changed.
+	first.Exec(`INSERT INTO source_dependencies (source_id, depends_on_source_id, dependency_type, status)
+		VALUES ($1, $2, 'derived_from', 'confirmed')`, graphFingerprintSecondID, graphFingerprintFirstID)
+	first.Exec(`ANALYZE source_dependencies`)
+	changed := readGraphFingerprints(t, &Service{Pool: first.Pool()}, first.Ctx())
+	if changed.edgeSetFingerprint == firstReading.edgeSetFingerprint {
+		t.Fatalf("adding a dependency statement left the edge-set fingerprint at %s, so the fingerprint is not a property of the graph", changed.edgeSetFingerprint)
+	}
+	if changed.pathID == firstReading.pathID {
+		t.Fatalf("adding a dependency statement left the path id at %s, so the path id is not a property of the graph", changed.pathID)
+	}
+	t.Logf("one corpus in two schemas: %s", firstReading)
+	t.Logf("the same corpus with one more statement: %s", changed)
 }
