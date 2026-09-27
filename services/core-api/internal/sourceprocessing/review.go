@@ -211,10 +211,20 @@ func validateReviewInput(input ReviewInput) (ReviewInput, error) {
 	return input, nil
 }
 
+// files lists a source's files newest first.
+//
+// created_at is not a total order: two files uploaded in one transaction - one
+// request, or a batch import - carry the same timestamp, and PostgreSQL is free
+// to return them in either order. It was, so the order of this list was
+// whatever the plan happened to pick, and two identical requests could differ.
+// id is the tiebreak, ascending, which is the rule the rest of this repository
+// already uses for the same column pair
+// (internal/evidence/characterization.go, internal/research/retrieval.go). Which
+// rows are returned is unchanged: this orders them, it does not filter them.
 func (s *Service) files(ctx context.Context, sourceID uuid.UUID) ([]FileView, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id, source_id, original_filename_ar, mime_type, byte_size, checksum_sha256, processing_status, processing_error, processed_at, created_at
-		FROM source_files WHERE source_id = $1 ORDER BY created_at DESC
+		FROM source_files WHERE source_id = $1 ORDER BY created_at DESC, id
 	`, sourceID)
 	if err != nil {
 		return nil, err
@@ -247,10 +257,14 @@ func (s *Service) files(ctx context.Context, sourceID uuid.UUID) ([]FileView, er
 	return items, rows.Err()
 }
 
+// runs lists a source's processing runs newest first. The tiebreak is the same
+// one files uses and for the same reason: a batch that starts several runs in
+// one transaction gives them one created_at, and without a second key the order
+// of the list is the plan's choice rather than the database's promise.
 func (s *Service) runs(ctx context.Context, sourceID uuid.UUID) ([]ProcessingRunView, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id, source_id, source_file_id, job_id, status, stage, page_count, passage_count, candidate_count, model_version, error, started_at, completed_at, created_at, updated_at
-		FROM source_processing_runs WHERE source_id = $1 ORDER BY created_at DESC
+		FROM source_processing_runs WHERE source_id = $1 ORDER BY created_at DESC, id
 	`, sourceID)
 	if err != nil {
 		return nil, err
