@@ -133,12 +133,38 @@ type providerDecision struct {
 // is what needs the Python service, and a Go package must not require one to
 // build. `make test` runs both halves - `go test ./...` and the service's own
 // pytest - so a checkout that has the service installed runs both comparisons.
+//
+// The skip is meant to be DISCOVERABLE, not silent, because a skipped comparison
+// is a comparison that did not happen and the divergence set it protects is then
+// unverified. Three things make it findable:
+//
+//   - the message below names the exact path it looked for, why it needs it, and
+//     the two ways to get it, so `go test -v ./internal/ai` and any CI log that
+//     runs verbose both carry the reason rather than a bare "skipped";
+//   - the same line is logged, so it appears next to the test that skipped;
+//   - docs/phase-status.md's Phase 18 row says that the 0-of-33 divergence result
+//     is observed only in a checkout with the service installed, so a reader of the
+//     record knows the number's conditions.
+//
+// The Go half is still checked without Python: the fixture reader and
+// TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses do not need it.
 func providerRoutingDecisions(t *testing.T) map[string]providerDecision {
 	t.Helper()
 	serviceDir := filepath.Join("..", "..", "..", "ai-research")
 	interpreter := filepath.Join(serviceDir, ".venv", "bin", "python")
 	if _, err := os.Stat(interpreter); err != nil {
-		t.Skipf("the ai-research interpreter is not beside this package (%s); `make install` creates it and the service's own tests cover the provider half", err)
+		reason := "the provider half of this comparison was NOT checked in this checkout. " +
+			"Looking for the ai-research service's interpreter at " + interpreter + " " +
+			"(resolved from this package's own directory, i.e. services/ai-research/.venv) " +
+			"and it is not there. It is absent because a Go package must not require a Python " +
+			"runtime to build, not because the comparison is optional: with the service " +
+			"installed, either `make install` (which creates services/ai-research/.venv) or the " +
+			"symlink the e2e instructions give will provide it, and then this test derives the " +
+			"divergence set for all 33 labelled cases. Without it, the provider's own half is " +
+			"still checked by services/ai-research/tests/test_routing_agreement.py, and the Go " +
+			"half by TestTheGoFallbackAgreesWithTheReviewedLabelsTheEvaluationUses. Finding: " + err.Error()
+		t.Log(reason)
+		t.Skip(reason)
 	}
 	// Absolute, because the command runs in the service directory and os/exec
 	// resolves a relative Path against the working directory it was given, not
