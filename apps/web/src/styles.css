@@ -8042,6 +8042,101 @@ a {
   font-size: 10px;
 }
 
+/* The change-set composer. It is a form inside a form row, so it reuses the panel's
+   own vocabulary - the same rule colour, the same radius, the same muted type - and
+   adds no token of its own. The three rules it encodes are about what the service
+   accepts, not about how it looks: it is described before it is sent, it marks the
+   field the service refused, and it is not offered after a refusal. */
+.change-composer-toggle {
+  margin-top: 8px;
+}
+
+.change-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 11px;
+  padding: 12px;
+  border: 1px dashed rgba(56, 111, 86, 0.28);
+  background: rgba(56, 111, 86, 0.04);
+}
+
+.change-composer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.change-composer-head small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+.change-composer .composer-label {
+  margin-top: 11px;
+}
+
+.change-composer .composer-label input,
+.change-composer .composer-label select,
+.change-composer .composer-label textarea {
+  min-height: 34px;
+  font-size: 10px;
+}
+
+.composer-field-error {
+  color: var(--red);
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+.change-composer-preview {
+  margin-top: 13px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.change-composer-preview p {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.change-composer-preview ul {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-composer-preview li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.change-composer-preview li bdi {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+  overflow-wrap: anywhere;
+}
+
+.change-composer-note {
+  display: block;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.7;
+}
+
 @media (max-width: 700px) {
   .suggestion-panel {
     padding: 16px;

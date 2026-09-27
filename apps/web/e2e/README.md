@@ -1,7 +1,8 @@
 # The browser acceptance suite
 
 Playwright drives the ten V1 journeys declared in `IMPLEMENTATION_PLAN.md` against
-the deterministic local stack. Nothing here needs a public deployment or an AI
+the deterministic local stack, plus one that accepts a suggestion with a typed change
+set. Nothing here needs a public deployment or an AI
 credential: the `ai-research` service is a deterministic provider, and the map
 canvas draws from an inline style with no tile server.
 
@@ -48,7 +49,7 @@ mode is in `services/core-api/internal/httpapi/demo_mode_test.go` and in
 ## Rate limits are off here, explicitly
 
 `RATE_LIMIT_ENABLED=false` is exported to the stack by `make e2e` and defaulted to
-`false` in `e2e/stack.mjs`. The twenty-eight journeys share one API and one client
+`false` in `e2e/stack.mjs`. The thirty specs share one API and one client
 address, and the register journey alone would spend the whole sign-in budget of 30
 requests a minute, so the browser suite is not a place where a rate limit can be
 on.
@@ -95,6 +96,7 @@ somebody else's process.
 | `journeys/07-question-dispute.spec.ts` | open a question, record a dispute |
 | `journeys/08-browse-map.spec.ts` | browse the map |
 | `journeys/09-research-query.spec.ts` | run a research query |
+| `journeys/10-change-set.spec.ts` | accept a suggestion with a typed change set; refuse one to a reviewer without a global write role |
 
 ## Isolation
 

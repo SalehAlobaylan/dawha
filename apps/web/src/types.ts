@@ -1614,10 +1614,73 @@ export interface SubmitSuggestionInput {
   text_ar: string;
 }
 
+/**
+ * The four typed targets the review API accepts on an acceptance. Each names one
+ * typed block and no other: the service refuses a change set carrying a second block,
+ * so the composer sends exactly one and the type says which.
+ */
+export type SuggestionChangeTarget = "person" | "relationship" | "claim" | "source_link";
+
+/**
+ * The change a reviewer approves alongside the decision.
+ *
+ * The snake_case field names are the API's own, not this app's: the shape is
+ * validated by internal/suggestions and nowhere else, so re-spelling it here
+ * would be a second rule set that can disagree with the one that decides. What is
+ * left out of these types is exactly what the service refuses to accept anyway -
+ * a relationship with a status, a claim with a status - because a change set can
+ * never publish a tree, accept a claim, merge two records or resolve a
+ * relationship.
+ */
+export interface PersonChange {
+  person_id: string;
+  name_ar: string;
+  alias_type?: string;
+}
+
+export interface RelationshipChange {
+  subject_type?: string;
+  subject_id: string;
+  object_type?: string;
+  object_id: string;
+  predicate: string;
+  valid_from?: string;
+  valid_to?: string;
+}
+
+export interface ClaimChange {
+  subject_type?: string;
+  subject_id: string;
+  object_type?: string;
+  object_id: string;
+  predicate: string;
+  place_id?: string;
+  time_from?: string;
+  time_to?: string;
+  note_ar?: string;
+}
+
+export interface SourceLinkChange {
+  claim_id: string;
+  source_statement_id?: string;
+  source_passage_id?: string;
+  relation?: string;
+  note_ar?: string;
+}
+
+export interface SuggestionChangeSet {
+  target: SuggestionChangeTarget;
+  person?: PersonChange;
+  relationship?: RelationshipChange;
+  claim?: ClaimChange;
+  source_link?: SourceLinkChange;
+}
+
 export interface ReviewSuggestionInput {
   decision: SuggestionReview["decision"];
   note_ar?: string;
   question_title_ar?: string;
+  change_set?: SuggestionChangeSet;
 }
 
 export type DictionaryKind = "families" | "tribes" | "branches" | "people" | "places" | "sources" | "questions" | "disputed-claims";

@@ -341,7 +341,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
       {collaborationOpen ? <CollaborationPanel key={detail.tree.id} treeId={detail.tree.id} canManage={detail.permissions.canManageCollaborators} permissionLevel={detail.permissions.permissionLevel} /> : null}
       {forkOpen ? <ForkDiffPanel key={`fork-${detail.tree.id}-${selectedVersion.id}`} detail={detail} mode="fork" onForked={handleForked} onClose={() => setForkOpen(false)} /> : null}
       {diffOpen ? <ForkDiffPanel key={`diff-${detail.tree.id}-${selectedVersion.id}`} detail={detail} mode="diff" onForked={handleForked} onClose={() => setDiffOpen(false)} /> : null}
-      {selected && selectedVersion.state === "published" && detail.tree.visibility === "public" ? <SuggestionPanel key={`${detail.tree.id}-${selectedVersion.id}-${selected.id}`} treeId={detail.tree.id} versionId={selectedVersion.id} versionNumber={selectedVersion.number} nodeId={selected.id} nodeName={selected.name} canReview={Boolean(detail.permissions.permissionLevel)} /> : null}
+      {selected && selectedVersion.state === "published" && detail.tree.visibility === "public" ? <SuggestionPanel key={`${detail.tree.id}-${selectedVersion.id}-${selected.id}`} treeId={detail.tree.id} versionId={selectedVersion.id} versionNumber={selectedVersion.number} nodeId={selected.id} nodeName={selected.name} personId={selected.personId} canReview={Boolean(detail.permissions.permissionLevel)} /> : null}
 
       {editOpen ? (
         <section className="tree-edit-panel">

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { Client } from "pg";
 
 /**
  * Fixtures for the browser acceptance suite.
@@ -96,6 +97,60 @@ export async function waitForApi(request: APIRequestContext): Promise<void> {
   expect(response.ok(), "core-api is not answering on /healthz").toBeTruthy();
   const ai = await request.get(`${process.env.AI_RESEARCH_URL ?? "http://localhost:8000"}/healthz`);
   expect(ai.ok(), "ai-research is not answering on /healthz").toBeTruthy();
+}
+
+/**
+ * Grants a platform role to one of the suite's own synthetic accounts.
+ *
+ * Roles are not part of a signup journey - the API assigns `registered` and nothing
+ * else - so a journey that needs a reviewer with a global write right has to grant
+ * it, exactly as the Go fixtures do through testsupport.GrantRole. It writes through
+ * `pg` rather than through an API route because there is no route, and inventing one
+ * for a test would be a production surface added for a test.
+ *
+ * The row is removed by the teardown: user_roles cascades from users, and the
+ * account is one of the synthetic actors cleanup.sql deletes.
+ */
+export async function grantPlatformRole(email: string, role: string): Promise<void> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("grantPlatformRole needs DATABASE_URL, which playwright.config.ts already requires");
+  }
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const result = await client.query(
+      `INSERT INTO user_roles (user_id, role)
+       SELECT id, $2 FROM users WHERE email = $1
+       ON CONFLICT (user_id, role) DO NOTHING
+       RETURNING user_id`,
+      [email, role],
+    );
+    expect(result.rowCount, `grant ${role} to ${email}: the account does not exist`).toBe(1);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Reads rows for the journeys that assert on what the service recorded rather than on
+ * what it serves. The audit trail and the stored change set are not readable through
+ * any route, so "the review is audited" can only be proved against the table - and a
+ * journey that asserted it through a route would be asserting a weaker thing.
+ */
+export async function readRows<T = Record<string, unknown>>(sql: string, values: unknown[] = []): Promise<T[]> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("readRows needs DATABASE_URL, which playwright.config.ts already requires");
+  }
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const result = await client.query(sql, values);
+    return result.rows as T[];
+  } finally {
+    await client.end();
+  }
 }
 
 /** Waits for the source-processing worker to reach a terminal state on a run. */

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
@@ -74,25 +75,37 @@ func (h suggestionHandler) requireUser(w http.ResponseWriter, r *http.Request) (
 	return user, true
 }
 
+// writeSuggestionError maps a service error onto a status and a body. The comparison
+// is by errors.Is rather than by identity, because a change-set refusal is a
+// FieldError that unwraps to suggestions.ErrValidation - and that unwrapping is what
+// lets this handler report WHICH field was wrong. A client that has to guess which of
+// a change set's four typed blocks was malformed would have to re-implement the
+// service's rules, so the field travels in the body when the service knows it.
 func writeSuggestionError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	message := "suggestion operation failed"
-	switch err {
-	case suggestions.ErrValidation:
+	body := map[string]string{"error": message}
+	switch {
+	case errors.Is(err, suggestions.ErrValidation):
 		status = http.StatusBadRequest
 		message = err.Error()
-	case suggestions.ErrNotFound:
+	case errors.Is(err, suggestions.ErrNotFound):
 		status = http.StatusNotFound
 		message = err.Error()
-	case suggestions.ErrForbidden:
+	case errors.Is(err, suggestions.ErrForbidden):
 		status = http.StatusForbidden
 		message = err.Error()
-	case suggestions.ErrConflict:
+	case errors.Is(err, suggestions.ErrConflict):
 		status = http.StatusConflict
 		message = err.Error()
-	case suggestions.ErrDatabaseUnavailable:
+	case errors.Is(err, suggestions.ErrDatabaseUnavailable):
 		status = http.StatusServiceUnavailable
 		message = "suggestions service is not configured"
 	}
-	writeJSON(w, status, map[string]string{"error": message})
+	body["error"] = message
+	var fieldErr suggestions.FieldError
+	if errors.As(err, &fieldErr) {
+		body["field"] = fieldErr.Field
+	}
+	writeJSON(w, status, body)
 }

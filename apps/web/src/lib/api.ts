@@ -174,11 +174,21 @@ export const demoTreeDetail: TreeDetail = {
 
 export class ApiError extends Error {
   status: number;
+  /**
+   * The request field the service refused, when it named one. Only some routes send
+   * it: the suggestion review sends the JSON path of a malformed change-set field, so
+   * the composer can mark that input instead of guessing which one of four typed
+   * blocks was wrong. A client that had to guess would be re-implementing the
+   * service's rules, so an absent field is the honest answer and the caller decides
+   * what to do with it.
+   */
+  field?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, field?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.field = field;
   }
 }
 
@@ -1091,7 +1101,9 @@ export async function reviewSuggestion(suggestionId: string, input: ReviewSugges
     body: JSON.stringify(input),
   });
   if (!response.ok) {
-    throw new ApiError(await readErrorMessage(response), response.status);
+    // The one route that can name the field it refused, so a malformed change set is
+    // marked on the input the reviewer typed rather than reported as a bare failure.
+    throw await readApiError(response);
   }
   return (await response.json()) as SuggestionRecord;
 }
@@ -1713,5 +1725,20 @@ async function readErrorMessage(response: Response): Promise<string> {
     return body.error ?? "تعذر إكمال العملية.";
   } catch {
     return "تعذر إكمال العملية.";
+  }
+}
+
+/**
+ * The same reader as readErrorMessage, plus the `field` a route may name. Reading the
+ * body twice is not possible - a Response body is consumed once - so this is the one
+ * that parses, and readErrorMessage is the wrapper for every route that has no field
+ * to report.
+ */
+async function readApiError(response: Response): Promise<ApiError> {
+  try {
+    const body = (await response.json()) as { error?: string; field?: string };
+    return new ApiError(body.error ?? "تعذر إكمال العملية.", response.status, body.field);
+  } catch {
+    return new ApiError("تعذر إكمال العملية.", response.status);
   }
 }

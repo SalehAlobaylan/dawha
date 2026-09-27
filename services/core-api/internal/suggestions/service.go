@@ -24,6 +24,29 @@ var (
 	ErrConflict            = errors.New("suggestion has already been reviewed")
 )
 
+// FieldError is a validation failure that names the field of the request it is about.
+// It exists for the reviewer's benefit, not for the code's: a change set is a nested
+// typed body with up to four blocks, and "invalid input" against one of them is not
+// actionable. The field is the JSON path the caller sent, so a client marks the
+// offending input without re-deriving any rule - this package stays the only place a
+// change set is judged, and the client stays the only place the answer is displayed.
+//
+// It unwraps to ErrValidation, so every existing comparison against that sentinel
+// keeps working and nothing downstream has to learn a second error type.
+type FieldError struct {
+	Field   string
+	Message string
+}
+
+func (e FieldError) Error() string { return e.Message }
+
+func (e FieldError) Unwrap() error { return ErrValidation }
+
+// changeFieldError names a field of the change set by its JSON path.
+func changeFieldError(field, message string) error {
+	return FieldError{Field: "change_set." + field, Message: message}
+}
+
 type SubmitInput struct {
 	TreeID    string `json:"tree_id"`
 	VersionID string `json:"version_id"`
@@ -630,110 +653,124 @@ type sourceLinkPlan struct {
 // validateChangeSet accepts a change set only when the target is known, exactly the
 // block that target names is present, and every field it carries is well typed. Anything
 // else is a validation error, so an unstructured edit is never applied.
+//
+// Every refusal names the field it is about, through FieldError. A change set is four
+// typed blocks behind a target selector, and a reviewer who mistyped one identifier
+// needs to be told which one - the alternative is a client that re-checks the rules
+// here, which is a second rule set that can disagree with this one.
 func validateChangeSet(change ChangeSet) (changePlan, error) {
 	plan := changePlan{target: strings.TrimSpace(change.Target), change: change}
 	switch plan.target {
 	case ChangeTargetPerson:
 		if change.Person == nil || change.Relationship != nil || change.Claim != nil || change.SourceLink != nil {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("target", "target "+plan.target+" takes exactly one block, and only person")
 		}
 		personID, err := parseChangeUUID(change.Person.PersonID)
 		if err != nil {
-			return changePlan{}, err
+			return changePlan{}, changeFieldError("person.person_id", "person_id must be a uuid")
 		}
 		nameAR := strings.TrimSpace(change.Person.NameAR)
 		aliasType := strings.TrimSpace(change.Person.AliasType)
 		if aliasType == "" {
 			aliasType = "alternative_name"
 		}
-		if nameAR == "" || len([]rune(nameAR)) > 300 || !contains(changeAliasTypes, aliasType) {
-			return changePlan{}, ErrValidation
+		if nameAR == "" {
+			return changePlan{}, changeFieldError("person.name_ar", "name_ar is required")
+		}
+		if len([]rune(nameAR)) > 300 {
+			return changePlan{}, changeFieldError("person.name_ar", "name_ar is longer than 300 characters")
+		}
+		if !contains(changeAliasTypes, aliasType) {
+			return changePlan{}, changeFieldError("person.alias_type", "alias_type must be one of "+strings.Join(changeAliasTypes, ", "))
 		}
 		plan.person = &personPlan{personID: personID, nameAR: nameAR, aliasType: aliasType}
 	case ChangeTargetRelationship:
 		if change.Relationship == nil || change.Person != nil || change.Claim != nil || change.SourceLink != nil {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("target", "target "+plan.target+" takes exactly one block, and only relationship")
 		}
-		subjectType, subjectID, err := parseChangeEntity(change.Relationship.SubjectType, change.Relationship.SubjectID)
+		subjectType, subjectID, err := parseChangeEntity(change.Relationship.SubjectType, change.Relationship.SubjectID, "relationship.subject")
 		if err != nil {
 			return changePlan{}, err
 		}
-		objectType, objectID, err := parseChangeEntity(change.Relationship.ObjectType, change.Relationship.ObjectID)
+		objectType, objectID, err := parseChangeEntity(change.Relationship.ObjectType, change.Relationship.ObjectID, "relationship.object")
 		if err != nil {
 			return changePlan{}, err
 		}
 		if subjectID == objectID {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("relationship.object_id", "a relationship cannot name the same entity on both sides")
 		}
 		predicate := strings.TrimSpace(change.Relationship.Predicate)
-		validFrom, validTo, err := parseChangeDateRange(change.Relationship.ValidFrom, change.Relationship.ValidTo)
+		if !contains(changePredicates, predicate) {
+			return changePlan{}, changeFieldError("relationship.predicate", "predicate must be one of "+strings.Join(changePredicates, ", "))
+		}
+		validFrom, validTo, err := parseChangeDateRange(change.Relationship.ValidFrom, change.Relationship.ValidTo, "relationship.valid_from", "relationship.valid_to")
 		if err != nil {
 			return changePlan{}, err
-		}
-		if !contains(changePredicates, predicate) {
-			return changePlan{}, ErrValidation
 		}
 		plan.relationship = &relationshipPlan{subjectType: subjectType, subjectID: subjectID, objectType: objectType, objectID: objectID, predicate: predicate, validFrom: validFrom, validTo: validTo}
 	case ChangeTargetClaim:
 		if change.Claim == nil || change.Person != nil || change.Relationship != nil || change.SourceLink != nil {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("target", "target "+plan.target+" takes exactly one block, and only claim")
 		}
-		subjectType, subjectID, err := parseChangeEntity(change.Claim.SubjectType, change.Claim.SubjectID)
+		subjectType, subjectID, err := parseChangeEntity(change.Claim.SubjectType, change.Claim.SubjectID, "claim.subject")
 		if err != nil {
 			return changePlan{}, err
 		}
-		objectType, objectID, err := parseChangeEntity(change.Claim.ObjectType, change.Claim.ObjectID)
+		objectType, objectID, err := parseChangeEntity(change.Claim.ObjectType, change.Claim.ObjectID, "claim.object")
 		if err != nil {
 			return changePlan{}, err
 		}
 		if subjectID == objectID {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("claim.object_id", "a claim cannot name the same entity on both sides")
 		}
 		predicate := strings.TrimSpace(change.Claim.Predicate)
 		if !contains(changePredicates, predicate) {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("claim.predicate", "predicate must be one of "+strings.Join(changePredicates, ", "))
 		}
-		placeArg, err := parseOptionalChangeUUID(change.Claim.PlaceID)
+		placeArg, err := parseOptionalChangeUUID(change.Claim.PlaceID, "claim.place_id")
 		if err != nil {
 			return changePlan{}, err
 		}
-		timeFrom, timeTo, err := parseChangeDateRange(change.Claim.TimeFrom, change.Claim.TimeTo)
+		timeFrom, timeTo, err := parseChangeDateRange(change.Claim.TimeFrom, change.Claim.TimeTo, "claim.time_from", "claim.time_to")
 		if err != nil {
 			return changePlan{}, err
 		}
 		noteAR := strings.TrimSpace(change.Claim.NoteAR)
 		if len([]rune(noteAR)) > 5000 {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("claim.note_ar", "note_ar is longer than 5000 characters")
 		}
 		plan.claim = &claimPlan{subjectType: subjectType, subjectID: subjectID, objectType: objectType, objectID: objectID, predicate: predicate, placeArg: placeArg, timeFrom: timeFrom, timeTo: timeTo, noteAR: noteAR}
 	case ChangeTargetSourceLink:
 		if change.SourceLink == nil || change.Person != nil || change.Relationship != nil || change.Claim != nil {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("target", "target "+plan.target+" takes exactly one block, and only source_link")
 		}
 		claimID, err := parseChangeUUID(change.SourceLink.ClaimID)
 		if err != nil {
-			return changePlan{}, err
+			return changePlan{}, changeFieldError("source_link.claim_id", "claim_id must be a uuid")
 		}
 		link := &sourceLinkPlan{claimID: claimID, noteAR: strings.TrimSpace(change.SourceLink.NoteAR)}
 		if len([]rune(link.noteAR)) > 5000 {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("source_link.note_ar", "note_ar is longer than 5000 characters")
 		}
 		statementID := strings.TrimSpace(change.SourceLink.SourceStatementID)
 		passageID := strings.TrimSpace(change.SourceLink.SourcePassageID)
 		if (statementID == "") == (passageID == "") {
-			return changePlan{}, ErrValidation
+			// Exactly one of the two, and the refusal names both: naming the one the
+			// caller filled in would leave them to work out which of the pair is the
+			// other.
+			return changePlan{}, changeFieldError("source_link.source_statement_id", "exactly one of source_statement_id and source_passage_id is required")
 		}
 		if statementID != "" {
 			parsed, err := parseChangeUUID(statementID)
 			if err != nil {
-				return changePlan{}, err
+				return changePlan{}, changeFieldError("source_link.source_statement_id", "source_statement_id must be a uuid")
 			}
 			link.statementArg, link.statementID = parsed, parsed
 		}
 		if passageID != "" {
 			parsed, err := parseChangeUUID(passageID)
 			if err != nil {
-				return changePlan{}, err
+				return changePlan{}, changeFieldError("source_link.source_passage_id", "source_passage_id must be a uuid")
 			}
 			link.passageArg, link.passageID = parsed, parsed
 		}
@@ -742,14 +779,17 @@ func validateChangeSet(change ChangeSet) (changePlan, error) {
 			link.relation = "supports"
 		}
 		if !contains(changeRelations, link.relation) {
-			return changePlan{}, ErrValidation
+			return changePlan{}, changeFieldError("source_link.relation", "relation must be one of "+strings.Join(changeRelations, ", "))
 		}
 		plan.sourceLink = link
 	default:
-		return changePlan{}, ErrValidation
+		return changePlan{}, changeFieldError("target", "target must be one of "+strings.Join(changeTargets, ", "))
 	}
 	return plan, nil
 }
+
+// changeTargets is the closed target vocabulary, in the order the composer offers it.
+var changeTargets = []string{ChangeTargetPerson, ChangeTargetRelationship, ChangeTargetClaim, ChangeTargetSourceLink}
 
 var (
 	changePredicates   = []string{"parent_of", "father_of", "mother_of", "spouse_of", "sibling_of", "son_of", "daughter_of", "brother_of", "sister_of", "born_in", "died_in", "resided_in"}
@@ -767,55 +807,62 @@ func parseChangeUUID(value string) (uuid.UUID, error) {
 	return parsed, nil
 }
 
-func parseOptionalChangeUUID(value string) (any, error) {
+func parseOptionalChangeUUID(value, field string) (any, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
 	}
 	parsed, err := parseChangeUUID(value)
 	if err != nil {
-		return nil, err
+		return nil, changeFieldError(field, "must be a uuid when it is not empty")
 	}
 	return parsed, nil
 }
 
-func parseChangeEntity(entityType, entityID string) (string, uuid.UUID, error) {
+// parseChangeEntity reads one side of a relationship or claim. The field prefix is the
+// block and the side, so the refusal points at the input the reviewer typed rather
+// than at the block as a whole.
+func parseChangeEntity(entityType, entityID, field string) (string, uuid.UUID, error) {
 	entityType = strings.ToLower(strings.TrimSpace(entityType))
 	if entityType == "" {
 		entityType = "person"
 	}
 	if !contains(changeEntityTypes, entityType) {
-		return "", uuid.Nil, ErrValidation
+		return "", uuid.Nil, changeFieldError(field+".type", "type must be one of "+strings.Join(changeEntityTypes, ", "))
 	}
 	parsed, err := parseChangeUUID(entityID)
 	if err != nil {
-		return "", uuid.Nil, err
+		return "", uuid.Nil, changeFieldError(field+".id", "id must be a uuid")
 	}
 	return entityType, parsed, nil
 }
 
-func parseChangeDateRange(fromValue, toValue string) (pgtype.Date, pgtype.Date, error) {
-	parse := func(value string) (pgtype.Date, error) {
+// parseChangeDateRange reads an optional date range. fromField and toField are the
+// JSON names of the two inputs, passed in rather than derived, because the two blocks
+// that carry a range spell it differently - a relationship dates its validity and a
+// claim dates its subject - and a refusal has to point at the name the caller sent.
+func parseChangeDateRange(fromValue, toValue, fromField, toField string) (pgtype.Date, pgtype.Date, error) {
+	parse := func(value, field string) (pgtype.Date, error) {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return pgtype.Date{}, nil
 		}
 		parsed, err := time.Parse("2006-01-02", value)
 		if err != nil {
-			return pgtype.Date{}, ErrValidation
+			return pgtype.Date{}, changeFieldError(field, "must be a date as YYYY-MM-DD")
 		}
 		return pgtype.Date{Time: parsed, Valid: true}, nil
 	}
-	from, err := parse(fromValue)
+	from, err := parse(fromValue, fromField)
 	if err != nil {
 		return pgtype.Date{}, pgtype.Date{}, err
 	}
-	to, err := parse(toValue)
+	to, err := parse(toValue, toField)
 	if err != nil {
 		return pgtype.Date{}, pgtype.Date{}, err
 	}
 	if from.Valid && to.Valid && to.Time.Before(from.Time) {
-		return pgtype.Date{}, pgtype.Date{}, ErrValidation
+		return pgtype.Date{}, pgtype.Date{}, changeFieldError(toField, "must not be earlier than "+fromField)
 	}
 	return from, to, nil
 }

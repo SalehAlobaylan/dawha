@@ -14,22 +14,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Every refusal names the field it is about, not just that the input was invalid. A
+// change set is four typed blocks behind a target selector, so a client that has to
+// work out which input was wrong has to re-implement the rules below - which is the
+// second rule set the composer is not allowed to have. The field is the JSON path the
+// caller sent, so the field column in this table is the contract the browser marks up.
 func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 	cases := []struct {
 		name  string
 		input ChangeSet
+		field string
 	}{
 		{
 			name:  "unknown target",
 			input: ChangeSet{Target: "tree"},
+			field: "change_set.target",
 		},
 		{
 			name:  "empty change set",
 			input: ChangeSet{},
+			field: "change_set.target",
 		},
 		{
 			name:  "target without its block",
 			input: ChangeSet{Target: ChangeTargetClaim},
+			field: "change_set.target",
 		},
 		{
 			name: "block that does not match the target",
@@ -37,6 +46,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target: ChangeTargetClaim,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب"},
 			},
+			field: "change_set.target",
 		},
 		{
 			name: "second block beside the target block",
@@ -45,6 +55,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "father_of"},
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب"},
 			},
+			field: "change_set.target",
 		},
 		{
 			name: "malformed identifier",
@@ -52,6 +63,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "not-a-uuid", NameAR: "لقب"},
 			},
+			field: "change_set.person.person_id",
 		},
 		{
 			name: "unknown alias type",
@@ -59,6 +71,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "لقب", AliasType: "nickname"},
 			},
+			field: "change_set.person.alias_type",
 		},
 		{
 			name: "empty name",
@@ -66,6 +79,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target: ChangeTargetPerson,
 				Person: &PersonChange{PersonID: "10000000-0000-0000-0000-000000000001", NameAR: "  "},
 			},
+			field: "change_set.person.name_ar",
 		},
 		{
 			name: "unknown predicate",
@@ -73,6 +87,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target: ChangeTargetClaim,
 				Claim:  &ClaimChange{SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "شغله"},
 			},
+			field: "change_set.claim.predicate",
 		},
 		{
 			name: "unknown entity type",
@@ -83,6 +98,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					ObjectType: "person", ObjectID: "10000000-0000-0000-0000-000000000002", Predicate: "sibling_of",
 				},
 			},
+			field: "change_set.relationship.subject.type",
 		},
 		{
 			name: "relationship with itself",
@@ -92,6 +108,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					SubjectID: "10000000-0000-0000-0000-000000000001", ObjectID: "10000000-0000-0000-0000-000000000001", Predicate: "sibling_of",
 				},
 			},
+			field: "change_set.relationship.object_id",
 		},
 		{
 			name: "inverted validity range",
@@ -102,6 +119,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					Predicate: "father_of", TimeFrom: "1900-01-01", TimeTo: "1800-01-01",
 				},
 			},
+			field: "change_set.claim.time_to",
 		},
 		{
 			name: "malformed date",
@@ -112,6 +130,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					Predicate: "father_of", TimeFrom: "من قرن",
 				},
 			},
+			field: "change_set.claim.time_from",
 		},
 		{
 			name: "source link with no reference",
@@ -119,6 +138,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 				Target:     ChangeTargetSourceLink,
 				SourceLink: &SourceLinkChange{ClaimID: "60000000-0000-0000-0000-000000000001"},
 			},
+			field: "change_set.source_link.source_statement_id",
 		},
 		{
 			name: "source link with two references",
@@ -130,6 +150,7 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					SourcePassageID:   "20000000-0000-0000-0000-000000000002",
 				},
 			},
+			field: "change_set.source_link.source_statement_id",
 		},
 		{
 			name: "source link with an unknown relation",
@@ -139,11 +160,20 @@ func TestChangeSetRejectsMalformedTargets(t *testing.T) {
 					ClaimID: "60000000-0000-0000-0000-000000000001", SourceStatementID: "20000000-0000-0000-0000-000000000001", Relation: "proves",
 				},
 			},
+			field: "change_set.source_link.relation",
 		},
 	}
 	for _, testCase := range cases {
-		if _, err := validateChangeSet(testCase.input); !errors.Is(err, ErrValidation) {
+		_, err := validateChangeSet(testCase.input)
+		if !errors.Is(err, ErrValidation) {
 			t.Fatalf("%s: expected a validation error, got %v", testCase.name, err)
+		}
+		var fieldErr FieldError
+		if !errors.As(err, &fieldErr) {
+			t.Fatalf("%s: the refusal does not name a field: %v", testCase.name, err)
+		}
+		if fieldErr.Field != testCase.field {
+			t.Errorf("%s: field = %q, want %q", testCase.name, fieldErr.Field, testCase.field)
 		}
 	}
 }
