@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/geography"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -245,6 +246,21 @@ func (s *Service) Workspace(ctx context.Context, input WorkspaceInput, actorID s
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
+	// The visibility policy this actor reads under, built from the role the two
+	// queries above already resolved rather than from a second role lookup, so
+	// the scope the workspace applies to a person's aliases is the scope the rest
+	// of this snapshot is built with. It carries the research flag and NOT the
+	// reference-write flag: the reference families are not part of this change,
+	// and widening what a research role may read of a family is not this
+	// function's decision to make.
+	//
+	// WithResearch is the right constructor here because a caller without a
+	// session never carries the research role however the flag is passed, which
+	// is the same rule the policy itself states.
+	policy, err := visibility.WithResearch(actorUUID.String(), canResearch)
+	if err != nil {
+		return WorkspaceSnapshot{}, ErrForbidden
+	}
 	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return WorkspaceSnapshot{}, err
@@ -254,7 +270,7 @@ func (s *Service) Workspace(ctx context.Context, input WorkspaceInput, actorID s
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
-	entityType, entityID, entityName, aliases, err := resolveWorkspaceEntity(ctx, tx, questionUUID, input)
+	entityType, entityID, entityName, aliases, err := resolveWorkspaceEntity(ctx, tx, policy, questionUUID, input)
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
@@ -367,7 +383,13 @@ func loadWorkspaceQuestion(ctx context.Context, q workspaceExecutor, questionID 
 	return item, uuidOrNil(createdBy), nil
 }
 
-func resolveWorkspaceEntity(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, input WorkspaceInput) (string, string, string, []string, error) {
+// resolveWorkspaceEntity resolves the workspace's subject and reads its names.
+//
+// The policy travels with it because the alias read needs one: a person's
+// alternate spellings are only readable under the same two gates the people index
+// applies, and that is a statement about the actor rather than about the subject.
+// See workspaceEntityAliases.
+func resolveWorkspaceEntity(ctx context.Context, q workspaceExecutor, policy visibility.Policy, questionID uuid.UUID, input WorkspaceInput) (string, string, string, []string, error) {
 	entityType := input.EntityType
 	entityID := input.EntityID
 	if entityID == "" {
@@ -393,7 +415,7 @@ func resolveWorkspaceEntity(ctx context.Context, q workspaceExecutor, questionID
 	if err != nil {
 		return "", "", "", nil, err
 	}
-	aliases, err := workspaceEntityAliases(ctx, q, entityType, entityID)
+	aliases, err := workspaceEntityAliases(ctx, q, policy, entityType, entityID)
 	if err != nil {
 		return "", "", "", nil, err
 	}
@@ -426,34 +448,85 @@ func workspaceEntityName(ctx context.Context, q workspaceExecutor, entityType, e
 	return textValue(name), nil
 }
 
-func workspaceEntityAliases(ctx context.Context, q workspaceExecutor, entityType, entityID string) ([]string, error) {
+// workspaceEntityAliases reads the alternate spellings of the workspace's
+// subject.
+//
+// A PERSON's aliases are read through the same two gates internal/dictionary
+// applies, and for the same reason: person_aliases can record the source a
+// spelling was taken from, so an alias taken from a research-only source is a
+// way to disclose a private source through a page that looks public. And a
+// person the actor may not read is a person whose names it may not surface at
+// all - not through the canonical name, and not through the list of spellings
+// that follows it.
+//
+// The two gates, in the shape the dictionary uses:
+//
+//   - the person policy, so a research-only person the actor may not read does
+//     not arrive through its aliases. Note that the research role is NOT a
+//     blanket bypass over people (visibility.roleBypassesPeople is false), so
+//     this is the same answer the people index gives.
+//   - the alias's own source, with the rule that an alias carrying no source is
+//     a PLATFORM record and stays. That is the asymmetry worth naming: "no
+//     source" is not "no permission", it is a row the platform itself wrote.
+//
+// A research role keeps the view it had. visibility.Policy's source grants
+// include a blanket pass for the research role, so an actor who may read a
+// research-only source still sees the alias taken from it, and a research role
+// therefore loses nothing here. What it loses is the aliases of a person it may
+// not read - which is what the first gate says, and which is the last gap in
+// Phase 19.
+//
+// A FAMILY's aliases are not scoped. family_aliases carries no source column,
+// so there is nothing to scope and the rows follow their parent, exactly as
+// internal/dictionary's own comment on that table says.
+func workspaceEntityAliases(ctx context.Context, q workspaceExecutor, policy visibility.Policy, entityType, entityID string) ([]string, error) {
 	id, err := uuid.Parse(entityID)
 	if err != nil {
 		return nil, ErrValidation
 	}
-	var query string
 	switch entityType {
 	case "person":
-		query = `SELECT value_ar FROM person_aliases WHERE person_id = $1 ORDER BY created_at`
+		params := visibility.NewParams()
+		personReference := params.Add(id)
+		personPredicate := policy.PersonPredicate(params, personReference)
+		aliasSource := policy.SourcePredicate(params, "pa.source_id")
+		query := `SELECT pa.value_ar FROM person_aliases pa
+			WHERE pa.person_id = ` + personReference + `
+			  AND ` + personPredicate + `
+			  AND (pa.source_id IS NULL OR ` + aliasSource + `)
+			ORDER BY pa.created_at, pa.id`
+		rows, err := q.Query(ctx, query, params.Args()...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		items := make([]string, 0)
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				return nil, err
+			}
+			items = append(items, value)
+		}
+		return items, rows.Err()
 	case "family":
-		query = `SELECT value_ar FROM family_aliases WHERE family_id = $1 ORDER BY created_at`
+		rows, err := q.Query(ctx, `SELECT value_ar FROM family_aliases WHERE family_id = $1 ORDER BY created_at, id`, id)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		items := make([]string, 0)
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				return nil, err
+			}
+			items = append(items, value)
+		}
+		return items, rows.Err()
 	default:
 		return []string{}, nil
 	}
-	rows, err := q.Query(ctx, query, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]string, 0)
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return nil, err
-		}
-		items = append(items, value)
-	}
-	return items, rows.Err()
 }
 
 func loadWorkspaceClaims(ctx context.Context, q workspaceExecutor, questionID uuid.UUID, entityType, entityID string) ([]WorkspaceClaim, error) {
