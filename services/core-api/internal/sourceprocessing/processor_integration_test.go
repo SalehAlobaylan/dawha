@@ -65,13 +65,11 @@ func TestResolveEntityUsesSeededAlias(t *testing.T) {
 	}
 }
 
-// TestLegacyQueuedBinaryFileFailsDeterministically is the migration coverage for
-// files queued before the format contract tightened: the worker refuses them
-// with a reason a reader can act on, the refusal is identical on every attempt,
-// nothing is extracted, and neither the run, the file, nor the job can be read as
-// a success.
-func TestLegacyQueuedBinaryFileFailsDeterministically(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+// TestQueuedUnsupportedBinaryFileFailsDeterministically checks that a queued
+// format with no extraction path fails with the same actionable reason on every
+// attempt and never reads as a success.
+func TestQueuedUnsupportedBinaryFileFailsDeterministically(t *testing.T) {
+	fixture := newLegacyFileFixture(t, "application/zip", "legacy-source.zip", []byte("PK\x03\x04legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	job := fixture.claim()
 
@@ -118,7 +116,7 @@ func TestPersistProcessedPagesKeepsPageAndLocatorProvenance(t *testing.T) {
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	processed := make([]processedPage, 0, len(pages))
 	for _, page := range pages {
-		processed = append(processed, processedPage{Page: page, Normalized: strings.TrimSpace(page.Text), Embedding: testEmbedding(), Model: "test-model"})
+		processed = append(processed, processedPage{Page: page, Normalized: strings.TrimSpace(page.Text), Embedding: testEmbedding(), Model: "test-model", HasPassage: true})
 	}
 	if err := service.persistProcessedPages(context.Background(), fixture.claim(), fixture.record(), processed); err != nil {
 		t.Fatal(err)
@@ -321,7 +319,7 @@ func (f *legacyFileFixture) assertRefused(t *testing.T, message string) {
 		if recorded != message {
 			t.Fatalf("%s = %q, want %q", name, recorded, message)
 		}
-		for _, fragment := range []string{f.mimeType, "text/*", "application/json", "application/xml"} {
+		for _, fragment := range []string{f.mimeType, "text/*", "application/json", "application/xml", "application/pdf"} {
 			if !strings.Contains(recorded, fragment) {
 				t.Fatalf("%s %q does not mention %q", name, recorded, fragment)
 			}
@@ -358,7 +356,7 @@ func testEmbedding() []float32 {
 // keep looking unfinished while their job dies. The returned error has to say so
 // rather than pass as a clean refusal, which the caller would record as handled.
 func TestProcessReportsAnUnrecordedFormatRefusal(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", "unrecorded-marking.pdf", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	fixture := newLegacyFileFixture(t, "application/zip", "unrecorded-marking.zip", []byte("PK\x03\x04legacy-binary\x00\x01"))
 	refuseFailureMarking(t, fixture.pool, fixture.filename)
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	job := fixture.claim()
@@ -404,7 +402,7 @@ func TestProcessReportsAnUnrecordedFormatRefusal(t *testing.T) {
 // TestFailProcessingReturnsTheCauseWhenTheMarkingWorks keeps the normal path
 // identical: a refusal that was recorded is returned unchanged.
 func TestFailProcessingReturnsTheCauseWhenTheMarkingWorks(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	fixture := newLegacyFileFixture(t, "application/zip", "legacy-source.zip", []byte("PK\x03\x04legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	cause := unsupportedContent("a recorded refusal")
 	if err := service.failProcessing(context.Background(), fixture.claim(), fixture.runID, fixture.fileID, cause); err != cause {
@@ -426,7 +424,7 @@ func TestFailProcessingReturnsTheCauseWhenTheMarkingWorks(t *testing.T) {
 // any more - failProcessing proves the claim first, and a claim cannot be proved
 // without a working connection - so the half that can fail is failed on purpose.
 func TestFailProcessingReportsAFailedMarkingOnTheFile(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	fixture := newLegacyFileFixture(t, "application/zip", "legacy-source.zip", []byte("PK\x03\x04legacy-binary\x00\x01"))
 	refuseFileMarking(t, fixture.pool, "will not record")
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	cause := unsupportedContent("a refusal the file table will not record")
@@ -460,7 +458,7 @@ func TestFailProcessingReportsAFailedMarkingOnTheFile(t *testing.T) {
 // is on the chain, the document's own failure is kept for the reader, and neither
 // is reported as a recorded refusal.
 func TestFailProcessingRefusesToRecordWithoutALiveClaim(t *testing.T) {
-	fixture := newLegacyFileFixture(t, "application/pdf", "legacy-source", []byte("%PDF-1.7\n%legacy-binary\x00\x01"))
+	fixture := newLegacyFileFixture(t, "application/zip", "legacy-source.zip", []byte("PK\x03\x04legacy-binary\x00\x01"))
 	service := NewService(fixture.pool, fixture.store, jobs.NewService(fixture.pool), nil, NewTextExtractor())
 	claim := fixture.claim()
 	// Somebody else owns the job now, under a live lease of their own.

@@ -40,6 +40,7 @@ type Dependencies struct {
 	SecureCookies bool
 	Jobs          *jobs.Service
 	AI            ai.Provider
+	ChartVision   sourceprocessing.ChartVisionProvider
 	SourceStorage storage.Store
 	// RateLimits is the abuse-control configuration. The zero value is NOT the
 	// default: NewRouter calls ratelimit.DefaultConfig when it is zero, so a
@@ -107,7 +108,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	geospatialIntelligenceService := geospatialintelligence.NewService(dependencies.DB)
 	geospatialIntelligenceHandler := geospatialIntelligenceHandler{Service: geospatialIntelligenceService, Auth: authService}
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
-	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewTextExtractor())
+	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewPDFExtractor())
+	sourceProcessingService.ChartVision = dependencies.ChartVision
 	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
 	suggestionService := suggestions.NewService(dependencies.DB)
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
@@ -206,6 +208,25 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	// it is a separate route rather than a query parameter on the file view: the
 	// list a reviewer sees must not hand out capabilities to everything in it.
 	mux.HandleFunc("GET /api/v1/source-files/{fileID}/download", sourceProcessingHandler.downloadFile)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/pages/{pageNumber}", sourceProcessingHandler.pageEvidence)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/pages/{pageNumber}/preview", sourceProcessingHandler.pagePreview)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/pages/{pageNumber}/review", sourceProcessingHandler.reviewPageEvidence)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/pages/{pageNumber}/reextract-reviewed", sourceProcessingHandler.reextractReviewedPage)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/reprocess", sourceProcessingHandler.reprocessFile)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/pages", sourceProcessingHandler.pageEvidenceIndex)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/tree-drafts", sourceProcessingHandler.createTreeDraft)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/chart-analysis", sourceProcessingHandler.startChartAnalysis)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/chart-analysis", sourceProcessingHandler.getChartAnalysis)
+	mux.HandleFunc("POST /api/v1/source-chart-analysis-runs/{runID}/retry", sourceProcessingHandler.retryChartAnalysis)
+	mux.HandleFunc("PUT /api/v1/source-chart-analysis-runs/{runID}/review", sourceProcessingHandler.saveChartAnalysisReview)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/book-assertions", sourceProcessingHandler.listBookAssertions)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/book-assertions", sourceProcessingHandler.createBookAssertion)
+	mux.HandleFunc("GET /api/v1/source-tree-drafts/{draftID}", sourceProcessingHandler.getTreeDraft)
+	mux.HandleFunc("PUT /api/v1/source-tree-drafts/{draftID}", sourceProcessingHandler.saveTreeDraft)
+	mux.HandleFunc("POST /api/v1/source-tree-drafts/{draftID}/import", sourceProcessingHandler.importTreeDraft)
+	mux.HandleFunc("POST /api/v1/source-tree-drafts/{draftID}/retract", sourceProcessingHandler.retractTreeDraft)
+	mux.HandleFunc("PUT /api/v1/source-book-assertions/{assertionID}", sourceProcessingHandler.updateBookAssertion)
+	mux.HandleFunc("POST /api/v1/source-book-assertions/{assertionID}/review", sourceProcessingHandler.reviewBookAssertion)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}/processing", sourceProcessingHandler.getProcessing)
 	mux.HandleFunc("PATCH /api/v1/source-candidates/{candidateID}/review", sourceProcessingHandler.reviewCandidate)
 	mux.HandleFunc("POST /api/v1/sources/{sourceID}/passages", evidenceHandler.createPassage)

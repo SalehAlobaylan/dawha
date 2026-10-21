@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
@@ -21,33 +22,46 @@ import (
 )
 
 type sourceFileRecord struct {
-	RunID      uuid.UUID
-	SourceID   uuid.UUID
-	FileID     uuid.UUID
-	StorageKey string
-	MimeType   string
-	Filename   string
-	Status     string
-	RunStatus  string
-	ByteSize   int64
-	Checksum   string
+	RunID                uuid.UUID
+	SourceID             uuid.UUID
+	FileID               uuid.UUID
+	PageEvidenceID       uuid.UUID
+	PageReviewRevisionID uuid.UUID
+	RunKind              string
+	RenderDPI            int
+	StorageKey           string
+	MimeType             string
+	Filename             string
+	Status               string
+	RunStatus            string
+	ByteSize             int64
+	Checksum             string
+	DocumentKind         string
 }
 
 func (s *Service) RequeueRecovered(ctx context.Context, recovered []jobs.JobView) error {
 	for _, job := range recovered {
-		if job.Type != SourceProcessJobType {
-			continue
-		}
-		payload, err := parseJobPayload(job.Payload)
-		if err != nil {
-			return err
-		}
-		if _, err := s.Pool.Exec(ctx, `
+		switch job.Type {
+		case SourceProcessJobType:
+			payload, err := parseJobPayload(job.Payload)
+			if err != nil {
+				return err
+			}
+			if _, err := s.Pool.Exec(ctx, `
 			UPDATE source_processing_runs
 			SET status = 'queued', stage = 'queued', started_at = NULL, error = NULL, updated_at = now()
-			WHERE source_file_id = $1 AND status = 'running'
-		`, payload.SourceFileID); err != nil {
-			return err
+			WHERE id = COALESCE(NULLIF($1, '')::uuid, (SELECT id FROM source_processing_runs WHERE job_id = $2)) AND status = 'running'
+			`, payload.RunID, job.ID); err != nil {
+				return err
+			}
+		case SourceChartAnalysisJobType:
+			var chartPayload ChartAnalysisPayload
+			if err := json.Unmarshal(job.Payload, &chartPayload); err != nil {
+				return ErrValidation
+			}
+			if _, err := s.Pool.Exec(ctx, `UPDATE source_chart_analysis_runs SET status = 'queued', error_code = NULL, updated_at = now() WHERE id = NULLIF($1,'')::uuid AND status = 'running'`, chartPayload.RunID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -94,24 +108,29 @@ func (s *Service) Process(ctx context.Context, claim Claim) error {
 	if err != nil {
 		return err
 	}
-	file, err := s.fileForProcessing(ctx, payload.SourceFileID)
+	file, err := s.fileForProcessing(ctx, payload.SourceFileID, payload.RunID, claim.Job.ID)
 	if err != nil {
 		return err
 	}
 	if file.SourceID.String() != payload.SourceID {
 		return ErrValidation
 	}
-	if file.Status == "succeeded" || file.RunStatus == "succeeded" {
+	if payload.RunKind != "" && payload.RunKind != file.RunKind {
+		return ErrValidation
+	}
+	if payload.RenderDPI != 0 && payload.RenderDPI != file.RenderDPI {
+		return ErrValidation
+	}
+	if payload.PageReviewRevisionID != "" && payload.PageReviewRevisionID != file.PageReviewRevisionID.String() {
+		return ErrValidation
+	}
+	if file.RunStatus == "succeeded" {
 		return nil
 	}
-	// A file queued before the format contract tightened is refused here, before
-	// it is claimed, read, or sent to the model: the outcome is the same on every
-	// attempt and the run can never reach a succeeded state.
+	// A legacy or otherwise unsupported file is refused before it is read or sent
+	// to a model, so repeated attempts cannot change the outcome.
 	if !IsSupportedContentType(file.MimeType) {
 		return s.failProcessing(ctx, claim, file.RunID, file.FileID, unsupportedContent(fmt.Sprintf("the queued file %q (%s) uses a format that cannot be extracted", file.Filename, normalizeContentType(file.MimeType))))
-	}
-	if s.AI == nil {
-		return ErrAIUnavailable
 	}
 	if err := heartbeat.Check(); err != nil {
 		return err
@@ -146,14 +165,45 @@ func (s *Service) Process(ctx context.Context, claim Claim) error {
 		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, ErrValidation))
 	}
 	hash := sha256.New()
-	pages, err := s.Extractor.Extract(ctx, ExtractInput{Reader: io.TeeReader(reader, hash), ContentType: file.MimeType, Filename: file.Filename})
+	var pages []Page
+	if file.RunKind == "reviewed_page" {
+		_, err = io.Copy(hash, reader)
+		if err == nil && hex.EncodeToString(hash.Sum(nil)) == file.Checksum {
+			var page Page
+			page, err = s.reviewedPageForProcessing(ctx, file)
+			if err == nil {
+				pages = []Page{page}
+			}
+		} else if err == nil {
+			err = ErrValidation
+		}
+	} else {
+		pages, err = s.Extractor.Extract(ctx, ExtractInput{Reader: io.TeeReader(reader, hash), ContentType: file.MimeType, Filename: file.Filename, RenderDPI: file.RenderDPI})
+	}
 	if err != nil {
+		// A page-level PDF failure can happen after earlier pages were read. Keep
+		// those verified readings available for review; a partial extractor that
+		// did not consume the whole object cannot pass the checksum fence below.
+		if len(pages) > 0 && validateExtractedPages(pages) == nil && hex.EncodeToString(hash.Sum(nil)) == file.Checksum {
+			if evidenceErr := s.persistPageEvidence(ctx, claim, file, pages); evidenceErr != nil {
+				return s.refuseIfLost(heartbeat, evidenceErr)
+			}
+		}
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
+	}
+	if err := validateExtractedPages(pages); err != nil {
 		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != file.Checksum {
 		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, ErrValidation))
 	}
-	processedPages, err := s.buildPages(ctx, heartbeat, pages)
+	if err := s.persistPageEvidence(ctx, claim, file, pages); err != nil {
+		return s.refuseIfLost(heartbeat, err)
+	}
+	if s.AI == nil {
+		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, ErrAIUnavailable))
+	}
+	processedPages, err := s.buildPages(ctx, heartbeat, pages, file.DocumentKind != "family_chart")
 	if err != nil {
 		return s.refuseIfLost(heartbeat, s.failProcessing(ctx, claim, file.RunID, file.FileID, err))
 	}
@@ -203,27 +253,37 @@ func (s *Service) startHeartbeat(ctx context.Context, claim Claim) (*jobs.Heartb
 	return s.Jobs.StartHeartbeat(ctx, claim.Lease)
 }
 
-func (s *Service) fileForProcessing(ctx context.Context, fileID string) (sourceFileRecord, error) {
+func (s *Service) fileForProcessing(ctx context.Context, fileID, runID, jobID string) (sourceFileRecord, error) {
 	parsed, err := uuid.Parse(strings.TrimSpace(fileID))
 	if err != nil {
 		return sourceFileRecord{}, ErrValidation
 	}
 	var file sourceFileRecord
-	var storageKey, mimeType, filename, status, runStatus, checksum pgtype.Text
-	var runID, sourceID pgtype.UUID
+	var storageKey, mimeType, filename, status, runStatus, checksum, runKind, documentKind pgtype.Text
+	var runUUID, sourceID, pageEvidenceID, pageReviewRevisionID pgtype.UUID
 	var byteSize pgtype.Int8
+	var renderDPI pgtype.Int4
 	if err := s.Pool.QueryRow(ctx, `
-		SELECT r.id, r.source_id, r.source_file_id, f.storage_key, f.mime_type, f.original_filename_ar, f.processing_status, r.status, f.byte_size, f.checksum_sha256
+		SELECT r.id, r.source_id, r.source_file_id, f.storage_key, f.mime_type, f.original_filename_ar, f.processing_status, r.status, f.byte_size, f.checksum_sha256, f.document_kind,
+		       r.run_kind, COALESCE(NULLIF(r.pipeline_config->>'renderDpi', '')::integer, 300), r.input_page_review_revision_id, pr.source_page_evidence_id
 		FROM source_processing_runs r
 		JOIN source_files f ON f.id = r.source_file_id
-		WHERE r.source_file_id = $1
-	`, parsed).Scan(&runID, &sourceID, &file.FileID, &storageKey, &mimeType, &filename, &status, &runStatus, &byteSize, &checksum); err != nil {
+		LEFT JOIN source_page_review_revisions pr ON pr.id = r.input_page_review_revision_id
+		WHERE r.source_file_id = $1 AND r.job_id = NULLIF($3, '')::uuid
+		  AND ($2 = '' OR r.id = NULLIF($2, '')::uuid)
+	`, parsed, runID, jobID).Scan(&runUUID, &sourceID, &file.FileID, &storageKey, &mimeType, &filename, &status, &runStatus, &byteSize, &checksum, &documentKind, &runKind, &renderDPI, &pageReviewRevisionID, &pageEvidenceID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sourceFileRecord{}, ErrNotFound
 		}
 		return sourceFileRecord{}, err
 	}
-	file.RunID = uuidValue(runID)
+	file.RunID = uuidValue(runUUID)
+	file.PageEvidenceID = uuidValue(pageEvidenceID)
+	file.PageReviewRevisionID = uuidValue(pageReviewRevisionID)
+	file.RunKind = textValue(runKind)
+	if renderDPI.Valid {
+		file.RenderDPI = int(renderDPI.Int32)
+	}
 	file.SourceID = uuidValue(sourceID)
 	file.StorageKey = textValue(storageKey)
 	file.MimeType = textValue(mimeType)
@@ -234,88 +294,400 @@ func (s *Service) fileForProcessing(ctx context.Context, fileID string) (sourceF
 		file.ByteSize = byteSize.Int64
 	}
 	file.Checksum = textValue(checksum)
+	file.DocumentKind = textValue(documentKind)
 	return file, nil
 }
 
-func (s *Service) buildPages(ctx context.Context, heartbeat *jobs.Heartbeat, pages []Page) ([]processedPage, error) {
+func (s *Service) reviewedPageForProcessing(ctx context.Context, file sourceFileRecord) (Page, error) {
+	if file.PageReviewRevisionID == uuid.Nil || file.PageEvidenceID == uuid.Nil {
+		return Page{}, ErrValidation
+	}
+	var page Page
+	var status string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT p.page_number, p.page_width, p.page_height, r.status, r.transcription_text_ar
+		FROM source_page_review_revisions r
+		JOIN source_page_evidence p ON p.id = r.source_page_evidence_id
+		WHERE r.id = $1 AND p.id = $2 AND p.source_file_id = $3
+	`, file.PageReviewRevisionID, file.PageEvidenceID, file.FileID).Scan(&page.Number, &page.Width, &page.Height, &status, &page.Text)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Page{}, ErrNotFound
+	}
+	if err != nil {
+		return Page{}, err
+	}
+	if (status != "transcribed" && status != "partial") || strings.TrimSpace(page.Text) == "" {
+		return Page{}, ErrValidation
+	}
+	page.PageEvidenceID = file.PageEvidenceID.String()
+	page.ReviewRevisionID = file.PageReviewRevisionID.String()
+	return page, nil
+}
+
+func pageEvidenceIDForPassage(ctx context.Context, tx pgx.Tx, file sourceFileRecord, page Page) (uuid.UUID, error) {
+	if strings.TrimSpace(page.PageEvidenceID) != "" {
+		pageID, err := uuid.Parse(page.PageEvidenceID)
+		if err != nil {
+			return uuid.Nil, ErrValidation
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM source_page_evidence WHERE id = $1 AND source_file_id = $2)`, pageID, file.FileID).Scan(&exists); err != nil {
+			return uuid.Nil, err
+		}
+		if !exists {
+			return uuid.Nil, ErrConflict
+		}
+		return pageID, nil
+	}
+	var pageID uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM source_page_evidence WHERE run_id = $1 AND page_number = $2 ORDER BY created_at DESC, id DESC LIMIT 1`, file.RunID, page.Number).Scan(&pageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil
+	}
+	return pageID, err
+}
+
+func pageReviewRevisionForPassage(file sourceFileRecord, page Page) uuid.UUID {
+	if strings.TrimSpace(page.ReviewRevisionID) != "" {
+		if parsed, err := uuid.Parse(page.ReviewRevisionID); err == nil {
+			return parsed
+		}
+	}
+	if file.RunKind == "reviewed_page" {
+		return file.PageReviewRevisionID
+	}
+	return uuid.Nil
+}
+
+func nullablePassageUUID(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
+}
+
+func supersedePriorCandidates(ctx context.Context, tx pgx.Tx, file sourceFileRecord, pages []processedPage) (int64, error) {
+	if file.RunKind != "reviewed_page" {
+		tag, err := tx.Exec(ctx, `
+			UPDATE source_candidates
+			SET status = 'superseded', updated_at = now()
+			WHERE source_file_id = $1 AND source_processing_run_id IS DISTINCT FROM $2
+			  AND status IN ('unreviewed', 'needs_review')
+		`, file.FileID, file.RunID)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE source_statements
+			SET review_status = 'superseded', updated_at = now()
+			WHERE id IN (
+				SELECT c.source_statement_id FROM source_candidates c
+				WHERE c.source_file_id = $1 AND c.source_processing_run_id IS DISTINCT FROM $2
+				  AND c.status = 'superseded' AND c.source_statement_id IS NOT NULL
+			)
+			AND review_status IN ('unreviewed', 'needs_review')
+		`, file.FileID, file.RunID); err != nil {
+			return 0, err
+		}
+		return tag.RowsAffected(), nil
+	}
+	pageNumber := 0
+	for _, page := range pages {
+		if page.HasPassage {
+			pageNumber = page.Page.Number
+			break
+		}
+	}
+	if pageNumber == 0 {
+		return 0, nil
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE source_candidates c
+		SET status = 'superseded', updated_at = now()
+		FROM source_passages p
+		WHERE c.source_passage_id = p.id AND p.source_file_id = $1 AND p.page_number = $2
+		  AND c.source_processing_run_id IS DISTINCT FROM $3
+		  AND c.status IN ('unreviewed', 'needs_review')
+	`, file.FileID, pageNumber, file.RunID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE source_statements ss
+		SET review_status = 'superseded', updated_at = now()
+		WHERE ss.review_status IN ('unreviewed', 'needs_review')
+		  AND ss.id IN (
+			SELECT c.source_statement_id FROM source_candidates c
+			JOIN source_passages p ON p.id = c.source_passage_id
+			WHERE c.source_file_id = $1 AND p.page_number = $2
+			  AND c.source_processing_run_id IS DISTINCT FROM $3
+			  AND c.status = 'superseded' AND c.source_statement_id IS NOT NULL
+		  )
+	`, file.FileID, pageNumber, file.RunID); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *Service) buildPages(ctx context.Context, heartbeat *jobs.Heartbeat, pages []Page, extractCandidates bool) ([]processedPage, error) {
 	processed := make([]processedPage, 0, len(pages))
 	candidateTotal := 0
-	for _, page := range pages {
+	for _, physicalPage := range pages {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Each page is three model calls and a few dozen row lookups, so a
-		// document with many pages can run for minutes between two checks. The
-		// heartbeat goroutine has been renewing the whole time; this is the read
-		// of its verdict at a point where acting on it is still free.
-		if err := heartbeat.Check(); err != nil {
-			return nil, err
+		segments := splitPage(physicalPage, 3500)
+		if len(segments) == 0 {
+			segments = []Page{physicalPage}
 		}
-		normalized := identity.NormalizeArabicName(page.Text)
-		if normalized == "" {
-			continue
-		}
-		embedding, err := s.AI.Embed(ctx, ai.EmbeddingRequest{Text: normalized, Dimensions: EmbeddingDimensions})
-		if err != nil {
-			return nil, err
-		}
-		if len(embedding.Embedding) != EmbeddingDimensions {
-			return nil, ErrValidation
-		}
-		values := make([]float32, len(embedding.Embedding))
-		norm := 0.0
-		for index, value := range embedding.Embedding {
-			if math.IsNaN(value) || math.IsInf(value, 0) {
+		for _, page := range segments {
+			// Each page is three model calls and a few dozen row lookups, so a
+			// document with many pages can run for minutes between two checks. The
+			// heartbeat goroutine has been renewing the whole time; this is the read
+			// of its verdict at a point where acting on it is still free.
+			if err := heartbeat.Check(); err != nil {
+				return nil, err
+			}
+			normalized := identity.NormalizeArabicName(page.Text)
+			if normalized == "" {
+				processed = append(processed, processedPage{Page: page})
+				continue
+			}
+			if !extractCandidates {
+				// Family-chart OCR remains page evidence only until chart reading is
+				// qualified; noisy full-page text must not create platform candidates.
+				processed = append(processed, processedPage{Page: page})
+				continue
+			}
+			embedding, err := s.AI.Embed(ctx, ai.EmbeddingRequest{Text: normalized, Dimensions: EmbeddingDimensions})
+			if err != nil {
+				return nil, err
+			}
+			if len(embedding.Embedding) != EmbeddingDimensions {
 				return nil, ErrValidation
 			}
-			values[index] = float32(value)
-			norm += value * value
-		}
-		if norm <= 1e-12 {
-			return nil, ErrValidation
-		}
-		entities, err := s.AI.ExtractEntities(ctx, ai.ExtractionRequest{Text: page.Text})
-		if err != nil {
-			return nil, err
-		}
-		claims, err := s.AI.ExtractClaims(ctx, ai.ExtractionRequest{Text: page.Text})
-		if err != nil {
-			return nil, err
-		}
-		if len(entities.Entities) > MaxCandidatesPerPage || len(claims.Claims) > MaxCandidatesPerPage {
-			return nil, ErrValidation
-		}
-		candidateTotal += len(entities.Entities) + len(claims.Claims)
-		if candidateTotal > MaxCandidates {
-			return nil, ErrValidation
-		}
-		processedEntities := make([]processedEntity, 0, len(entities.Entities))
-		for _, candidate := range entities.Entities {
-			link, err := s.resolveEntity(ctx, candidate.Text)
+			values := make([]float32, len(embedding.Embedding))
+			norm := 0.0
+			for index, value := range embedding.Embedding {
+				if math.IsNaN(value) || math.IsInf(value, 0) {
+					return nil, ErrValidation
+				}
+				values[index] = float32(value)
+				norm += value * value
+			}
+			if norm <= 1e-12 {
+				return nil, ErrValidation
+			}
+			entities, err := s.AI.ExtractEntities(ctx, ai.ExtractionRequest{Text: page.Text})
 			if err != nil {
 				return nil, err
 			}
-			processedEntities = append(processedEntities, processedEntity{Candidate: candidate, Link: link})
-		}
-		processedClaims := make([]processedClaim, 0, len(claims.Claims))
-		for _, candidate := range claims.Claims {
-			subject, err := s.resolveEntity(ctx, candidate.SubjectText)
+			claims, err := s.AI.ExtractClaims(ctx, ai.ExtractionRequest{Text: page.Text})
 			if err != nil {
 				return nil, err
 			}
-			object, err := s.resolveEntity(ctx, candidate.ObjectText)
-			if err != nil {
-				return nil, err
+			if len(entities.Entities) > MaxCandidatesPerPage || len(claims.Claims) > MaxCandidatesPerPage {
+				return nil, ErrValidation
 			}
-			processedClaims = append(processedClaims, processedClaim{Candidate: candidate, Subject: subject, Object: object})
+			candidateTotal += len(entities.Entities) + len(claims.Claims)
+			if candidateTotal > MaxCandidates {
+				return nil, ErrValidation
+			}
+			processedEntities := make([]processedEntity, 0, len(entities.Entities))
+			for _, candidate := range entities.Entities {
+				link, err := s.resolveEntity(ctx, candidate.Text)
+				if err != nil {
+					return nil, err
+				}
+				processedEntities = append(processedEntities, processedEntity{Candidate: candidate, Link: link})
+			}
+			processedClaims := make([]processedClaim, 0, len(claims.Claims))
+			for _, candidate := range claims.Claims {
+				subject, err := s.resolveEntity(ctx, candidate.SubjectText)
+				if err != nil {
+					return nil, err
+				}
+				object, err := s.resolveEntity(ctx, candidate.ObjectText)
+				if err != nil {
+					return nil, err
+				}
+				processedClaims = append(processedClaims, processedClaim{Candidate: candidate, Subject: subject, Object: object})
+			}
+			modelVersions := []string{embedding.Model, entities.Model, claims.Model}
+			processed = append(processed, processedPage{Page: page, Normalized: normalized, Embedding: values, Model: strings.Join(uniqueStrings(modelVersions), ","), Entities: processedEntities, Claims: processedClaims, HasPassage: true})
 		}
-		modelVersions := []string{embedding.Model, entities.Model, claims.Model}
-		processed = append(processed, processedPage{Page: page, Normalized: normalized, Embedding: values, Model: strings.Join(uniqueStrings(modelVersions), ","), Entities: processedEntities, Claims: processedClaims})
 	}
-	if len(processed) == 0 {
+	if len(processed) == 0 || pageCountFromProcessed(processed) == 0 {
 		return nil, ErrValidation
 	}
 	return processed, nil
+}
+
+// persistPageEvidence commits the physical PDF readings before candidate
+// extraction. A downstream AI failure must not erase OCR work a reviewer can
+// already inspect. The lease is checked in the transaction that records it.
+func (s *Service) persistPageEvidence(ctx context.Context, claim Claim, file sourceFileRecord, pages []Page) error {
+	containsEvidence := false
+	for _, page := range pages {
+		if len(page.Readings) > 0 {
+			containsEvidence = true
+			break
+		}
+	}
+	if !containsEvidence {
+		return nil
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if s.Jobs == nil {
+		return ErrQueueUnavailable
+	}
+	if err := s.Jobs.HoldLease(ctx, tx, claim.Lease); err != nil {
+		return err
+	}
+	for _, page := range pages {
+		if len(page.Readings) == 0 {
+			continue
+		}
+		selectedMethod := "unknown"
+		pageText := page.Text
+		regions := make([]map[string]any, 0)
+		for _, reading := range page.Readings {
+			if reading.Selected {
+				selectedMethod = reading.Method
+				pageText = reading.Text
+			}
+			for _, region := range reading.Regions {
+				regions = append(regions, map[string]any{
+					"method": reading.Method, "kind": region.Kind, "text": region.Text,
+					"x": region.X, "y": region.Y, "width": region.Width, "height": region.Height,
+					"confidence": region.Confidence,
+				})
+			}
+		}
+		status := "readable"
+		if strings.TrimSpace(pageText) == "" {
+			status = "unreadable"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO source_page_evidence (run_id, source_id, source_file_id, page_number, page_width, page_height, extraction_status, selected_method, text_ar, readings, regions, region_count)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		`, file.RunID, file.SourceID, file.FileID, page.Number, page.Width, page.Height, status, selectedMethod, pageText, mustJSON(page.Readings), mustJSON(regions), len(regions)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE source_processing_runs
+		SET stage = 'extracting_candidates', page_count = GREATEST(page_count, $1), updated_at = now()
+		WHERE id = $2 AND status = 'running'
+	`, pageCountFromExtracted(pages), file.RunID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func splitPage(page Page, maxRunes int) []Page {
+	if maxRunes <= 0 {
+		maxRunes = 3500
+	}
+	runes := []rune(page.Text)
+	if len(runes) <= maxRunes {
+		page.StartOffset = 0
+		page.EndOffset = len(runes)
+		return []Page{page}
+	}
+	segments := make([]Page, 0, (len(runes)+maxRunes-1)/maxRunes)
+	for start := 0; start < len(runes); {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		if end < len(runes) {
+			for candidate := end; candidate > start+maxRunes*3/4; candidate-- {
+				if runes[candidate-1] == '\n' || runes[candidate-1] == ' ' || runes[candidate-1] == '\t' {
+					end = candidate
+					break
+				}
+			}
+		}
+		segment := page
+		segment.Text = string(runes[start:end])
+		segment.StartOffset = start
+		segment.EndOffset = end
+		if start > 0 {
+			segment.Readings = nil
+		}
+		segments = append(segments, segment)
+		start = end
+	}
+	return segments
+}
+
+func validateExtractedPages(pages []Page) error {
+	if len(pages) == 0 || len(pages) > MaxPages {
+		return ErrValidation
+	}
+	totalRegions := 0
+	totalTextBytes := 0
+	lastPage := 0
+	for _, page := range pages {
+		if page.Number < 1 || page.Number > MaxPages || page.Number < lastPage || utf8.RuneCountInString(page.Text) > 200000 ||
+			page.Width < 0 || page.Height < 0 || math.IsNaN(page.Width) || math.IsNaN(page.Height) || math.IsInf(page.Width, 0) || math.IsInf(page.Height, 0) ||
+			len(page.Readings) > 8 {
+			return ErrValidation
+		}
+		lastPage = page.Number
+		totalTextBytes += len(page.Text)
+		if totalTextBytes > maxDocumentTextBytes {
+			return ErrValidation
+		}
+		selectedReadings := 0
+		for _, reading := range page.Readings {
+			if len(reading.Regions) > MaxPageRegions || len(reading.Text) > maxPageTextBytes || len(reading.Method) > 64 || len(reading.Model) > 256 {
+				return ErrValidation
+			}
+			if reading.Selected {
+				selectedReadings++
+				if reading.Text != page.Text {
+					return ErrValidation
+				}
+			}
+			totalTextBytes += len(reading.Text)
+			if totalTextBytes > maxDocumentTextBytes {
+				return ErrValidation
+			}
+			if reading.Confidence != nil && (math.IsNaN(*reading.Confidence) || math.IsInf(*reading.Confidence, 0) || *reading.Confidence < 0 || *reading.Confidence > 1) {
+				return ErrValidation
+			}
+			totalRegions += len(reading.Regions)
+			if totalRegions > MaxDocumentRegions {
+				return ErrValidation
+			}
+			for _, region := range reading.Regions {
+				totalTextBytes += 2 * len(region.Text)
+				if totalTextBytes > maxDocumentTextBytes {
+					return ErrValidation
+				}
+				if math.IsNaN(region.X) || math.IsNaN(region.Y) || math.IsNaN(region.Width) || math.IsNaN(region.Height) ||
+					math.IsInf(region.X, 0) || math.IsInf(region.Y, 0) || math.IsInf(region.Width, 0) || math.IsInf(region.Height, 0) ||
+					region.X < 0 || region.Y < 0 || region.Width < 0 || region.Height < 0 ||
+					region.X > 1 || region.Y > 1 || region.Width > 1 || region.Height > 1 ||
+					region.X+region.Width > 1.001 || region.Y+region.Height > 1.001 {
+					return ErrValidation
+				}
+				if region.Confidence != nil && (math.IsNaN(*region.Confidence) || math.IsInf(*region.Confidence, 0) || *region.Confidence < 0 || *region.Confidence > 1) {
+					return ErrValidation
+				}
+			}
+		}
+		if len(page.Readings) > 0 && selectedReadings != 1 {
+			return ErrValidation
+		}
+	}
+	return nil
 }
 
 func (s *Service) resolveEntity(ctx context.Context, value string) (entityLink, error) {
@@ -434,21 +806,46 @@ func (s *Service) persistProcessedPages(ctx context.Context, claim Claim, file s
 		}
 		return err
 	}
+	var documentKind string
+	if err := tx.QueryRow(ctx, `SELECT document_kind FROM source_files WHERE id = $1 FOR UPDATE`, file.FileID).Scan(&documentKind); err != nil {
+		return err
+	}
+	if documentKind == "family_chart" {
+		// Close the race where an ordinary OCR job started before a reviewer
+		// declared the file a chart. Its page evidence may commit, but generated
+		// passages and candidates do not enter source review or search.
+		for index := range pages {
+			pages[index].HasPassage = false
+			pages[index].Entities = nil
+			pages[index].Claims = nil
+			pages[index].Embedding = nil
+			pages[index].Model = ""
+		}
+	}
 	var sequence int
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sequence_number), 0) FROM source_passages WHERE source_id = $1`, lockedSource).Scan(&sequence); err != nil {
 		return err
 	}
 	candidateCount := 0
+	passageCount := 0
 	modelVersions := make([]string, 0, len(pages))
 	for _, page := range pages {
+		if !page.HasPassage {
+			continue
+		}
 		sequence++
+		passageCount++
 		passageID := uuid.New()
 		pageValue := int32(page.Page.Number)
 		locator := fmt.Sprintf("صفحة %d", page.Page.Number)
+		pageEvidenceID, err := pageEvidenceIDForPassage(ctx, tx, file, page.Page)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO source_passages (id, source_id, source_file_id, sequence_number, page_number, locator_ar, text_ar, normalized_text_ar, start_offset, end_offset, embedding)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		`, passageID, lockedSource, file.FileID, sequence, pageValue, locator, page.Page.Text, page.Normalized, page.Page.StartOffset, page.Page.EndOffset, pgvector.NewVector(page.Embedding)); err != nil {
+			INSERT INTO source_passages (id, source_id, source_file_id, sequence_number, page_number, locator_ar, text_ar, normalized_text_ar, start_offset, end_offset, embedding, source_processing_run_id, source_page_evidence_id, source_page_review_revision_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		`, passageID, lockedSource, file.FileID, sequence, pageValue, locator, page.Page.Text, page.Normalized, page.Page.StartOffset, page.Page.EndOffset, pgvector.NewVector(page.Embedding), file.RunID, nullablePassageUUID(pageEvidenceID), nullablePassageUUID(pageReviewRevisionForPassage(file, page.Page))); err != nil {
 			return err
 		}
 		if page.Model != "" {
@@ -462,9 +859,9 @@ func (s *Service) persistProcessedPages(ctx context.Context, claim Claim, file s
 			normalized := identity.NormalizeArabicName(rawText)
 			dedupeKey := candidateDedupeKey("entity", normalized, sequence)
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO source_candidates (source_id, source_file_id, source_passage_id, candidate_type, raw_text_ar, normalized_text_ar, proposed_entity_type, proposed_entity_id, proposed_entity_name_ar, proposed_match_score, proposed_match_matched_on, confidence, rationale_ar, payload, model_version, dedupe_key, status)
-				VALUES ($1, $2, $3, 'entity', $4, $5, NULLIF($6, ''), $7, NULLIF($8, ''), $9, NULLIF($10, ''), $11, $12, $13, $14, $15, $16)
-			`, lockedSource, file.FileID, passageID, rawText, normalized, entity.Link.Type, nullableUUIDString(entity.Link.ID), entity.Link.Name, nullableScore(entity.Link), entity.Link.MatchedOn, entity.Candidate.Confidence, entity.Candidate.Rationale, mustJSON(map[string]any{"pageNumber": page.Page.Number, "passageId": passageID.String(), "entityType": entity.Candidate.EntityType, "status": entity.Candidate.Status}), page.Model, dedupeKey, candidateStatus(entity.Candidate.Status)); err != nil {
+				INSERT INTO source_candidates (source_id, source_file_id, source_passage_id, candidate_type, raw_text_ar, normalized_text_ar, proposed_entity_type, proposed_entity_id, proposed_entity_name_ar, proposed_match_score, proposed_match_matched_on, confidence, rationale_ar, payload, model_version, dedupe_key, status, source_processing_run_id)
+				VALUES ($1, $2, $3, 'entity', $4, $5, NULLIF($6, ''), $7, NULLIF($8, ''), $9, NULLIF($10, ''), $11, $12, $13, $14, $15, $16, $17)
+			`, lockedSource, file.FileID, passageID, rawText, normalized, entity.Link.Type, nullableUUIDString(entity.Link.ID), entity.Link.Name, nullableScore(entity.Link), entity.Link.MatchedOn, entity.Candidate.Confidence, entity.Candidate.Rationale, mustJSON(map[string]any{"pageNumber": page.Page.Number, "passageId": passageID.String(), "entityType": entity.Candidate.EntityType, "status": entity.Candidate.Status}), page.Model, dedupeKey, candidateStatus(entity.Candidate.Status), file.RunID); err != nil {
 				return err
 			}
 			candidateCount++
@@ -476,33 +873,46 @@ func (s *Service) persistProcessedPages(ctx context.Context, claim Claim, file s
 			}
 			statementID := uuid.New()
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO source_statements (id, source_id, source_file_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status)
-				VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'needs_review')
-			`, statementID, lockedSource, file.FileID, passageID, page.Page.Text, locator); err != nil {
+				INSERT INTO source_statements (id, source_id, source_file_id, source_passage_id, statement_text_ar, locator_ar, extraction_method, review_status, source_processing_run_id)
+				VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'needs_review', $7)
+			`, statementID, lockedSource, file.FileID, passageID, page.Page.Text, locator, file.RunID); err != nil {
 				return err
 			}
 			normalized := identity.NormalizeArabicName(rawText)
 			dedupeKey := candidateDedupeKey("claim", normalized, sequence)
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO source_candidates (source_id, source_file_id, source_passage_id, source_statement_id, candidate_type, raw_text_ar, normalized_text_ar, subject_text_ar, predicate_ar, object_text_ar, subject_entity_type, subject_entity_id, object_entity_type, object_entity_id, confidence, rationale_ar, payload, model_version, dedupe_key, status)
-				VALUES ($1, $2, $3, $4, 'claim', $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), $13, $14, $15, $16, $17, $18, $19)
-			`, lockedSource, file.FileID, passageID, statementID, rawText, normalized, claim.Candidate.SubjectText, claim.Candidate.Predicate, claim.Candidate.ObjectText, claim.Subject.Type, nullableUUIDString(claim.Subject.ID), claim.Object.Type, nullableUUIDString(claim.Object.ID), claim.Candidate.Confidence, claim.Candidate.Rationale, mustJSON(map[string]any{"pageNumber": page.Page.Number, "passageId": passageID.String(), "status": claim.Candidate.Status}), page.Model, dedupeKey, candidateStatus(claim.Candidate.Status)); err != nil {
+				INSERT INTO source_candidates (source_id, source_file_id, source_passage_id, source_statement_id, candidate_type, raw_text_ar, normalized_text_ar, subject_text_ar, predicate_ar, object_text_ar, subject_entity_type, subject_entity_id, object_entity_type, object_entity_id, confidence, rationale_ar, payload, model_version, dedupe_key, status, source_processing_run_id)
+				VALUES ($1, $2, $3, $4, 'claim', $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), $13, $14, $15, $16, $17, $18, $19, $20)
+			`, lockedSource, file.FileID, passageID, statementID, rawText, normalized, claim.Candidate.SubjectText, claim.Candidate.Predicate, claim.Candidate.ObjectText, claim.Subject.Type, nullableUUIDString(claim.Subject.ID), claim.Object.Type, nullableUUIDString(claim.Object.ID), claim.Candidate.Confidence, claim.Candidate.Rationale, mustJSON(map[string]any{"pageNumber": page.Page.Number, "passageId": passageID.String(), "status": claim.Candidate.Status}), page.Model, dedupeKey, candidateStatus(claim.Candidate.Status), file.RunID); err != nil {
 				return err
 			}
 			candidateCount++
 		}
 	}
+	supersededCount, err := supersedePriorCandidates(ctx, tx, file, pages)
+	if err != nil {
+		return err
+	}
+	if supersededCount > 0 {
+		if err := writeAudit(ctx, tx, nil, "source_processing_candidates_superseded", "source_file", file.FileID, nil, map[string]any{"runId": file.RunID.String(), "count": supersededCount, "runKind": file.RunKind}); err != nil {
+			return err
+		}
+	}
 	modelVersion := strings.Join(uniqueStrings(modelVersions), ",")
+	completedPageCount := pageCountFromProcessed(pages)
+	if file.RunKind == "reviewed_page" {
+		completedPageCount = 1
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE source_processing_runs SET status = 'succeeded', stage = 'complete', page_count = $1, passage_count = $2, candidate_count = $3, model_version = NULLIF($4, ''), completed_at = now(), error = NULL, updated_at = now()
 		WHERE id = $5
-	`, pageCountFromProcessed(pages), len(pages), candidateCount, modelVersion, file.RunID); err != nil {
+	`, completedPageCount, passageCount, candidateCount, modelVersion, file.RunID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE source_files SET processing_status = 'succeeded', processing_error = NULL, processed_at = now() WHERE id = $1`, file.FileID); err != nil {
 		return err
 	}
-	if err := writeAudit(ctx, tx, nil, "source_processing_completed", "source_file", file.FileID, nil, map[string]any{"pageCount": pageCountFromProcessed(pages), "passageCount": len(pages), "candidateCount": candidateCount, "modelVersion": modelVersion}); err != nil {
+	if err := writeAudit(ctx, tx, nil, "source_processing_completed", "source_file", file.FileID, nil, map[string]any{"runId": file.RunID.String(), "runKind": file.RunKind, "pageCount": completedPageCount, "passageCount": passageCount, "candidateCount": candidateCount, "modelVersion": modelVersion}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -605,6 +1015,16 @@ func (e *unrecordedFailureError) Refusal() error {
 
 func safeProcessingError(cause error) string {
 	switch {
+	case errors.Is(cause, ErrPDFToolsUnavailable):
+		return "PDF text processing tools are not installed on the source worker"
+	case errors.Is(cause, ErrArabicOCRUnavailable):
+		return "Arabic OCR is unavailable; check Tesseract and its ara+eng language data"
+	case errors.Is(cause, ErrPDFProcessingTimedOut):
+		return "PDF processing exceeded its time limit; review the original or upload a smaller document"
+	case errors.Is(cause, ErrPDFProcessingFailed):
+		return "A PDF page could not be read; upload a valid, unlocked copy and review the original"
+	case errors.Is(cause, ErrAIUnavailable):
+		return "AI extraction is unavailable; saved PDF readings remain available for review"
 	case errors.Is(cause, ErrUnsupportedContent):
 		return cause.Error()
 	case errors.Is(cause, ErrUnsupportedDocument):
@@ -626,6 +1046,22 @@ func parseJobPayload(raw json.RawMessage) (JobPayload, error) {
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(payload.SourceFileID)); err != nil {
 		return JobPayload{}, ErrValidation
+	}
+	if strings.TrimSpace(payload.RunID) != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(payload.RunID)); err != nil {
+			return JobPayload{}, ErrValidation
+		}
+	}
+	if payload.RunKind != "" && payload.RunKind != "document" && payload.RunKind != "reviewed_page" {
+		return JobPayload{}, ErrValidation
+	}
+	if payload.RenderDPI != 0 && payload.RenderDPI != 300 && payload.RenderDPI != 400 {
+		return JobPayload{}, ErrValidation
+	}
+	if payload.PageReviewRevisionID != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(payload.PageReviewRevisionID)); err != nil {
+			return JobPayload{}, ErrValidation
+		}
 	}
 	return payload, nil
 }
@@ -694,4 +1130,11 @@ func pageCountFromProcessed(pages []processedPage) int {
 		return 0
 	}
 	return pages[len(pages)-1].Page.Number
+}
+
+func pageCountFromExtracted(pages []Page) int {
+	if len(pages) == 0 {
+		return 0
+	}
+	return pages[len(pages)-1].Number
 }

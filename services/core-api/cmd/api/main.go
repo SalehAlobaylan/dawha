@@ -13,6 +13,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/ai"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/httpapi"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/sourceprocessing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/db"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/ratelimit"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
@@ -93,6 +94,7 @@ func main() {
 			SecureCookies: os.Getenv("APP_ENV") == "production",
 			Jobs:          jobsService,
 			AI:            aiClient,
+			ChartVision:   sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
 			SourceStorage: sourceStore,
 			RateLimits:    rateLimits,
 			Metrics:       metrics,

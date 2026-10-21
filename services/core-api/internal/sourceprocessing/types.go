@@ -16,23 +16,30 @@ import (
 
 const (
 	SourceProcessJobType = "source_process"
+	SourceChartAnalysisJobType = "source_chart_analysis"
 	EmbeddingDimensions  = 1536
 	MaxUploadBytes       = 25 << 20
 	MaxPages             = 200
-	MaxCandidates        = 5000
-	MaxCandidatesPerPage = 100
+	MaxCandidates        = 10000
+	MaxCandidatesPerPage = 1000
+	MaxPageRegions       = 6000
+	MaxDocumentRegions   = 100000
 )
 
 var (
-	ErrDatabaseUnavailable = errors.New("source processing database is unavailable")
-	ErrStorageUnavailable  = errors.New("source processing storage is unavailable")
-	ErrAIUnavailable       = errors.New("source processing AI service is unavailable")
-	ErrQueueUnavailable    = errors.New("source processing queue is unavailable")
-	ErrValidation          = errors.New("source processing input is invalid")
-	ErrNotFound            = errors.New("source processing resource was not found")
-	ErrForbidden           = errors.New("source processing access is forbidden")
-	ErrConflict            = errors.New("source processing state conflict")
-	ErrUnsupportedDocument = errors.New("source document format is not supported")
+	ErrDatabaseUnavailable   = errors.New("source processing database is unavailable")
+	ErrStorageUnavailable    = errors.New("source processing storage is unavailable")
+	ErrAIUnavailable         = errors.New("source processing AI service is unavailable")
+	ErrQueueUnavailable      = errors.New("source processing queue is unavailable")
+	ErrValidation            = errors.New("source processing input is invalid")
+	ErrNotFound              = errors.New("source processing resource was not found")
+	ErrForbidden             = errors.New("source processing access is forbidden")
+	ErrConflict              = errors.New("source processing state conflict")
+	ErrUnsupportedDocument   = errors.New("source document format is not supported")
+	ErrPDFToolsUnavailable   = errors.New("local PDF text extraction tools are unavailable")
+	ErrArabicOCRUnavailable  = errors.New("local Arabic OCR is unavailable")
+	ErrPDFProcessingFailed   = errors.New("local PDF page processing failed")
+	ErrPDFProcessingTimedOut = errors.New("local PDF processing exceeded its time limit")
 	// ErrLinkExpired and ErrLinkNotAuthorized are what a signed object URL says
 	// when it is presented late or altered. They are separate errors because a
 	// client can act on them differently - a retry for one, a re-request for the
@@ -49,8 +56,12 @@ var (
 )
 
 type JobPayload struct {
-	SourceID     string `json:"source_id"`
-	SourceFileID string `json:"source_file_id"`
+	SourceID             string `json:"source_id"`
+	SourceFileID         string `json:"source_file_id"`
+	RunID                string `json:"run_id,omitempty"`
+	RunKind              string `json:"run_kind,omitempty"`
+	RenderDPI            int    `json:"render_dpi,omitempty"`
+	PageReviewRevisionID string `json:"page_review_revision_id,omitempty"`
 }
 
 // JobRequestIDFields reads the request id the enqueueing upload stamped into this
@@ -91,21 +102,25 @@ type FileView struct {
 }
 
 type ProcessingRunView struct {
-	ID             string     `json:"id"`
-	SourceID       string     `json:"sourceId"`
-	SourceFileID   string     `json:"sourceFileId"`
-	JobID          string     `json:"jobId,omitempty"`
-	Status         string     `json:"status"`
-	Stage          string     `json:"stage"`
-	PageCount      int        `json:"pageCount"`
-	PassageCount   int        `json:"passageCount"`
-	CandidateCount int        `json:"candidateCount"`
-	ModelVersion   string     `json:"modelVersion,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	StartedAt      *time.Time `json:"startedAt,omitempty"`
-	CompletedAt    *time.Time `json:"completedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID                   string          `json:"id"`
+	SourceID             string          `json:"sourceId"`
+	SourceFileID         string          `json:"sourceFileId"`
+	JobID                string          `json:"jobId,omitempty"`
+	Status               string          `json:"status"`
+	Stage                string          `json:"stage"`
+	RunKind              string          `json:"runKind"`
+	PipelineConfig       json.RawMessage `json:"pipelineConfig"`
+	TriggeredBy          string          `json:"triggeredBy,omitempty"`
+	PageReviewRevisionID string          `json:"pageReviewRevisionId,omitempty"`
+	PageCount            int             `json:"pageCount"`
+	PassageCount         int             `json:"passageCount"`
+	CandidateCount       int             `json:"candidateCount"`
+	ModelVersion         string          `json:"modelVersion,omitempty"`
+	Error                string          `json:"error,omitempty"`
+	StartedAt            *time.Time      `json:"startedAt,omitempty"`
+	CompletedAt          *time.Time      `json:"completedAt,omitempty"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
 }
 
 type CandidateView struct {
@@ -113,6 +128,7 @@ type CandidateView struct {
 	SourceID               string                `json:"sourceId"`
 	SourceFileID           string                `json:"sourceFileId"`
 	SourcePassageID        string                `json:"sourcePassageId"`
+	ProcessingRunID        string                `json:"processingRunId,omitempty"`
 	SourceStatementID      string                `json:"sourceStatementId,omitempty"`
 	CandidateType          string                `json:"candidateType"`
 	RawTextAR              string                `json:"rawTextAr"`
@@ -188,6 +204,17 @@ type ReviewInput struct {
 	NoteAR   string `json:"note_ar"`
 }
 
+// PageReviewInput records an immutable human transcription revision for one
+// extracted page. ExpectedRevision makes concurrent edits explicit instead of
+// silently replacing another reviewer's work.
+type PageReviewInput struct {
+	ExpectedPageEvidenceID string `json:"expected_page_evidence_id"`
+	ExpectedRevision       int    `json:"expected_revision"`
+	Status                 string `json:"status"`
+	TextAR                 string `json:"text_ar"`
+	NoteAR                 string `json:"note_ar"`
+}
+
 type JobEnqueuer interface {
 	Enqueue(context.Context, jobs.EnqueueInput) (jobs.EnqueueResult, error)
 }
@@ -215,13 +242,43 @@ type ExtractInput struct {
 	Reader      io.Reader
 	ContentType string
 	Filename    string
+	RenderDPI   int
 }
 
 type Page struct {
-	Number      int
-	Text        string
-	StartOffset int
-	EndOffset   int
+	Number           int           `json:"number"`
+	Text             string        `json:"text"`
+	PageEvidenceID   string        `json:"pageEvidenceId,omitempty"`
+	ReviewRevisionID string        `json:"reviewRevisionId,omitempty"`
+	StartOffset      int           `json:"startOffset"`
+	EndOffset        int           `json:"endOffset"`
+	Width            float64       `json:"width"`
+	Height           float64       `json:"height"`
+	Readings         []PageReading `json:"readings"`
+}
+
+// PageReading preserves one independent reading of a physical page. Confidence
+// is the provider's raw score, retained for comparison rather than treated as a
+// calibrated probability.
+type PageReading struct {
+	Method     string       `json:"method"`
+	Model      string       `json:"model"`
+	Text       string       `json:"text"`
+	Confidence *float64     `json:"confidence,omitempty"`
+	Selected   bool         `json:"selected"`
+	Regions    []PageRegion `json:"regions"`
+}
+
+// PageRegion uses normalized top-left page coordinates so native PDF and OCR
+// boxes can be displayed against the same original page.
+type PageRegion struct {
+	Kind       string   `json:"kind"`
+	Text       string   `json:"text"`
+	X          float64  `json:"x"`
+	Y          float64  `json:"y"`
+	Width      float64  `json:"width"`
+	Height     float64  `json:"height"`
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 type Service struct {
@@ -233,6 +290,7 @@ type Service struct {
 	Jobs      LeaseQueue
 	AI        ai.Provider
 	Extractor Extractor
+	ChartVision ChartVisionProvider
 }
 
 type processedEntity struct {
@@ -253,6 +311,7 @@ type processedPage struct {
 	Model      string
 	Entities   []processedEntity
 	Claims     []processedClaim
+	HasPassage bool
 }
 
 type entityLink struct {

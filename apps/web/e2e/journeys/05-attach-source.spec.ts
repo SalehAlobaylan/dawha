@@ -5,10 +5,9 @@ import { API_URL, newAccount, registerThroughUi, waitForApi, waitForProcessing }
 /**
  * Journey 7 of the declared V1 list: attach a source.
  *
- * The file is a .txt upload because that is what the source-format contract
- * accepts: text/* plus JSON and XML, everything else refused with the same list
- * the API would give. The journey covers both halves, because a format contract
- * nobody refuses is a contract that does not exist.
+ * Text sources use the deterministic text path. Arabic PDFs are also accepted
+ * and queued for the local page evidence pipeline; unsupported image formats
+ * remain a clear, pre-upload refusal.
  */
 
 /** A two-page Arabic manuscript, split the way the text extractor splits pages. */
@@ -38,7 +37,7 @@ test.describe("attach a source", () => {
 
     // The panel states the accepted formats before the caller picks a file, so a
     // refusal is never a surprise.
-    await expect(page.getByText("الصيغ المدعومة: نص (text/*) وملفات JSON و XML")).toBeVisible();
+    await expect(page.getByText(/الصيغ المدعومة: نص و JSON و XML.*PDF/)).toBeVisible();
 
     const sourceId = await sourceIdOf(page, title);
     await page.locator('input[type="file"]').setInputFiles({
@@ -102,12 +101,10 @@ test.describe("attach a source", () => {
     expect(outcome).toBe("succeeded");
   });
 
-  test("an unsupported format is refused with the list of accepted ones", async ({ page, request }) => {
+  test("PDF is offered and an unsupported image is refused with the accepted list", async ({ page, request }) => {
     await waitForApi(request);
     const account = newAccount("source-refuse");
     await registerThroughUi(page, account);
-    await createSourceThroughUi(page, account);
-
     const sourceId = await createSourceThroughUi(page, account);
     const fileInput = page.locator(".source-processing-panel input[type=\"file\"]");
     await fileInput.setInputFiles({
@@ -115,24 +112,37 @@ test.describe("attach a source", () => {
       mimeType: "application/pdf",
       buffer: Buffer.from("%PDF-1.7\nbinary", "utf8"),
     });
+    await expect(page.getByRole("button", { name: /رفع ومعالجة/ })).toBeEnabled();
 
-    // The form refuses the file before it is sent, naming the refused format and
-    // listing what is accepted, so the caller never has to guess.
+    await fileInput.setInputFiles({
+      name: "سجل.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("\x89PNG\r\n\x1a\n", "binary"),
+    });
+
+    // The form refuses the unsupported image before it is sent, naming the
+    // refused format and listing what is accepted.
+    //
+    // The browser names the accepted formats the way the panel names them, in
+    // Arabic, and no longer repeats the MIME token beside "نص" - "نص" already
+    // says it. The API below still answers in MIME types, and that difference
+    // is asserted rather than papered over: the two surfaces do not have to
+    // speak the same vocabulary, and the browser one is the one a reader reads.
     const refusal = page.locator(".source-processing-panel").getByRole("status");
-    await expect(refusal).toContainText("application/pdf");
-    await expect(refusal).toContainText("text/*");
+    await expect(refusal).toContainText("image/png");
+    await expect(refusal).toContainText("نص و JSON و XML");
     await expect(refusal).toContainText("JSON");
     await expect(refusal).toContainText("XML");
+    await expect(refusal).toContainText("PDF");
     await expect(page.getByRole("button", { name: /رفع ومعالجة/ })).toBeDisabled();
 
-    // The API refuses the same file the same way, so a caller that skips the
-    // form cannot get further than the browser could.
+    // The API also refuses the unsupported image if a caller skips the form.
     const direct = await page.request.post(`${API_URL}/api/v1/sources/${sourceId}/files`, {
       multipart: {
         file: {
-          name: "سجل.pdf",
-          mimeType: "application/pdf",
-          buffer: Buffer.from("%PDF-1.7\nbinary", "utf8"),
+          name: "سجل.png",
+          mimeType: "image/png",
+          buffer: Buffer.from("\x89PNG\r\n\x1a\n", "binary"),
         },
       },
     });
@@ -140,10 +150,11 @@ test.describe("attach a source", () => {
     // matters is that it is a refusal and that the body teaches the caller.
     expect(direct.status()).toBe(415);
     const body = (await direct.json()) as { error?: string };
-    expect(body.error ?? "").toContain("application/pdf");
+    expect(body.error ?? "").toContain("image/png");
     expect(body.error ?? "").toContain("text/*");
     expect(body.error ?? "").toContain("application/json");
     expect(body.error ?? "").toContain("application/xml");
+    expect(body.error ?? "").toContain("application/pdf");
   });
 });
 

@@ -257,7 +257,7 @@ func TestAWorkerThatLostItsLeaseMidwayLeavesTheRunForTheNextAttempt(t *testing.T
 	}
 	processed := make([]processedPage, 0, len(pages))
 	for _, page := range pages {
-		processed = append(processed, processedPage{Page: page, Normalized: strings.TrimSpace(page.Text), Embedding: testEmbedding(), Model: "p006-stub"})
+		processed = append(processed, processedPage{Page: page, Normalized: strings.TrimSpace(page.Text), Embedding: testEmbedding(), Model: "p006-stub", HasPassage: true})
 	}
 	fixture.Exec(`UPDATE jobs SET lease_token = gen_random_uuid(), locked_by = 'p006-taker' WHERE id = $1`, job.ID)
 

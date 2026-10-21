@@ -16,9 +16,12 @@ func canReviewSource(ctx context.Context, q queryExecutor, sourceID, actorID uui
 	err := q.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM sources s
-			WHERE s.id = $1 AND EXISTS (
-				SELECT 1 FROM user_roles ur
-				WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin')
+			WHERE s.id = $1 AND (
+				s.created_by = $2
+				OR EXISTS (
+					SELECT 1 FROM user_roles ur
+					WHERE ur.user_id = $2 AND ur.role IN ('collaborator', 'researcher', 'moderator', 'admin')
+				)
 			)
 		)
 	`, sourceID, actorID).Scan(&allowed)

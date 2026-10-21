@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// TestSupportedContentTypesMatrix is the V1 format decision in one place: every
-// media type the product advertises is accepted, and every format outside the
-// text extractor is refused. The same matrix decides the API error copy, the
-// worker guard, and the UI copy, so a new row here is a product decision.
+// TestSupportedContentTypesMatrix keeps the shared upload contract aligned:
+// every advertised format is accepted, and unsupported formats are refused.
 func TestSupportedContentTypesMatrix(t *testing.T) {
 	cases := []struct {
 		contentType string
@@ -31,7 +29,7 @@ func TestSupportedContentTypesMatrix(t *testing.T) {
 		{"application/json", true},
 		{"application/json; charset=utf-8", true},
 		{"application/xml", true},
-		{"application/pdf", false},
+		{"application/pdf", true},
 		{"image/jpeg", false},
 		{"image/png", false},
 		{"image/tiff", false},
@@ -66,7 +64,7 @@ func TestSupportedContentTypesRefusedByValidator(t *testing.T) {
 		{"application/json", `{"key":"قيمة"}`, true},
 		{"application/xml", "<doc>نص</doc>", true},
 		{"text/xml", "<doc>نص</doc>", true},
-		{"application/pdf", "%PDF-1.7\nbinary", false},
+		{"application/pdf", "%PDF-1.7\nbinary", true},
 		{"image/png", "\x89PNG\r\n\x1a\n", false},
 		{"image/jpeg", "\xFF\xD8\xFF\xE0", false},
 		{"image/tiff", "II*\x00binary", false},
@@ -87,7 +85,7 @@ func TestSupportedContentTypesRefusedByValidator(t *testing.T) {
 }
 
 func TestUnsupportedContentErrorNamesTheSupportedFormats(t *testing.T) {
-	_, err := validateUploadInput(UploadInput{Filename: "scan.pdf", ContentType: "application/pdf", Content: []byte("%PDF-1.7")})
+	_, err := validateUploadInput(UploadInput{Filename: "archive.zip", ContentType: "application/zip", Content: []byte("PK\x03\x04")})
 	if !errors.Is(err, ErrUnsupportedContent) {
 		t.Fatalf("error = %v, want ErrUnsupportedContent", err)
 	}
@@ -98,7 +96,7 @@ func TestUnsupportedContentErrorNamesTheSupportedFormats(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("error = %v, want an *UnsupportedContentError", err)
 	}
-	for _, fragment := range []string{"application/pdf", "text/*", "application/json", "application/xml"} {
+	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf"} {
 		if !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("message %q does not mention %q", err.Error(), fragment)
 		}
@@ -109,18 +107,19 @@ func TestUnsupportedContentErrorNamesTheSupportedFormats(t *testing.T) {
 }
 
 func TestValidateUploadInputSniffsContentAgainstTheDeclaredType(t *testing.T) {
-	// A text/plain claim over PDF bytes is refused, not stored on trust.
+	// A text/plain claim over PDF bytes is refused instead of being stored under
+	// a misleading type. The accepted format list names the detected PDF type.
 	_, err := validateUploadInput(UploadInput{Filename: "report.txt", ContentType: "text/plain", Content: []byte("%PDF-1.7\n\x00\x01binary")})
 	if !errors.Is(err, ErrUnsupportedContent) || !strings.Contains(err.Error(), "application/pdf") {
-		t.Fatalf("pdf claimed as text = %v, want a mismatch naming application/pdf", err)
+		t.Fatalf("pdf claimed as text = %v, want a type mismatch naming application/pdf", err)
 	}
-	// The same refusal holds when the client declares nothing at all.
-	_, err = validateUploadInput(UploadInput{Filename: "report.txt", Content: []byte("%PDF-1.7\n\x00\x01binary")})
-	if !errors.Is(err, ErrUnsupportedContent) {
-		t.Fatalf("undeclared pdf = %v, want ErrUnsupportedContent", err)
+	// The same sniffing applies when the client declares nothing at all.
+	input, err := validateUploadInput(UploadInput{Filename: "report.txt", Content: []byte("%PDF-1.7\n\x00\x01binary")})
+	if err != nil || input.ContentType != "application/pdf" {
+		t.Fatalf("undeclared pdf = %+v, %v, want accepted application/pdf", input, err)
 	}
 	// An undeclared text file is read from its content instead of being refused.
-	input, err := validateUploadInput(UploadInput{Filename: "notes.txt", ContentType: "application/octet-stream", Content: []byte("نص عربي")})
+	input, err = validateUploadInput(UploadInput{Filename: "notes.txt", ContentType: "application/octet-stream", Content: []byte("نص عربي")})
 	if err != nil {
 		t.Fatalf("undeclared text = %v, want accepted", err)
 	}
@@ -183,7 +182,7 @@ func TestSafeFilenameKeepsStorageKeysInsideTheSource(t *testing.T) {
 // cannot import the Go list, so this test is what keeps the two from drifting:
 // every media type the panel advertises has to be inside the matrix, every
 // media type in the matrix has to reach the panel, and the file picker may not
-// offer an extension the extractor cannot read.
+// offer an extension the configured extraction paths cannot read.
 func TestSourceFormatPanelMatchesTheSharedMatrix(t *testing.T) {
 	panel := readSourceFormatPanel(t)
 	for _, supported := range SupportedContentTypes() {
@@ -213,7 +212,7 @@ func TestSourceFormatPanelMatchesTheSharedMatrix(t *testing.T) {
 	if !regexp.MustCompile(`accept=\{SUPPORTED_UPLOAD_ACCEPT\}`).MatchString(panel) {
 		t.Fatal("the source file input must take its accept list from SUPPORTED_UPLOAD_ACCEPT")
 	}
-	refusedExtensions := []string{".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".gz", ".bin", ".exe", ".mp3", ".mp4"}
+	refusedExtensions := []string{".png", ".jpg", ".jpeg", ".tif", ".tiff", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".gz", ".bin", ".exe", ".mp3", ".mp4"}
 	for _, entry := range strings.Split(accept, ",") {
 		entry = strings.TrimSpace(entry)
 		if !strings.HasPrefix(entry, ".") {

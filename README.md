@@ -28,12 +28,12 @@ its history attached.
 | Node.js 22 or newer | the web app, the E2E suite, the root scripts | CI pins 22; this checkout was verified on 25.6.1 |
 | Python 3.12 or newer, with `venv` and a working `pip` | the AI research service | `pyproject.toml` requires >=3.12; CI runs 3.12; this checkout was verified on 3.14.7 |
 | Docker with Compose | PostgreSQL 16 + PostGIS + pgvector | `docker compose version` |
+| Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and Tesseract with `ara` + `eng` data (optional) | Local PDF page extraction and Arabic OCR | Poppler is required for PDFs; Tesseract Arabic data is required for scanned pages and the second reading. Text/JSON/XML sources do not need them |
 | `sqlc` (optional) | only for `make generated-check` and `make sqlc` | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1` |
 | Playwright browsers (optional) | only for `make e2e`, installed once per machine | `npx playwright install chromium` |
 
-The first four are required. The last two are prerequisites for one target each and
-are not installed by `make install`, because a prerequisite a command installs for
-you is a prerequisite nobody checks.
+The first four are required. The remaining tools are optional and are needed only
+for PDF import or the named target. `make install` does not install them.
 
 ## Install
 
@@ -48,6 +48,17 @@ It needs an interpreter whose `venv` module can bootstrap `pip`, because the sec
 half is a `pip install -e`. On a machine where it cannot, the failure looks like a
 packaging error in this repository rather than a missing `pip` on the interpreter,
 and the fix belongs to the interpreter, not to the Makefile.
+
+PDF processing runs these local tools directly; it does not install or download OCR
+models at runtime. Put them on `PATH`, or set `PDFINFO_BINARY`, `PDFTOTEXT_BINARY`,
+`PDFTOPPM_BINARY`, and `TESSERACT_BINARY` to their executable paths. Set
+`TESSDATA_PREFIX` when the Arabic and English Tesseract data are outside the default
+location. Missing OCR is marked beside embedded text on searchable pages; scanned
+pages fail clearly. OCR and PDF rendering stay local; after extraction, the worker
+passes page text to the service configured by `AI_RESEARCH_URL` for candidate
+extraction. The default URL points to this repository's local deterministic service.
+If a deployment points it elsewhere, that service receives extracted page text; the
+PDF bytes are not sent to it.
 
 ## Database
 
@@ -256,6 +267,7 @@ the file to copy to `.env`.
 | `CORE_API_PORT`, `AI_RESEARCH_PORT` | the API, the E2E stack | listen ports |
 | `AI_RESEARCH_URL` | the API, the workers | where the AI service is |
 | `SOURCE_STORAGE_DIR` | the API, the workers | the local storage driver's directory |
+| `PDFINFO_BINARY`, `PDFTOTEXT_BINARY`, `PDFTOPPM_BINARY`, `TESSERACT_BINARY`, `TESSDATA_PREFIX` | the source-processing worker | optional local PDF/OCR executable paths and Tesseract data directory; defaults use `PATH` and the system data location |
 | `SOURCE_WORKER_POLL_INTERVAL`, `ANALYSIS_WORKER_POLL_INTERVAL` | the workers | how often a worker looks for a job |
 | `STORAGE_DRIVER` | the API, the workers | `local` or `s3`; there is no fallback in either direction |
 | `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_USE_PATH_STYLE` | the S3 driver | the object store. Names only; a credential value belongs in the deployment, not in this repository |
