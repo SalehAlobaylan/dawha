@@ -23,6 +23,9 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | DONE (merged `6621961`) |
 | 016 | Fix the remaining correctness, privacy and consistency defects | P1 | M | 001, 002, 006, 009, 012, 015 | DONE (merged `c6ddbf8`) |
 | 017 | Make the source-dependency measurements stable and bounded | P2 | M | 007, 009, 014 | DONE (merged `2be2996`) |
+| 018 | Build the corpus, produce the gold, and measure the state that actually exists | P1 | L | 003, 008, 014 | TODO |
+| 019 | Localise the name carriers instead of the ink runs, and read each one in isolation | P1 | L | 018 | TODO |
+| 020 | Make an import resolve identity, and make it reach the research graph | P1 | L | 018 | TODO |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -37,9 +40,19 @@ Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 - N+1 source-review/history/map queries and payload sizes: plan 007 (done). Candidate review hydration, research-run authorization and the map filters are set-based or pushed into SQL (100 runs: 502 → 9 queries; 100 candidates: 104 → 6), the batched visibility verdicts are pinned to equal the single-id verdicts, and `db/migrations/0042_passage_lexical_trigram_index.sql` is the only index an `EXPLAIN` justified. Still open: candidate passage text is still inline because the panel renders every candidate, and `sourceprocessing.files`/`runs` still order by `created_at` with no tiebreak.
 - Migration atomicity, `make verify`, S3/signed access, rate/abuse controls, dependency scanning, observability: plan 008 (done). Migrations take an advisory lock, apply each file with its checksum in one transaction, and refuse an edited applied file; `verify-full` also runs generated-code and migration drift. Scanners run via `make security-scan` and are clean, with one reviewed gitleaks exception for a non-credential literal in a test. `S3Store` was contract-tested only against a double; plan 011 has now run the same suite against a local MinIO, including a presigned URL fetched over plain HTTP, so the "a deployment must run one live presign before trusting it" residual is narrowed to a Cloudflare R2 presign that nothing has run yet. Rate limits are in-process and IP-keyed, so a multi-replica deployment needs a shared limiter. The upload quarantine hook was deliberately not built: no requirement in this repository specifies the policy.
 - README/status matrix, environment truthfulness, GraphRAG/Neo4j measurement: plan 009 (done). The root `README.md` documents every gate, both stacks' ports and the environment by name; `docs/phase-status.md` marks Phases 0–24 with a code citation and the remaining acceptance gap; `docs/graph-benchmark.md` records the PostgreSQL measurement that keeps the Neo4j decision tied to evidence; `make ai-eval` now reports six groups. The three blockers the matrix names: GraphRAG has no labelled corpus to beat a vector-only baseline, a research query will cite a context that shares only a preposition, and the disputed-claims index cannot be searched by a ة name.
-- OCR and what a reliable family-tree import needs: `docs/ocr-and-import-decision.md`. OCR stays
-  unimplemented and out of Phase 14's status; the import requirements that do not depend on it are
-  written down there.
+- OCR and what a reliable family-tree import needs: `docs/ocr-and-import-decision.md`, with the
+  evidence and the reading-strategy recommendation in `docs/import-reading-strategy.md`. The
+  Arabic PDF and import pilot is implemented as a **supervised** workflow: local Poppler and
+  Tesseract page evidence, append-only human transcription revisions, occurrence-level chart
+  drafts with a second-reviewer gate and a retraction ledger, and manual lineage-book
+  assertions. No accuracy claim is supported. Two facts are now measured rather than projected:
+  the raster line detector truncates positionally at 1,000 segments per page
+  (`internal/sourceprocessing/line_detector.go:52`), which a 500-name chart exceeds in its name
+  boxes alone; and the hosted-vision run reached 39 detections against the chart's 500-plus
+  visible names with no branch proposals. Plan 018 builds the corpus and the adjudicated gold
+  and runs the comparison the harness has never been given; plan 019 recovers connector geometry
+  from the PDF's vector content for digital charts and removes the positional truncation. Both
+  are gated on the annotation labour, which is the real critical path.
 - Frontend defects the browser suite found (invitation token never reaching the page, wrong published-version number, inert place search): plan 010 (done). `make e2e` now covers all ten V1 journeys with zero fixme and zero skip, and its teardown removes the synthetic rows it created, so a run leaves the development database as it found it.
 - The S3 adapter against a real endpoint, and the R2 cutover record: plan 011 (implemented, unmerged). The same contract suite now runs against an opt-in local MinIO (`make storage-up`, compose `storage` profile, nothing in the default stack starts it) and against a test double with no MinIO. It found two defects the double could not: every `Put` failed against a plaintext endpoint because the adapter's byte counter hid `Seek` from the AWS SDK, and the contract demanded a byte-identical presign that no real signer produces. `docs/storage-backends.md` records MinIO locally / Cloudflare R2 in production with the configuration difference cited to Cloudflare's own documentation, a seven-item cutover checklist that has never been run, and what a green MinIO run does not prove about R2.
 

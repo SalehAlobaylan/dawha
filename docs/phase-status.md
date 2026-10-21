@@ -152,11 +152,11 @@ term against the raw name column, so a name containing ة was unreachable - was
 | counter-evidence supported | `internal/evidence`, `TestStatementConflictsOnlyKeepKnownReferences` |
 | claim version history preserved | `TestClaimEvidenceChainIsVersionedAndAudited` |
 
-**Remaining gap, and a documentation defect fixed by this plan:** V1 accepts
-`text/*`, `application/json` and `application/xml` and refuses everything else
-with a 415 (`internal/sourceprocessing/upload.go:153`,
-`TestUploadRefusesAnUnsupportedFormatWithTheAcceptedList`). `ARCHITECTURE.md:1127`
-still lists PDFs among stored object types. That line is now corrected.
+The original V1 contract accepted `text/*`, `application/json` and
+`application/xml`. This change adds PDF-signature-checked uploads and a local Arabic OCR
+path; diagram reconstruction, hosted vision, book-specific extraction, and
+measured accuracy remain open under Phase 14. `ARCHITECTURE.md:1127` lists PDFs
+among stored object types, consistent with the current upload contract.
 
 ### Phase 7: Disputes and Open Questions (`:710-786`)
 
@@ -350,8 +350,9 @@ fenced, which the plan did not ask for.
 
 ### Phase 14: Source Processing Pipeline (`:1133-1193`)
 
-**`implemented`** on every acceptance criterion, with one stage of the pipeline
-diagram at `IMPLEMENTATION_PLAN.md:1144` deliberately absent.
+**The original phase acceptance criteria are implemented.** The added Arabic PDF and import
+workflow is a supervised pilot: chart and book review paths are present, but provider quality and
+representative-corpus gates remain open.
 
 | Criterion | Evidence |
 | --- | --- |
@@ -361,32 +362,58 @@ diagram at `IMPLEMENTATION_PLAN.md:1144` deliberately absent.
 | accepted candidates create reviewed records | `TestCandidateStatusDefaultsToReview`, `TestCandidateReviewGroupingKeepsOrderAndEmptyLists` |
 | rejected candidates auditable | `TestSourceCharacterizationRunAndReview` |
 | file and run lists have a total order | `internal/sourceprocessing/review.go` `files` and `runs`, `ORDER BY created_at DESC, id`, pinned by `TestSourceFileAndRunOrderIsTotalForRowsCreatedInOneTransaction`, `TestTwoIdenticalReviewRequestsReturnTheSameOrder` and `TestPagingTheReviewResponseTwiceSeesEveryCandidateExactlyOnce` |
+| PDF page evidence is versioned and reviewable | `internal/sourceprocessing/page_reviews_acceptance_test.go`, `pdf_extractor_test.go` |
+| reviewed chart occurrences import to private draft tree and can be retracted safely | `internal/sourceprocessing/tree_drafts_test.go` |
+| unclear chart edges require a second distinct reviewer | `TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted` |
+| lineage-book quotations retain exact Unicode spans and page-review provenance | `internal/sourceprocessing/book_assertions_acceptance_test.go` |
+| provider comparison has a reproducible evaluator contract | `tools/ocr-eval/evaluate.py`, `docs/ocr-benchmark-format.md` |
 
-**The absent stage: `text/OCR extraction` (`IMPLEMENTATION_PLAN.md:1144`).** The
-pipeline diagram names it as the second stage, after `Source upload`. It is not
-implemented and there is no partial version of it: there is no OCR, no PDF and no
-image ingestion anywhere in the repository. An upload is text or one of two
-structured text formats or it is refused with `415` at the HTTP boundary, before
-storage and before a job is enqueued - `internal/sourceprocessing/upload.go:153`
-declares the whole accepted set (`text/*`, `application/json`, `application/xml`),
-and `UnsupportedContentError` names it back to the caller.
+**The absent stage: `text/OCR extraction` (`IMPLEMENTATION_PLAN.md:1144`) is now partially implemented.**
+The API accepts PDFs with a `%PDF-` signature up to 25 MiB; the queued worker caps them at 200
+pages and 30 minutes and uses local Poppler plus Tesseract Arabic data. Each physical page
+preserves embedded text, an independent OCR reading where available, normalized word boxes, and
+unreadable-page status. Page readings are checkpointed before AI candidate extraction, so an AI
+failure does not erase them; partial page failures retain completed pages and index later pages
+as not processed. Reviewers can browse every physical page and open the original PDF even when a
+page produced no candidate. An append-only
+review endpoint stores human page transcriptions and unreadability decisions against the exact
+machine-reading version, rejects stale concurrent edits, and leaves OCR readings intact. Each
+retry appends a new page-reading snapshot; earlier human transcriptions remain visible and are
+marked when they refer to an earlier reading. These corrections do not yet regenerate candidate
+suggestions. Text, JSON and XML uploads retain their prior path.
 
-**This is the deliberate V1 decision, recorded in `plans/003-source-format-contract.md:57`**,
-which chose text-only V1 over bounded PDF/OCR extraction and required the choice to
-be written into the API error message, the UI copy and the tests - all three of which
-now read the same list from `upload.go`. `ARCHITECTURE.md:1139-1155` states the same
-thing for a reader who starts from the architecture document, and
-`apps/web/e2e/journeys/05-attach-source.spec.ts` proves the refusal in a browser.
-The phase is `implemented` rather than `partial` because none of its five acceptance
-criteria mentions a format: the criteria are about asynchrony, page-level
-traceability, review and audit, and all five are met. The stage that is missing is in
-the diagram, not in the criteria, and saying so here is what keeps the row from
-reading as a claim that this version reads scans.
+The experimental chart path is now Jasser-only and remains unqualified. Pipeline v8 renders
+512-pixel, 25%-overlapping 240-DPI crops directly from the original PDF, scans the full page, and
+reads bounded source crops with checkpoints. Reasoning is disabled for schema-only locator/reader
+calls. Invalid or truncated locator output gets one smaller source-resolution retry; unresolved
+children remain failed/manual-required. Sanitized validation categories are recorded without
+echoing model output. Per-request output-token limits are fixed and the per-run ceiling is bounded
+by the request budget. A reviewer can correct
+branches, verify occurrences against source crops, trace connectors, review residual regions, and
+confirm relationships only with source evidence. Quality
+status is independent from job execution; an unqualified or incomplete result cannot enter standard
+draft/import paths, while manual entry remains available. The dedicated DeepSeek V4.1 Flash
+adapter uses inline original-detail image inputs, JSON output with local schema validation, and a
+per-unit opaque `user_id` for DeepSeek's documented KV-cache isolation; its key is read from macOS
+Keychain or `DEEPSEEK_API_KEY`, and it has no silent local fallback. DeepSeek's automatic disk
+context cache can retain prefixes for hours to days. The corrected v6 Jasser run used 25 calls and
+produced two name-region proposals, no branches or connectors, and 20 failed tile/subtile units.
+The v7 smaller-crop run stopped at 15 calls with two name regions, no branches, eight invalid
+outputs, and 31 pending units. Pipeline v8 completed 139 calls with 39 name-region proposals (14
+readable, nine partial, 16 unreadable), 21 connector paths, no branches, 38 failed subtiles, and
+four failed reading batches. It is partial/manual-required and its 39 detections are far below the
+chart's expected 500-plus names; this is not a measured recall result. No run can be imported or
+qualifies the provider. Hosted use is authorized only for the exact Jasser PDF, and accuracy remains
+unqualified.
 
-**The OCR question is not settled by that decision, and it is now written down.**
-`docs/ocr-and-import-decision.md` records the current format contract, separates OCR
-from what a reliable family-tree import needs whatever its input, and leaves the OCR
-decision open rather than carrying it as a permanent asterisk in this row.
+The offline benchmark labeler supports blind independent chart annotation and adjudication. The
+evaluator scores omissions, localized exact readable names, branches, connectors, and relationships;
+local full-page, tiled, and reviewer-corrected-branch Tesseract baselines are available. No Jasser
+gold annotations, hosted comparison scores, or held-out chart evidence exist. Accuracy remains
+pending and no chart class is qualified. Automatic relationship inference, automatic book
+assertion extraction, corrected-text candidate regeneration, and cross-page connector stitching
+remain open. The worker still requires Poppler and Tesseract Arabic data. The implementation status
+is tracked in `docs/ocr-and-import-decision.md`; plan 003 records the original text-only V1 decision.
 
 **Remaining gap:** none. The one this row used to list - `files` and `runs`
 ordering by `created_at` with no tiebreak, so two rows created in one transaction
@@ -778,9 +805,9 @@ Stated explicitly, with the code as the authority.
 
 | Document says | Code says |
 | --- | --- |
-| `ARCHITECTURE.md:1127` lists PDFs among stored object types | `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json`, `application/xml`; a PDF is refused with 415. **Corrected in `ARCHITECTURE.md` by this change.** |
+| `ARCHITECTURE.md:1127` lists PDFs among stored object types | `internal/sourceprocessing/upload.go:153` accepts `text/*`, JSON, XML, and PDFs whose bytes contain a `%PDF-` signature. The worker uses local Poppler/Tesseract; reviewed chart import and manual book assertions are implemented, while automatic interpretation and evaluated accuracy remain open. |
 | `IMPLEMENTATION_PLAN.md:947` asks for "Hijri or Gregorian display support where practical" | There is no calendar conversion in either direction, and the decision is deliberate rather than an omission: every temporal column is a bare `date` with no calendar, so there is nothing to convert FROM, and a converted date would be day-precise where the record is a decade. One date-display contract instead, in `internal/dates`. Reasoning under **Phase 10** above. |
-| `IMPLEMENTATION_PLAN.md:1144` names a "text/OCR extraction" pipeline stage | There is no OCR, no PDF and no image ingestion. `internal/sourceprocessing/upload.go:153` accepts `text/*`, `application/json` and `application/xml` and refuses anything else with 415, which is the decision `plans/003-source-format-contract.md:57` required and `ARCHITECTURE.md:1139-1155` already states. Reasoning under **Phase 14** above. |
+| `IMPLEMENTATION_PLAN.md:1144` names a "text/OCR extraction" pipeline stage | Native/Tesseract PDF evidence, Jasser-only experimental vision, source-resolution tiled chart reading, a server-side quality gate, supervised draft import, manual book assertions, and a benchmark tool exist. Hosted comparison, independent gold, held-out accuracy, and book assertion automation remain open. Reasoning under **Phase 14** above. |
 | `IMPLEMENTATION_PLAN.md:978` asks for "semantic passage search" | **Corrected by plan 014.** This row used to say "There is no embedding retrieval in the query path", and that was wrong. `internal/research/retrieval.go:70-122` scores passages with pgvector (`1 - (sp.embedding <=> $1::vector)`) and `rag_service.go:77-85` calls the lexical and vector legs and fuses them. What was true is narrower: the seeded corpus carried no embeddings, so the vector leg had nothing to score and every test, demo and benchmark had been running lexical-only. `cmd/embedding-backfill` fills the column through the same `/embed` contract the worker calls, and the semantic search is real - but it is real over hashed vectors, not semantic ones. See `docs/retrieval-measurement.md`. |
 | `IMPLEMENTATION_PLAN.md:1443` requires improvement over vector-only RAG | The vector-only path exists and was measured; the criterion is still open because the provider's embedding is a hash, so the baseline is a permutation. See Blocker 1 and `docs/retrieval-measurement.md`. |
 | `IMPLEMENTATION_PLAN.md:1362` asks for a measurable reduction in expensive model calls | **This row was wrong and is corrected by plan 015.** It used to say "What is measured is route agreement on fifteen self-authored fixtures and a `synthesis_skipped` count. No cost measurement exists." The second sentence was true for the wrong reason: `dawha_ai_cost_units` existed but was **structurally incapable of reporting a cost**, because `internal/ai/client.go` passed a hard-coded `0`, and no cost model existed to pass anything else - so the plan's own premise that the cost model "already defines" the units was wrong. There is now a cost model, a counter carrying route and model, and a per-series reconciliation against it. The criterion is still OPEN, and the number this repository can take is a synthetic one that the report refuses to call a saving. See **Phase 18** above and `docs/cost-measurement.md`. |
