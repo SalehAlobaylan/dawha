@@ -169,6 +169,7 @@ still lists PDFs among stored object types. That line is now corrected.
 | evidence per side | `TestStatementConflictsOnlyKeepKnownReferences` |
 | resolving preserves history | `TestQuestionUpdateIsRolledBackWhenTheAuditInsertFails`, `TestQuestionNoteIsRolledBackWithItsAuditEvent` |
 | question can be reopened | `internal/questions/service.go` status transitions, `TestOpenQuestionCanBeCreatedWorkedAndLeftOpen` |
+| the question index shows the saved questions | `apps/web/src/routes/questions.tsx` reads `/api/v1/questions` and shares one query key with the workspace beneath it, so the two cannot show different lists. `apps/web/e2e/journeys/07-question-dispute.spec.ts` saves a question and asserts it appears in the page's own index. The index used to be built from `demoDashboard.openQuestions` — three invented questions and four invented counts — while the workspace underneath it was already live, and a failure now shows the failure rather than the demo, for the reason `routes/index.tsx` gives about the dashboard |
 
 ### Phase 8: Public Suggestions (`:787-842`)
 

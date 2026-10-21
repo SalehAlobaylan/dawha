@@ -18,8 +18,8 @@ test.describe("open question and dispute", () => {
     await registerThroughUi(page, account);
 
     await page.goto("/questions");
-    // The hero carries a decorative "open a question" button; the workspace head
-    // is the one that opens the form.
+    // The hero and the workspace head both open the same create form, so the
+    // journey uses the workspace head, which is the one in view.
     const workspace = page.locator(".question-workspace");
     await expect(workspace.getByText("مساحة السؤال المفتوح")).toBeVisible();
     await workspace.getByRole("button", { name: /افتح سؤالاً/ }).click();
@@ -38,6 +38,12 @@ test.describe("open question and dispute", () => {
     await expect(list.getByText(title)).toBeVisible();
     await expect(page.locator(".question-detail")).toContainText(title);
     await expect(page.locator(".question-detail")).toContainText("مفتوح");
+
+    // The page's own index reads the same rows from the database, so a question
+    // that was just saved shows up there too. The index used to be built from
+    // demo data while the workspace underneath it was real, and this is the
+    // assertion that the two cannot drift apart again.
+    await expect(page.locator(".question-table-row").filter({ hasText: title })).toHaveCount(1);
 
     await detail.getByLabel("ملاحظة بحثية").fill("الخطوة التالية: مطابقة الاسم المختصر بسجل_SL.");
     await detail.getByRole("button", { name: /أضف ملاحظة/ }).click();
