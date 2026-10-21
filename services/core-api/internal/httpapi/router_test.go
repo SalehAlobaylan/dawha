@@ -38,6 +38,27 @@ func TestDashboardEndpointRespectsDemoMode(t *testing.T) {
 	}
 }
 
+func TestDevQuickSignInRouteRequiresExplicitConfiguration(t *testing.T) {
+	newRequest := func() *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/auth/dev/quick-sign-in", nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		request.Header.Set("Origin", "http://localhost:5173")
+		return request
+	}
+
+	disabled := httptest.NewRecorder()
+	NewRouter(Dependencies{}).ServeHTTP(disabled, newRequest())
+	if disabled.Code != http.StatusNotFound {
+		t.Fatalf("disabled quick sign-in status = %d, want %d", disabled.Code, http.StatusNotFound)
+	}
+
+	enabled := httptest.NewRecorder()
+	NewRouter(Dependencies{DevQuickSignIn: true}).ServeHTTP(enabled, newRequest())
+	if enabled.Code != http.StatusServiceUnavailable {
+		t.Fatalf("enabled quick sign-in without a database status = %d, want %d", enabled.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestNormalizeNameEndpoint(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/normalize-name", strings.NewReader(`{"value":"عَبْدُ الله"}`))

@@ -3,7 +3,9 @@ package auth
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -54,6 +56,59 @@ func (h Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setSessionCookie(w, token)
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+// DevQuickSignIn is a deliberately local-only convenience for development.
+// The route itself is omitted unless the server's explicit development flag is
+// enabled; this second check keeps a loopback shortcut from being used through a
+// public Host or a cross-origin form.
+func (h Handler) DevQuickSignIn(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		http.NotFound(w, r)
+		return
+	}
+	user, token, err := h.Service.QuickSignIn(r.Context())
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	h.setSessionCookie(w, token)
+	h.writeUser(w, http.StatusOK, user)
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host := r.Host
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	if !isLoopbackHost(strings.Trim(host, "[]")) {
+		return false
+	}
+
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	remoteIP := net.ParseIP(remoteHost)
+	if remoteIP == nil || !remoteIP.IsLoopback() {
+		return false
+	}
+
+	if origin := r.Header.Get("Origin"); origin != "" {
+		parsedOrigin, err := url.Parse(origin)
+		if err != nil || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") || !isLoopbackHost(parsedOrigin.Hostname()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +183,8 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
 	case ErrDatabaseUnavailable:
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication is not configured"})
+	case ErrQuickSignInUnsafe:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "local reviewer account is unavailable"})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication failed"})
 	}
