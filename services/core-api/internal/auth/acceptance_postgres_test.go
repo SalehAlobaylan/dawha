@@ -112,3 +112,37 @@ func TestRegisterRejectsAWeakPassword(t *testing.T) {
 		t.Fatalf("credential rows after a refused registration = %d, want 0", got)
 	}
 }
+
+func TestQuickSignInCreatesOnlyTheLocalReviewerAccountAndSession(t *testing.T) {
+	fixture := testsupport.New(t)
+	service := NewService(fixture.Pool())
+
+	user, token, err := service.QuickSignIn(fixture.Ctx())
+	if err != nil {
+		t.Fatalf("quick sign-in: %v", err)
+	}
+	if user.Email != devQuickSignInEmail || user.DisplayName != devQuickSignInName || user.ID == "" {
+		t.Fatalf("quick sign-in user = %+v, want the reserved local reviewer", user)
+	}
+	if got := fixture.Count(`SELECT count(*) FROM user_roles WHERE user_id = $1 AND role = 'registered'`, user.ID); got != 1 {
+		t.Fatalf("registered role rows = %d, want 1", got)
+	}
+	if got := fixture.Count(`SELECT count(*) FROM user_roles WHERE user_id = $1`, user.ID); got != 1 {
+		t.Fatalf("all platform role rows = %d, want only registered", got)
+	}
+	if got := fixture.Count(`SELECT count(*) FROM user_credentials WHERE user_id = $1`, user.ID); got != 0 {
+		t.Fatalf("credential rows = %d, want no password for the temporary account", got)
+	}
+	if got := fixture.Count(`SELECT count(*) FROM auth_sessions WHERE user_id = $1 AND token_hash = $2`, user.ID, HashToken(token)); got != 1 {
+		t.Fatalf("session rows = %d, want the returned token hash", got)
+	}
+
+	resolved, err := service.UserFromToken(fixture.Ctx(), token)
+	if err != nil || resolved.ID != user.ID {
+		t.Fatalf("resolve quick session = %+v, %v; want user %s", resolved, err, user.ID)
+	}
+	secondUser, _, err := service.QuickSignIn(fixture.Ctx())
+	if err != nil || secondUser.ID != user.ID {
+		t.Fatalf("repeat quick sign-in user = %+v, %v; want stable reviewer %s", secondUser, err, user.ID)
+	}
+}

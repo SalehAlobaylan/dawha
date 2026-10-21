@@ -2,13 +2,9 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { BrandMark } from "../components/BrandMark";
+import { getSafeReturnPath } from "../lib/return-path";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
-
-function getReturnPath(): string {
-  const candidate = new URLSearchParams(window.location.search).get("returnTo");
-  return candidate && candidate.startsWith("/invitation/") && !candidate.startsWith("//") ? candidate : "/";
-}
 
 export function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -18,6 +14,7 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [quickSignInBusy, setQuickSignInBusy] = useState(false);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -41,11 +38,36 @@ export function LoginPage() {
         setMessage(result.error ?? "تعذر إكمال العملية.");
         return;
       }
-      window.location.assign(getReturnPath());
+      window.location.assign(getSafeReturnPath(new URLSearchParams(window.location.search).get("returnTo"), window.location.origin));
     } catch {
       setMessage("تعذر الاتصال بالخدمة. حاول مرة أخرى.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const quickSignIn = async () => {
+    setMessage("");
+    if (!apiBaseUrl) {
+      setMessage("شغّل خدمة Core API أولاً لتفعيل الدخول المحلي.");
+      return;
+    }
+    setQuickSignInBusy(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/v1/auth/dev/quick-sign-in`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMessage(result.error ?? "الدخول المحلي غير مفعّل في خدمة Core API.");
+        return;
+      }
+      window.location.assign(getSafeReturnPath(new URLSearchParams(window.location.search).get("returnTo"), window.location.origin));
+    } catch {
+      setMessage("تعذر الاتصال بخدمة Core API للدخول المحلي.");
+    } finally {
+      setQuickSignInBusy(false);
     }
   };
 
@@ -64,6 +86,13 @@ export function LoginPage() {
           {message ? <div className="auth-message" role="alert">{message}</div> : null}
           <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "جارٍ التحقق…" : mode === "login" ? "دخول إلى دَوْحة" : "إنشاء الحساب"}<ArrowLeft size={16} /></button>
         </form>
+        {import.meta.env.DEV && mode === "login" ? <div className="auth-dev-access">
+          <div className="auth-dev-divider"><span>للتجربة المحلية</span></div>
+          <button className="auth-dev-sign-in" type="button" onClick={quickSignIn} disabled={quickSignInBusy || busy}>
+            {quickSignInBusy ? "جارٍ فتح الحساب المحلي…" : "دخول سريع بحساب المراجع المحلي"}
+          </button>
+          <small>حساب مؤقت في بيئة التطوير فقط؛ لا تستخدمه على موقع منشور.</small>
+        </div> : null}
         <div className="auth-note"><span className="auth-note-mark">؟</span><span>لا نستخدم DNA. الحساب يساعدنا على حفظ أبحاثك، لا على إعلان حقيقتك.</span></div>
       </main>
       <div className="auth-bottom"><span>بيئة بحث عربية</span><span>المصدر أولاً · الخلاف محفوظ</span></div>

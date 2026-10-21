@@ -80,6 +80,7 @@ func main() {
 	}
 	logger.Info("rate limits configured", "configuration", rateLimits.Describe())
 	logger.Info("demo mode configured", "enabled", demoMode())
+	logger.Info("development quick sign-in configured", "enabled", devQuickSignInEnabled())
 
 	port := os.Getenv("CORE_API_PORT")
 	if port == "" {
@@ -102,6 +103,8 @@ func main() {
 			// acceptance stack set it explicitly; a deployment that has not been told
 			// to serve synthetic data is not served synthetic data.
 			DemoMode: demoMode(),
+			// This temporary account shortcut is mounted only in local development.
+			DevQuickSignIn: devQuickSignInEnabled(),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -141,6 +144,20 @@ func environment() string {
 // convenience.
 func demoMode() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEMO_MODE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// devQuickSignInEnabled keeps the temporary account shortcut unavailable to
+// deployed environments even if their process environment carries the local
+// development flag.
+func devQuickSignInEnabled() bool {
+	if environment() != "development" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEV_QUICK_SIGN_IN_ENABLED"))) {
 	case "1", "true", "yes", "on":
 		return true
 	}

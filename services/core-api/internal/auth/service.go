@@ -27,7 +27,24 @@ var (
 	ErrInvalidCredentials  = errors.New("invalid credentials")
 	ErrEmailTaken          = errors.New("email is already registered")
 	ErrWeakPassword        = errors.New("password must contain at least 12 characters")
+	ErrQuickSignInUnsafe   = errors.New("the reserved local reviewer account cannot be used")
 )
+
+// devQuickSignInEmail is the one reserved account the local development
+// shortcut signs in as.
+//
+// The domain is deliberately NOT one the test gate reserves. `testsupport`.
+// SyntheticEmailSuffixes owns `@example.test` and `@dawha.test` for the actors
+// a fixture creates, and the database gate fails a run when a row in that
+// marker survives. This account is not a fixture actor: it is a real account
+// that is meant to persist in a developer's own database, and it is created by
+// pressing a button, not by a test. With the address in a reserved domain the
+// gate read it as a leaked test actor and failed the acceptance run for a
+// developer who had simply signed in locally.
+//
+// `@dawha.local` says what it is: a local account, outside every marker.
+const devQuickSignInEmail = "local-reviewer@dawha.local"
+const devQuickSignInName = "مراجع محلي مؤقت"
 
 type User struct {
 	ID          string    `json:"id"`
@@ -115,6 +132,64 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, stri
 	}
 	token, err := s.createSession(ctx, user.ID)
 	if err != nil {
+		return User{}, "", err
+	}
+	return user, token, nil
+}
+
+// QuickSignIn provisions the one ordinary reviewer account used by the local
+// development shortcut. The router only exposes this operation when the
+// development flag is on, and the HTTP handler accepts loopback requests only.
+// This account deliberately receives no platform role beyond registered.
+func (s *Service) QuickSignIn(ctx context.Context) (User, string, error) {
+	if s == nil || s.Pool == nil {
+		return User{}, "", ErrDatabaseUnavailable
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return User{}, "", err
+	}
+	defer tx.Rollback(ctx)
+
+	var user User
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, display_name_ar)
+		VALUES ($1, $2)
+		ON CONFLICT (email) DO UPDATE SET
+			display_name_ar = EXCLUDED.display_name_ar,
+			updated_at = now()
+		WHERE users.status = 'active'
+		RETURNING id, email, display_name_ar, created_at
+	`, devQuickSignInEmail, devQuickSignInName).Scan(&user.ID, &user.Email, &user.DisplayName, &user.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, "", ErrQuickSignInUnsafe
+		}
+		return User{}, "", err
+	}
+
+	var elevatedRoleCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_roles WHERE user_id = $1 AND role <> 'registered'`, user.ID).Scan(&elevatedRoleCount); err != nil {
+		return User{}, "", err
+	}
+	if elevatedRoleCount != 0 {
+		return User{}, "", ErrQuickSignInUnsafe
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO user_roles (user_id, role) VALUES ($1, 'registered') ON CONFLICT DO NOTHING`, user.ID); err != nil {
+		return User{}, "", err
+	}
+
+	token, err := NewSessionToken()
+	if err != nil {
+		return User{}, "", err
+	}
+	expiresAt := time.Now().UTC().Add(s.SessionTTL)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth_sessions (id, user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3, $4)
+	`, uuid.New(), user.ID, HashToken(token), expiresAt); err != nil {
+		return User{}, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return User{}, "", err
 	}
 	return user, token, nil

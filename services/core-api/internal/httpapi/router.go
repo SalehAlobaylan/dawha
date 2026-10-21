@@ -55,6 +55,9 @@ type Dependencies struct {
 	// is OFF, which is the production posture: a deployment that has not been told
 	// to serve synthetic data is not served synthetic data.
 	DemoMode bool
+	// DevQuickSignIn enables the temporary, loopback-only account shortcut. It
+	// is normally set only by the local npm development command.
+	DevQuickSignIn bool
 }
 
 type normalizeNameRequest struct {
@@ -318,6 +321,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/normalize-name", normalizeName)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+	if dependencies.DevQuickSignIn {
+		mux.HandleFunc("POST /api/v1/auth/dev/quick-sign-in", authHandler.DevQuickSignIn)
+	}
 	mux.HandleFunc("GET /api/v1/auth/me", authHandler.Me)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 
