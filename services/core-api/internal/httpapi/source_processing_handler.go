@@ -17,6 +17,14 @@ type sourceProcessingHandler struct {
 	Auth    *auth.Service
 }
 
+type createSourceTreeDraftRequest struct {
+	TitleAR string `json:"titleAr"`
+}
+
+type importSourceTreeDraftRequest struct {
+	ExpectedRevision int `json:"expectedRevision"`
+}
+
 func (h sourceProcessingHandler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.requireUser(w, r)
 	if !ok {
@@ -138,6 +146,337 @@ func (h sourceProcessingHandler) downloadFile(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, link)
 }
 
+func (h sourceProcessingHandler) pageEvidence(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	pageNumber, err := strconv.Atoi(r.PathValue("pageNumber"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "page number must be a number"})
+		return
+	}
+	result, err := h.Service.PageEvidence(r.Context(), r.PathValue("fileID"), user.ID, pageNumber)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) pagePreview(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	pageNumber, err := strconv.Atoi(r.PathValue("pageNumber"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "page number must be a number"})
+		return
+	}
+	preview, err := h.Service.PagePreview(r.Context(), r.PathValue("fileID"), user.ID, pageNumber)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(preview)))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(preview)
+}
+
+func (h sourceProcessingHandler) pageEvidenceIndex(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.PageEvidenceIndex(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) reviewPageEvidence(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	pageNumber, err := strconv.Atoi(r.PathValue("pageNumber"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "page number must be a number"})
+		return
+	}
+	var input sourceprocessing.PageReviewInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.SavePageReview(r.Context(), r.PathValue("fileID"), user.ID, pageNumber, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) reprocessFile(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.ReprocessInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReprocessFile(r.Context(), r.PathValue("fileID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (h sourceProcessingHandler) reextractReviewedPage(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	pageNumber, err := strconv.Atoi(r.PathValue("pageNumber"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "page number must be a number"})
+		return
+	}
+	var input sourceprocessing.ReextractPageInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	input.PageNumber = pageNumber
+	result, err := h.Service.ReextractReviewedPage(r.Context(), r.PathValue("fileID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (h sourceProcessingHandler) createTreeDraft(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input createSourceTreeDraftRequest
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.CreateTreeDraft(r.Context(), r.PathValue("fileID"), user.ID, input.TitleAR)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) startChartAnalysis(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.StartChartAnalysis(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (h sourceProcessingHandler) getChartAnalysis(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.GetChartAnalysis(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) retryChartAnalysis(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.RetryChartAnalysis(r.Context(), r.PathValue("runID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (h sourceProcessingHandler) saveChartAnalysisReview(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.ChartAnalysisReviewPayload
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.SaveChartAnalysisReview(r.Context(), r.PathValue("runID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) listBookAssertions(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.ListBookAssertions(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) createBookAssertion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.BookAssertionInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.CreateBookAssertion(r.Context(), r.PathValue("fileID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) updateBookAssertion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.UpdateBookAssertionInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.UpdateBookAssertion(r.Context(), r.PathValue("assertionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) reviewBookAssertion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.ReviewBookAssertionInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReviewBookAssertion(r.Context(), r.PathValue("assertionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) getTreeDraft(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.GetTreeDraft(r.Context(), r.PathValue("draftID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) saveTreeDraft(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SaveTreeDraftInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.SaveTreeDraft(r.Context(), r.PathValue("draftID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) importTreeDraft(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input importSourceTreeDraftRequest
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ImportTreeDraft(r.Context(), r.PathValue("draftID"), user.ID, input.ExpectedRevision)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) retractTreeDraft(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.RetractTreeDraft(r.Context(), r.PathValue("draftID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
 // serveSignedObject is the local adapter's object route: the other half of the
 // signed link the handler above mints.
 //
@@ -178,6 +517,7 @@ func (h sourceProcessingHandler) serveSignedObject(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buffered)
 	_, _ = io.Copy(w, reader)

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Chart annotation desk · Dawha</title>
+  <link rel="stylesheet" href="label.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="wordmark"><span class="seal">د</span><span>DAWHA <small>SOURCE LAB</small></span></div>
+    <div class="mast-meta"><span class="eyebrow">OFFLINE ANNOTATION TOOL</span><span>Private chart evidence stays in this tab</span></div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">ARABIC FAMILY CHARTS · BENCHMARK DESK</p>
+        <h1>Mark what the page<br><em>actually shows.</em></h1>
+      </div>
+      <p class="intro-copy">Create independent, occurrence-level labels from original page images. This tool never sends images or annotations to a server and never shows machine proposals.</p>
+    </section>
+
+    <nav class="mode-tabs" aria-label="Workspace mode">
+      <button class="mode-tab active" data-pane="annotate-pane">Annotate independently <span>01</span></button>
+      <button class="mode-tab" data-pane="adjudicate-pane">Adjudicate two reviews <span>02</span></button>
+      <p>Keep each reader blind to the other annotation until both exports are complete.</p>
+    </nav>
+
+    <section id="annotate-pane" class="workspace pane active">
+      <aside class="rail">
+        <div class="section-kicker"><span>DOCUMENT</span><i></i></div>
+        <label>Document ID<input id="document-id" value="jasser-chart" autocomplete="off"></label>
+        <div class="form-row">
+          <label>Source class<select id="source-class"><option value="chart">Family chart</option></select></label>
+          <label>Split<select id="split"><option value="development">Development</option><option value="held_out">Held out</option></select></label>
+        </div>
+        <label>Annotator ID<input id="annotator-id" placeholder="Reader A" autocomplete="off"></label>
+        <div class="privacy-note"><b>Blind pass</b><p>Do not use OCR output, family records, dictionaries, or another reader's labels. Copy only what is visible in the source.</p></div>
+
+        <div class="section-kicker page-kicker"><span>PAGES <b id="page-count">0</b></span><i></i></div>
+        <label class="file-button">Add original page images<input id="page-files" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
+        <p class="hint">Render PDF pages at source resolution before loading. PNG, JPEG, and WebP only.</p>
+        <div id="page-list" class="page-list"><div class="empty-pages">No pages loaded</div></div>
+
+        <div class="rail-bottom">
+          <label class="file-button subdued">Open annotation JSON<input id="open-annotation" type="file" accept="application/json,.json"></label>
+          <button id="export-annotation" class="button primary" disabled>Export independent labels</button>
+          <p class="hint">Export before closing this tab. This tool does not persist work after reload.</p>
+        </div>
+      </aside>
+
+      <section class="evidence-column">
+        <div class="canvas-header">
+          <div><p class="eyebrow">SOURCE IMAGE</p><h2 id="active-page-title">Load a page to begin</h2></div>
+          <div class="zoom-tools"><button id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-value">Fit</span><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-fit">Fit page</button></div>
+        </div>
+        <div id="canvas-wrap" class="canvas-wrap">
+          <div id="canvas-empty" class="canvas-empty"><span class="empty-mark">□</span><b>Original page image</b><span>Load a rendered page on the left. Coordinates are stored relative to its original dimensions.</span></div>
+          <canvas id="page-canvas" aria-label="Source page annotation canvas" hidden></canvas>
+        </div>
+        <div class="canvas-footer"><span id="image-dimensions">No image</span><span>Use the original or a lossless page render; enlarged previews do not improve source detail.</span></div>
+        <div class="tool-strip" role="toolbar" aria-label="Annotation tools">
+          <button class="tool active" data-tool="select"><span>↖</span>Inspect</button>
+          <button class="tool" data-tool="name"><span>▱</span>Name region</button>
+          <button class="tool" data-tool="branch"><span>⌑</span>Branch region</button>
+          <button class="tool" data-tool="connector"><span>⌁</span>Trace connector</button>
+          <button id="finish-connector" class="button small" hidden>Finish path</button>
+          <span class="tool-hint">Drag a box for names and branches. Click along a line to trace a connector.</span>
+        </div>
+      </section>
+
+      <aside class="detail-rail">
+        <div class="section-kicker"><span>PAGE INVENTORY</span><i></i></div>
+        <div class="inventory-totals"><div><strong id="name-total">0</strong><span>name occurrences</span></div><div><strong id="branch-total">0</strong><span>branch regions</span></div><div><strong id="connector-total">0</strong><span>connector paths</span></div></div>
+        <div id="selection-panel" class="selection-panel"><div class="empty-selection"><span>Choose an occurrence</span><p>Select a mark on the page or draw a new region.</p></div></div>
+        <div class="section-kicker inventory-kicker"><span>THIS PAGE</span><i></i></div>
+        <div id="occurrence-list" class="occurrence-list"></div>
+        <div class="relationship-box">
+          <div class="section-kicker"><span>SUPPORTED RELATION</span><i></i></div>
+          <p>Record only a connection supported by a visible connector or explicit source legend. A line is evidence to inspect, not automatic proof of parenthood.</p>
+          <label>From occurrence<select id="edge-subject"><option value="">Choose a reviewed name</option></select></label>
+          <label>Relationship<select id="edge-predicate"><option value="parent_of">parent of</option><option value="spouse_of">spouse of</option><option value="sibling_of">sibling of</option><option value="other">other (explain)</option></select></label>
+          <label>To occurrence<select id="edge-object"><option value="">Choose a reviewed name</option></select></label>
+          <label>Visible support<input id="edge-evidence" placeholder="Legend wording or line locator"></label>
+          <button id="add-edge" class="button secondary">Add supported relation</button>
+          <div id="edge-list" class="edge-list"></div>
+        </div>
+        <div class="coverage-check"><input id="coverage-confirmed" type="checkbox"><label for="coverage-confirmed">I reviewed this page in full, including margins and residual spaces.</label></div>
+      </aside>
+    </section>
+
+    <section id="adjudicate-pane" class="adjudication pane" hidden>
+      <div class="adjudication-head"><div><p class="eyebrow">GOLD LABEL REVIEW</p><h2>Review differences and confirm relationships.</h2><p>Load two exports for the same document. Occurrences are matched by page and geometry, never by equal name strings. Matching name labels are accepted only when both readers agree; every relationship needs your explicit confirmation against the source.</p></div><div class="adjudication-warning">The adjudicator should consult the original source image, not machine output.</div></div>
+      <div class="review-inputs">
+        <label class="adjudicator-field">Adjudicator ID<input id="adjudicator-id" placeholder="Reviewer C" autocomplete="off"></label>
+        <label class="file-button">Load reader A<input id="review-a" type="file" accept="application/json,.json"></label>
+        <label class="file-button">Load reader B<input id="review-b" type="file" accept="application/json,.json"></label>
+        <span id="adjudication-status" class="hint">Two independent exports are required.</span>
+        <button id="export-gold" class="button primary" disabled>Export adjudicated gold</button>
+      </div>
+      <div class="source-proof"><div class="source-proof-controls"><div class="section-kicker"><span>ORIGINAL PAGE EVIDENCE</span><i></i></div><p>Load the same rendered pages the readers used. Select “View source regions” to compare both marks over the original.</p><label class="file-button">Load rendered source pages<input id="adjudication-images" type="file" accept="image/png,image/jpeg,image/webp" multiple></label><select id="adjudication-page" aria-label="Source page"><option value="">No source page loaded</option></select></div><div class="source-proof-image"><div id="adjudication-frame" class="source-proof-frame" hidden><img id="adjudication-preview" alt="Selected family chart page"><svg id="adjudication-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"></svg></div><span id="adjudication-image-empty">Source page image stays on this device.</span></div></div>
+      <div id="adjudication-summary" class="adjudication-summary"></div>
+      <div id="conflict-list" class="conflict-list"><div class="empty-pages">Load both independent annotations to compare occurrences.</div></div>
+    </section>
+
+    <footer class="footnote"><span>DAWHA · SOURCE LAB</span><span>Gold labels require two independent readers and adjudication. Tool output alone never qualifies a model.</span></footer>
+  </main>
+  <dialog id="status-dialog" class="status-dialog"><form method="dialog"><h3 id="dialog-title"></h3><p id="dialog-message"></p><button class="button primary">Continue</button></form></dialog>
+  <script src="label.js"></script>
+</body>
+</html>

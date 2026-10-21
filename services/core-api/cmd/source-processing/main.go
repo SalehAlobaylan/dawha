@@ -56,9 +56,11 @@ func main() {
 	jobService := jobs.NewService(pool)
 	jobService.HeartbeatInterval = durationEnvironment("SOURCE_WORKER_HEARTBEAT_INTERVAL", jobs.DefaultHeartbeatInterval)
 	jobService.LeaseDuration = durationEnvironment("SOURCE_WORKER_LEASE_DURATION", jobs.DefaultLeaseDuration)
-	processor := sourceprocessing.NewService(pool, store, jobService, provider, sourceprocessing.NewTextExtractor())
+	processor := sourceprocessing.NewService(pool, store, jobService, provider, sourceprocessing.NewPDFExtractor())
+	processor.ChartVision = sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 	workerID := environmentValue("SOURCE_WORKER_ID", "source-worker-"+uuid.NewString())
 	pollInterval := durationEnvironment("SOURCE_WORKER_POLL_INTERVAL", 2*time.Second)
+	go chartAnalysisWorker(ctx, jobService, processor, workerID+"-chart", pollInterval, metrics)
 	log.Printf("source processing worker started: %s (lease %s, heartbeat %s)", workerID, jobService.LeaseDuration, jobService.HeartbeatInterval)
 	lastRecovery := time.Now()
 	for {
@@ -126,6 +128,58 @@ func main() {
 		metrics.QueueJob(telemetry.JobTypeFor(sourceprocessing.SourceProcessJobType), telemetry.JobCompleted, time.Since(jobStarted))
 	}
 	log.Print("source processing worker stopped")
+}
+
+func chartAnalysisWorker(ctx context.Context, queue *jobs.Service, processor *sourceprocessing.Service, workerID string, pollInterval time.Duration, metrics *telemetry.Metrics) {
+	lastRecovery := time.Now()
+	for ctx.Err() == nil {
+		if time.Since(lastRecovery) >= time.Minute {
+			recovered, err := queue.RecoverStaleOfType(ctx, StaleRecoveryWindow, sourceprocessing.SourceChartAnalysisJobType)
+			if err != nil {
+				log.Printf("recover stale chart analysis jobs: %v", err)
+			} else if err := processor.RequeueRecovered(ctx, recovered.Jobs); err != nil {
+				log.Printf("reset recovered chart analyses: %v", err)
+			}
+			lastRecovery = time.Now()
+		}
+		if metrics.Enabled() {
+			if depth, err := queue.Depth(ctx, sourceprocessing.SourceChartAnalysisJobType); err == nil {
+				metrics.QueueDepth(telemetry.JobTypeFor(sourceprocessing.SourceChartAnalysisJobType), depth)
+			}
+		}
+		job, err := queue.Claim(ctx, jobs.ClaimInput{WorkerID: workerID, Type: sourceprocessing.SourceChartAnalysisJobType})
+		if errors.Is(err, jobs.ErrNotFound) {
+			if !sleepContext(ctx, pollInterval) {
+				return
+			}
+			continue
+		}
+		if err != nil {
+			log.Printf("claim chart analysis job: %v", err)
+			if !sleepContext(ctx, pollInterval) {
+				return
+			}
+			continue
+		}
+		claim := sourceprocessing.Claim{Job: job, Lease: job.Lease(workerID)}
+		requestID := telemetry.RequestIDFromPayload(sourceprocessing.JobRequestIDFields(job.Payload))
+		started := time.Now()
+		if err := processor.ProcessChartAnalysis(telemetry.WithRequestID(ctx, requestID), claim); err != nil {
+			log.Printf("process chart analysis job %s request_id=%s: %v", job.ID, requestIDOrNone(requestID), err)
+			if errors.Is(err, jobs.ErrLeaseLost) || errors.Is(err, jobs.ErrForbidden) {
+				continue
+			}
+			if _, failErr := queue.Fail(ctx, job.ID, jobs.FailInput{WorkerID: workerID, LeaseToken: claim.Lease.Token, Error: err.Error()}); failErr != nil {
+				log.Printf("fail chart analysis job %s: %v", job.ID, failErr)
+			}
+			metrics.QueueJob(telemetry.JobTypeFor(sourceprocessing.SourceChartAnalysisJobType), telemetry.JobFailed, time.Since(started))
+			continue
+		}
+		if _, err := queue.Complete(ctx, job.ID, jobs.CompleteInput{WorkerID: workerID, LeaseToken: claim.Lease.Token}); err != nil {
+			log.Printf("complete chart analysis job %s: %v", job.ID, err)
+		}
+		metrics.QueueJob(telemetry.JobTypeFor(sourceprocessing.SourceChartAnalysisJobType), telemetry.JobCompleted, time.Since(started))
+	}
 }
 
 // requestIDOrNone prints "none" rather than an empty field, so a line about a job

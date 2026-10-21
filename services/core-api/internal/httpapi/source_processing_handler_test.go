@@ -63,16 +63,13 @@ func TestSourceUploadRefusesUnsupportedFormatsBeforeAnySideEffect(t *testing.T) 
 		content     []byte
 		named       string
 	}{
-		{name: "pdf", filename: "scan.pdf", contentType: "application/pdf", content: []byte("%PDF-1.7\n%binary"), named: "application/pdf"},
 		{name: "png", filename: "page.png", contentType: "image/png", content: []byte("\x89PNG\r\n\x1a\n"), named: "image/png"},
 		{name: "jpeg", filename: "page.jpg", contentType: "image/jpeg", content: []byte("\xFF\xD8\xFF\xE0"), named: "image/jpeg"},
 		{name: "tiff", filename: "page.tiff", contentType: "image/tiff", content: []byte("II*\x00binary"), named: "image/tiff"},
 		{name: "binary", filename: "dump.bin", contentType: "application/octet-stream", content: []byte{0x00, 0x01, 0x02, 0xff}, named: "application/octet-stream"},
 		{name: "word", filename: "notes.doc", contentType: "application/msword", content: []byte("binary"), named: "application/msword"},
-		// The caller says text, the bytes say PDF: the claim is not trusted.
-		{name: "mislabelled pdf", filename: "report.txt", contentType: "text/plain", content: []byte("%PDF-1.7\n%binary"), named: "application/pdf"},
 		{name: "mislabelled zip", filename: "report.txt", contentType: "text/plain", content: []byte("PK\x03\x04\x00\x00binary"), named: "application/zip"},
-		{name: "undeclared pdf", filename: "report.txt", content: []byte("%PDF-1.7\n%binary"), named: "application/pdf"},
+		{name: "undeclared zip", filename: "report.zip", content: []byte("PK\x03\x04\x00\x00binary"), named: "application/zip"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -94,12 +91,12 @@ func TestSourceUploadRefusesUnsupportedFormatsBeforeAnySideEffect(t *testing.T) 
 			if !strings.Contains(body.Error, testCase.named) {
 				t.Fatalf("error %q does not name the refused format %q", body.Error, testCase.named)
 			}
-			for _, supported := range []string{"text/*", "application/json", "application/xml"} {
+			for _, supported := range []string{"text/*", "application/json", "application/xml", "application/pdf"} {
 				if !strings.Contains(body.Error, supported) {
 					t.Fatalf("error %q does not teach the supported format %q", body.Error, supported)
 				}
 			}
-			if len(body.SupportedContentTypes) != 3 || body.SupportedContentTypes[0] != "text/*" {
+			if len(body.SupportedContentTypes) != 4 || body.SupportedContentTypes[0] != "text/*" {
 				t.Fatalf("supportedContentTypes = %v, want the shared matrix", body.SupportedContentTypes)
 			}
 			fixture.assertNoSideEffect(t)
@@ -122,6 +119,7 @@ func TestSourceUploadAcceptsEverySupportedFormat(t *testing.T) {
 		{"data.json", "application/json", []byte(`{"key":"قيمة"}`)},
 		{"doc.xml", "application/xml", []byte("<doc>نص</doc>")},
 		{"doc.xml", "text/xml", []byte("<doc>نص</doc>")},
+		{"scan.pdf", "application/pdf", []byte("%PDF-1.7\n% upload boundary fixture")},
 		{"undeclared.txt", "", []byte("نص بلا نوع مصرح به")},
 		{"undeclared.txt", "application/octet-stream", []byte("نص بلا نوع مصرح به")},
 	}
@@ -189,7 +187,7 @@ func TestSourceProcessingErrorMapping(t *testing.T) {
 				}
 				return
 			}
-			if body.Code != testCase.code || len(body.SupportedContentTypes) != 3 {
+			if body.Code != testCase.code || len(body.SupportedContentTypes) != 4 {
 				t.Fatalf("body = %s, want the format payload", recorder.Body.String())
 			}
 		})
@@ -323,7 +321,7 @@ func (f *sourceUploadFixture) assertAccepted(t *testing.T, fileID string) {
 		t.Fatalf("processing_status = %q, want queued", status)
 	}
 	var jobs int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE type = 'source_process' AND idempotency_key = $1`, "source_process:"+fileID).Scan(&jobs); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE type = 'source_process' AND payload->>'source_file_id' = $1`, fileID).Scan(&jobs); err != nil {
 		t.Fatal(err)
 	}
 	if jobs != 1 {

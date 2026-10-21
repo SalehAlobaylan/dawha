@@ -103,7 +103,14 @@ func (s *Service) ReviewCandidate(ctx context.Context, candidateID, actorID stri
 	if !allowed {
 		return CandidateView{}, ErrForbidden
 	}
-	if status == "accepted" || status == "rejected" {
+	var documentKind string
+	if err := tx.QueryRow(ctx, `SELECT document_kind FROM source_files WHERE id = $1`, sourceFileID).Scan(&documentKind); err != nil {
+		return CandidateView{}, err
+	}
+	if documentKind == "family_chart" {
+		return CandidateView{}, ErrConflict
+	}
+	if status != "unreviewed" && status != "needs_review" {
 		return CandidateView{}, ErrConflict
 	}
 	reviewID := uuid.New()
@@ -263,7 +270,7 @@ func (s *Service) files(ctx context.Context, sourceID uuid.UUID) ([]FileView, er
 // of the list is the plan's choice rather than the database's promise.
 func (s *Service) runs(ctx context.Context, sourceID uuid.UUID) ([]ProcessingRunView, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, source_id, source_file_id, job_id, status, stage, page_count, passage_count, candidate_count, model_version, error, started_at, completed_at, created_at, updated_at
+		SELECT id, source_id, source_file_id, job_id, status, stage, run_kind, pipeline_config, triggered_by, input_page_review_revision_id, page_count, passage_count, candidate_count, model_version, error, started_at, completed_at, created_at, updated_at
 		FROM source_processing_runs WHERE source_id = $1 ORDER BY created_at DESC, id
 	`, sourceID)
 	if err != nil {
@@ -273,15 +280,19 @@ func (s *Service) runs(ctx context.Context, sourceID uuid.UUID) ([]ProcessingRun
 	items := make([]ProcessingRunView, 0)
 	for rows.Next() {
 		var item ProcessingRunView
-		var source, file, jobID pgtype.UUID
+		var source, file, jobID, triggeredBy, pageReviewRevisionID pgtype.UUID
 		var model, errText pgtype.Text
 		var startedAt, completedAt pgtype.Timestamptz
-		if err := rows.Scan(&item.ID, &source, &file, &jobID, &item.Status, &item.Stage, &item.PageCount, &item.PassageCount, &item.CandidateCount, &model, &errText, &startedAt, &completedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var pipelineConfig []byte
+		if err := rows.Scan(&item.ID, &source, &file, &jobID, &item.Status, &item.Stage, &item.RunKind, &pipelineConfig, &triggeredBy, &pageReviewRevisionID, &item.PageCount, &item.PassageCount, &item.CandidateCount, &model, &errText, &startedAt, &completedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
+		item.PipelineConfig = append(json.RawMessage(nil), pipelineConfig...)
 		item.SourceID = uuidString(source)
 		item.SourceFileID = uuidString(file)
 		item.JobID = uuidString(jobID)
+		item.TriggeredBy = uuidString(triggeredBy)
+		item.PageReviewRevisionID = uuidString(pageReviewRevisionID)
 		item.ModelVersion = textValue(model)
 		item.Error = textValue(errText)
 		if startedAt.Valid {
@@ -323,11 +334,14 @@ func (s *Service) candidates(ctx context.Context, sourceID uuid.UUID, page Candi
 	total := 0
 	rows, err := s.Pool.Query(ctx, `
 		SELECT totals.total, page.id
-		FROM (SELECT count(*) AS total FROM source_candidates WHERE source_id = $1) totals
+		FROM (
+			SELECT count(*) AS total FROM source_candidates c JOIN source_files f ON f.id = c.source_file_id
+			WHERE c.source_id = $1 AND (f.document_kind <> 'family_chart' OR c.status IN ('accepted','rejected'))
+		) totals
 		LEFT JOIN LATERAL (
 			SELECT c.id::text AS id
-			FROM source_candidates c
-			WHERE c.source_id = $1
+			FROM source_candidates c JOIN source_files f ON f.id = c.source_file_id
+			WHERE c.source_id = $1 AND (f.document_kind <> 'family_chart' OR c.status IN ('accepted','rejected'))
 			ORDER BY c.created_at, c.id
 			OFFSET $2 LIMIT $3
 		) page ON TRUE
@@ -473,7 +487,7 @@ func validateCandidatePage(page CandidatePage) (CandidatePage, error) {
 }
 
 const candidateSelect = `
-	SELECT c.id, c.source_id, c.source_file_id, c.source_passage_id, c.source_statement_id,
+	SELECT c.id, c.source_id, c.source_file_id, c.source_passage_id, c.source_statement_id, c.source_processing_run_id,
 	       c.candidate_type, c.raw_text_ar, c.normalized_text_ar, c.subject_text_ar, c.predicate_ar, c.object_text_ar,
 	       c.proposed_entity_type, c.proposed_entity_id, c.proposed_entity_name_ar, c.proposed_match_score, c.proposed_match_matched_on,
 	       c.subject_entity_type, c.subject_entity_id, c.object_entity_type, c.object_entity_id,
@@ -484,19 +498,20 @@ const candidateSelect = `
 
 func scanCandidate(row pgx.Row) (CandidateView, error) {
 	var item CandidateView
-	var sourceID, fileID, passageID, statementID pgtype.UUID
+	var sourceID, fileID, passageID, statementID, runID pgtype.UUID
 	var proposedType, proposedName, proposedMatched, subjectType, objectType, modelVersion, acceptedType, locator, rationale pgtype.Text
 	var subjectText, predicate, objectText, reviewNote pgtype.Text
 	var proposedID, subjectID, objectID, reviewedBy, acceptedID pgtype.UUID
 	var score pgtype.Float8
 	var pageNumber pgtype.Int4
 	var reviewedAt pgtype.Timestamptz
-	if err := row.Scan(&item.ID, &sourceID, &fileID, &passageID, &statementID, &item.CandidateType, &item.RawTextAR, &item.NormalizedTextAR, &subjectText, &predicate, &objectText, &proposedType, &proposedID, &proposedName, &score, &proposedMatched, &subjectType, &subjectID, &objectType, &objectID, &item.Confidence, &rationale, &pageNumber, &item.PassageTextAR, &locator, &modelVersion, &item.Status, &reviewedBy, &reviewedAt, &reviewNote, &acceptedType, &acceptedID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &sourceID, &fileID, &passageID, &statementID, &runID, &item.CandidateType, &item.RawTextAR, &item.NormalizedTextAR, &subjectText, &predicate, &objectText, &proposedType, &proposedID, &proposedName, &score, &proposedMatched, &subjectType, &subjectID, &objectType, &objectID, &item.Confidence, &rationale, &pageNumber, &item.PassageTextAR, &locator, &modelVersion, &item.Status, &reviewedBy, &reviewedAt, &reviewNote, &acceptedType, &acceptedID, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return CandidateView{}, err
 	}
 	item.SourceID = uuidString(sourceID)
 	item.SourceFileID = uuidString(fileID)
 	item.SourcePassageID = uuidString(passageID)
+	item.ProcessingRunID = uuidString(runID)
 	item.SourceStatementID = uuidString(statementID)
 	item.SubjectTextAR = textValue(subjectText)
 	item.PredicateAR = textValue(predicate)

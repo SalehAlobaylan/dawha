@@ -117,3 +117,41 @@ describe("fetchDashboard", () => {
     expect(result.demo).toBe(true);
   });
 });
+
+describe("source processing reprocessing requests", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("queues higher-resolution reruns and exact reviewed-page revisions", async () => {
+    const { reprocessSourceFile, reextractReviewedPage } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      return new Response(JSON.stringify({ id: "run-1" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await reprocessSourceFile("file/id", 400);
+    await reextractReviewedPage("file/id", 2, {
+      expectedPageEvidenceId: "evidence-1",
+      pageReviewRevisionId: "review-4",
+      expectedRevision: 4,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8181/api/v1/source-files/file%2Fid/reprocess");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ renderDpi: 400 });
+    expect(fetchMock.mock.calls[1][0]).toBe("http://localhost:8181/api/v1/source-files/file%2Fid/pages/2/reextract-reviewed");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      expectedPageEvidenceId: "evidence-1",
+      pageReviewRevisionId: "review-4",
+      expectedRevision: 4,
+    });
+  });
+});

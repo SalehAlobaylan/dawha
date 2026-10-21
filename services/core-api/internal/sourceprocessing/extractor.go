@@ -30,6 +30,9 @@ func (e *TextExtractor) Extract(ctx context.Context, input ExtractInput) ([]Page
 	if !IsSupportedContentType(input.ContentType) {
 		return nil, unsupportedContent(fmt.Sprintf("the stored content type %q cannot be extracted", normalizeContentType(input.ContentType)))
 	}
+	if normalizeContentType(input.ContentType) == "application/pdf" {
+		return nil, unsupportedContent("PDF extraction requires the PDF extractor in the source worker")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

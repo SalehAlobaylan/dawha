@@ -51,6 +51,7 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 		return FileView{}, ErrForbidden
 	}
 	fileID := uuid.New()
+	runID := uuid.New()
 	key := fmt.Sprintf("sources/%s/%s-%s", sourceUUID, fileID, safeFilename(input.Filename))
 	object, err := s.Store.Put(ctx, key, bytes.NewReader(input.Content), input.ContentType)
 	if err != nil {
@@ -62,7 +63,7 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 	}
 	digest := sha256.Sum256(input.Content)
 	checksum := hex.EncodeToString(digest[:])
-	payload, err := json.Marshal(JobPayload{SourceID: sourceUUID.String(), SourceFileID: fileID.String()})
+	payload, err := json.Marshal(JobPayload{SourceID: sourceUUID.String(), SourceFileID: fileID.String(), RunID: runID.String(), RunKind: "document", RenderDPI: 300})
 	if err != nil {
 		_ = s.Store.Delete(ctx, key)
 		return FileView{}, err
@@ -71,7 +72,7 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 		Type:           SourceProcessJobType,
 		Payload:        payload,
 		Priority:       0,
-		IdempotencyKey: "source_process:" + fileID.String(),
+		IdempotencyKey: "source_process_run:" + runID.String(),
 		MaxAttempts:    3,
 	}
 	tx, err := s.Pool.Begin(ctx)
@@ -87,11 +88,10 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 		_ = s.Store.Delete(ctx, key)
 		return FileView{}, err
 	}
-	runID := uuid.New()
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO source_processing_runs (id, source_id, source_file_id, status, stage)
-		VALUES ($1, $2, $3, 'queued', 'queued')
-	`, runID, sourceUUID, fileID); err != nil {
+		INSERT INTO source_processing_runs (id, source_id, source_file_id, status, stage, run_kind, pipeline_config, triggered_by)
+		VALUES ($1, $2, $3, 'queued', 'queued', 'document', $4, $5)
+	`, runID, sourceUUID, fileID, mustJSON(map[string]any{"renderDpi": 300, "ocr": "local_poppler_tesseract"}), actorUUID); err != nil {
 		_ = s.Store.Delete(ctx, key)
 		return FileView{}, err
 	}
@@ -146,11 +146,9 @@ func validateUploadInput(input UploadInput) (UploadInput, error) {
 	return input, nil
 }
 
-// V1 source format contract. The extraction worker reads text only, so the
-// accepted matrix is text plus the two structured text formats, and the API,
-// the worker, the error copy, and the UI copy all read it from here. Adding a
-// format means adding an extractor, not a row.
-var supportedContentTypes = []string{"text/*", "application/json", "application/xml"}
+// Supported source format contract. The API, worker, error copy, and UI copy
+// share this list; adding a format also requires a matching extraction path.
+var supportedContentTypes = []string{"text/*", "application/json", "application/xml", "application/pdf"}
 
 // undeclaredContentType is what a multipart part carries when the client does
 // not name a format. It carries no claim to verify, so the bytes decide.
@@ -221,6 +219,10 @@ func UnsupportedFormatSummary() string {
 func resolveContentType(declared string, content []byte) (string, error) {
 	normalized := normalizeContentType(declared)
 	detected := normalizeContentType(http.DetectContentType(content))
+	pdfSignature := hasPDFHeader(content)
+	if pdfSignature {
+		detected = "application/pdf"
+	}
 	effective := normalized
 	if effective == "" || effective == undeclaredContentType {
 		effective = detected
@@ -233,6 +235,15 @@ func resolveContentType(declared string, content []byte) (string, error) {
 	}
 	if !IsSupportedContentType(detected) {
 		return "", unsupportedContent(fmt.Sprintf("the declared content type %q contradicts the detected content type %q", effective, detected))
+	}
+	if pdfSignature && normalized != "" && normalized != undeclaredContentType && normalized != "application/pdf" {
+		return "", unsupportedContent(fmt.Sprintf("the declared content type %q contradicts the detected PDF content", normalized))
+	}
+	if effective == "application/pdf" {
+		if !pdfSignature {
+			return "", unsupportedContent("the content does not have a PDF signature")
+		}
+		return effective, nil
 	}
 	if !utf8.Valid(content) {
 		return "", unsupportedContent(fmt.Sprintf("the content type %q does not carry valid UTF-8 text", effective))
@@ -271,11 +282,18 @@ func parseIDs(resourceID, actorID string) (uuid.UUID, uuid.UUID, error) {
 }
 
 func (s *Service) ready() error {
-	if s == nil || s.Pool == nil {
-		return ErrDatabaseUnavailable
+	if err := s.databaseReady(); err != nil {
+		return err
 	}
 	if s.Store == nil || s.Jobs == nil {
 		return ErrStorageUnavailable
+	}
+	return nil
+}
+
+func (s *Service) databaseReady() error {
+	if s == nil || s.Pool == nil {
+		return ErrDatabaseUnavailable
 	}
 	return nil
 }

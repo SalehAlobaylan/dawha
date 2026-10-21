@@ -6,8 +6,11 @@ import unicodedata
 from itertools import combinations
 from typing import Literal, Protocol
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.chart_vision import configured_chart_vision, create_chart_vision_router
 
 _DIACRITICS = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACES = re.compile(r"\s+")
@@ -113,6 +116,28 @@ app = FastAPI(
     version="0.2.0",
     description="Research assistance that never decides historical truth.",
 )
+app.include_router(create_chart_vision_router(configured_chart_vision()))
+
+
+@app.middleware("http")
+async def bound_chart_vision_request_body(request: Request, call_next):
+    if request.url.path.startswith("/v1/vision/chart/"):
+        content_length = request.headers.get("content-length")
+        if content_length is None:
+            return JSONResponse(
+                status_code=411,
+                content={"detail": "chart vision requests need a bounded Content-Length"},
+            )
+        try:
+            body_size = int(content_length)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})
+        if body_size < 1 or body_size > 24 * 1024 * 1024:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "chart vision request body exceeds the limit"},
+            )
+    return await call_next(request)
 
 
 def normalize_arabic_name(value: str) -> str:

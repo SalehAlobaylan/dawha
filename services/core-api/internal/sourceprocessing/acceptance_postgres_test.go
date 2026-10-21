@@ -174,16 +174,16 @@ func TestUploadRefusesAnUnsupportedFormatWithTheAcceptedList(t *testing.T) {
 		t.Fatalf("create source: %v", err)
 	}
 	_, err = service.Upload(ctx, source.Source.ID, owner.User.ID, UploadInput{
-		Filename:    "سجل.pdf",
-		ContentType: "application/pdf",
-		Content:     []byte("%PDF-1.7\nbinary"),
+		Filename:    "سجل.zip",
+		ContentType: "application/zip",
+		Content:     []byte("PK\x03\x04binary"),
 	})
 	if !errors.Is(err, ErrUnsupportedContent) {
-		t.Fatalf("pdf upload = %v, want ErrUnsupportedContent", err)
+		t.Fatalf("zip upload = %v, want ErrUnsupportedContent", err)
 	}
 	// The refusal names the format it refused and the ones it accepts, so the
 	// caller can act on it without reading the source.
-	for _, fragment := range []string{"application/pdf", "text/*", "application/json", "application/xml"} {
+	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf"} {
 		if !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("refusal %q does not mention %q", err.Error(), fragment)
 		}

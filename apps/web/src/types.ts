@@ -319,6 +319,10 @@ export interface SourceProcessingRun {
   jobId?: string;
   status: "queued" | "running" | "succeeded" | "failed";
   stage: string;
+  runKind: "document" | "reviewed_page";
+  pipelineConfig: Record<string, unknown>;
+  triggeredBy?: string;
+  pageReviewRevisionId?: string;
   pageCount: number;
   passageCount: number;
   candidateCount: number;
@@ -343,6 +347,7 @@ export interface SourceCandidate {
   sourceId: string;
   sourceFileId: string;
   sourcePassageId: string;
+  processingRunId?: string;
   sourceStatementId?: string;
   candidateType: "entity" | "claim";
   rawTextAr: string;
@@ -365,7 +370,7 @@ export interface SourceCandidate {
   passageTextAr: string;
   locatorAr?: string;
   modelVersion?: string;
-  status: "unreviewed" | "accepted" | "rejected" | "needs_review";
+  status: "unreviewed" | "accepted" | "rejected" | "needs_review" | "superseded";
   reviewedBy?: string;
   reviewedAt?: string;
   reviewNoteAr?: string;
@@ -374,6 +379,328 @@ export interface SourceCandidate {
   createdAt: string;
   updatedAt: string;
   reviews: CandidateReview[];
+}
+
+export interface SourcePageReading {
+  method: string;
+  model: string;
+  text: string;
+  confidence?: number;
+  selected: boolean;
+}
+
+export interface SourcePageRegion {
+  method: string;
+  kind: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence?: number;
+}
+
+export interface SourcePageEvidence {
+  pageEvidenceId: string;
+  sourceFileId: string;
+  pageNumber: number;
+  width: number;
+  height: number;
+  status: "readable" | "unreadable";
+  selectedMethod: string;
+  text: string;
+  readings: SourcePageReading[];
+  regions: SourcePageRegion[];
+  currentReview?: SourcePageReviewRevision;
+  reviewCount: number;
+  createdAt: string;
+}
+
+export type BookAssertionPredicate = "parent_of" | "spouse_of" | "sibling_of" | "descendant_of" | "reported_relationship" | "mention_only";
+export type BookAssertionState = "draft" | "reviewed" | "rejected";
+
+export interface BookAssertionInput {
+  pageEvidenceId: string;
+  pageReviewRevisionId: string;
+  expectedReviewRevision: number;
+  quoteStartCodepoint: number;
+  quoteEndCodepoint: number;
+  quoteTextAr: string;
+  subjectMentionAr: string;
+  predicate: BookAssertionPredicate;
+  objectMentionAr: string;
+  printedPageLabel?: string;
+  attributionAr?: string;
+  polarity: "affirmed" | "negated";
+  certainty: "asserted" | "reported" | "uncertain";
+  noteAr?: string;
+}
+
+export interface BookAssertion extends Omit<BookAssertionInput, "expectedReviewRevision"> {
+  id: string;
+  sourceId: string;
+  sourceFileId: string;
+  state: BookAssertionState;
+  revision: number;
+  sourceStatementId?: string;
+  offsetUnit: "unicode_codepoints_half_open";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewBookAssertionInput {
+  expectedRevision: number;
+  decision: "reviewed" | "rejected";
+  noteAr?: string;
+}
+
+export interface SourceTreeDraftPoint {
+  x: number;
+  y: number;
+}
+
+export type SourcePageBox = Omit<SourcePageRegion, "method">;
+
+export interface SourceTreeDraftNode {
+  id: string;
+  nameAr: string;
+  pageEvidenceId: string;
+  region: SourcePageBox;
+  included: boolean;
+  reviewed: boolean;
+  status: "proposed" | "reviewed" | "rejected";
+  noteAr?: string;
+}
+
+export interface SourceTreeDraftEdge {
+  id: string;
+  subjectNodeId: string;
+  objectNodeId: string;
+  predicate: "parent_of" | "spouse_of" | "sibling_of" | "descendant_of" | "unknown";
+  pageEvidenceId: string;
+  path: SourceTreeDraftPoint[];
+  status: "proposed" | "reviewed" | "rejected";
+  secondReviewRequired: boolean;
+  reviewerCount: number;
+  reviewedByMe: boolean;
+  noteAr?: string;
+}
+
+export interface SourceTreeDraftPage {
+  pageNumber: number;
+  pageEvidenceId: string;
+  width: number;
+  height: number;
+  lineCandidates: SourcePageBox[];
+  lineCandidatesTruncated: boolean;
+}
+
+export interface SourceTreeDraft {
+  id: string;
+  sourceId: string;
+  sourceFileId: string;
+  processingRunId?: string;
+  titleAr: string;
+  state: "draft" | "imported" | "retracted";
+  revision: number;
+  treeId?: string;
+  treeVersionId?: string;
+  nodes: SourceTreeDraftNode[];
+  edges: SourceTreeDraftEdge[];
+  pages: SourceTreeDraftPage[];
+  warnings: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveSourceTreeDraftInput {
+  expectedRevision: number;
+  titleAr: string;
+  nodes: SourceTreeDraftNode[];
+  edges: SourceTreeDraftEdge[];
+}
+
+export interface SourceTreeDraftImportResult {
+  draftId: string;
+  treeId: string;
+  treeVersionId: string;
+  importedPeople: number;
+  importedRelations: number;
+  stagedRelations: number;
+  warnings: string[];
+}
+
+export interface SourceTreeDraftRetractionResult {
+  draftId: string;
+  treeId: string;
+  supersedingVersionId: string;
+  excludedNodes: number;
+  excludedRelations: number;
+}
+
+export type ChartRunStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
+export type ChartQualityStatus = "unqualified" | "manual_required" | "qualified_for_assisted_review";
+export type ChartNameReviewStatus = "needs_review" | "verified" | "rejected" | "unreadable";
+
+export type ChartPointPair = [number, number];
+
+export interface ChartBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ChartBranchRegion {
+  id: string;
+  pageNumber: number;
+  polygon: ChartPointPair[];
+  label?: string;
+  reviewerEdited: boolean;
+  reviewStatus: "needs_review" | "confirmed" | "rejected";
+}
+
+export interface ChartNameOccurrence {
+  id: string;
+  sourceOccurrenceIds?: string[];
+  sourceTileIds?: string[];
+  pageNumber: number;
+  region: ChartBox;
+  branchId?: string;
+  legibility: "clear" | "uncertain" | "unreadable";
+  readingStatus: "readable" | "partial" | "unreadable";
+  textAr: string;
+  alternatives: string[];
+  uncertainSpans: string[];
+  reviewStatus: ChartNameReviewStatus;
+  reviewerNoteAr?: string;
+}
+
+export interface ChartConnectorHypothesis {
+  id: string;
+  pageNumber: number;
+  points: ChartPointPair[];
+  kind: "line" | "curve" | "junction" | "crossing" | "uncertain";
+  status: "needs_review" | "reviewed" | "uncertain";
+  startNameId?: string;
+  endNameId?: string;
+}
+
+export interface ChartTileView {
+  id: string;
+  pageNumber: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  status: "pending" | "running" | "succeeded" | "failed";
+  incomplete: boolean;
+  errorCode?: string;
+  subdivisionReason?: string;
+}
+
+export interface ChartQualityReport {
+  status: ChartQualityStatus;
+  reasons: string[];
+  tileCount: number;
+  processedTileCount: number;
+  failedTileCount: number;
+  incompleteTileCount: number;
+  failedUnitCount: number;
+  pendingUnitCount: number;
+  nameOccurrenceCount: number;
+  unreadableNameCount: number;
+  unreviewedNameCount: number;
+  unreviewedBranchCount: number;
+  unresolvedConnectorCount: number;
+  providerCallCount: number;
+  inputImageBytes: number;
+  precisionTarget: number;
+  recallTarget: number;
+  benchmarkQualified: boolean;
+  maxLocateOutputTokens: number;
+  maxReadOutputTokens: number;
+  maxOutputTokensPerRun: number;
+}
+
+export interface ChartAnalysisReviewPayload {
+  expectedRevision: number;
+  branches: ChartBranchRegion[];
+  names: ChartNameOccurrence[];
+  connectors: ChartConnectorHypothesis[];
+  reviewedTileIds: string[];
+  residualRegionsReviewed: boolean;
+  coverageConfirmed: boolean;
+}
+
+export interface ChartAnalysisView {
+  id: string;
+  sourceId: string;
+  sourceFileId: string;
+  status: ChartRunStatus;
+  qualityStatus: ChartQualityStatus;
+  modelVersion: string;
+  pipelineConfig: Record<string, unknown>;
+  pageCount: number;
+  pageWidth: number;
+  pageHeight: number;
+  pageWidthPoints: number;
+  pageHeightPoints: number;
+  reviewRevision: number;
+  tiles: ChartTileView[];
+  branches: ChartBranchRegion[];
+  names: ChartNameOccurrence[];
+  connectors: ChartConnectorHypothesis[];
+  residualRegions: ChartBox[];
+  review?: ChartAnalysisReviewPayload;
+  quality: ChartQualityReport;
+  errorCode?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourcePageReviewRevision {
+  id: string;
+  sourcePageEvidenceId: string;
+  revisionNumber: number;
+  status: "transcribed" | "partial" | "unreadable";
+  textAr: string;
+  noteAr?: string;
+  reviewerId: string;
+  createdAt: string;
+}
+
+export interface SourcePageReviewInput {
+  expected_page_evidence_id: string;
+  expected_revision: number;
+  status: "transcribed" | "partial" | "unreadable";
+  text_ar: string;
+  note_ar?: string;
+}
+
+export interface ReextractReviewedPageInput {
+  expectedPageEvidenceId: string;
+  pageReviewRevisionId: string;
+  expectedRevision: number;
+}
+
+export interface SourcePageEvidenceSummary {
+  pageNumber: number;
+  width: number;
+  height: number;
+  status: "readable" | "unreadable";
+  selectedMethod: string;
+  reviewCount: number;
+  createdAt: string;
+}
+
+export interface SourcePageEvidenceIndex {
+  sourceFileId: string;
+  pages: SourcePageEvidenceSummary[];
+}
+
+export interface SourceFileDownload {
+  url: string;
+  filename: string;
+  contentType: string;
+  expiresInSeconds: number;
 }
 
 export interface SourceProcessing {

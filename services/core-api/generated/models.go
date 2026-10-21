@@ -844,6 +844,39 @@ type Source struct {
 	Visibility          string
 }
 
+type SourceBookAssertion struct {
+	ID                   pgtype.UUID
+	SourceID             pgtype.UUID
+	SourceFileID         pgtype.UUID
+	PageEvidenceID       pgtype.UUID
+	PageReviewRevisionID pgtype.UUID
+	CreatedBy            pgtype.UUID
+	SourceStatementID    pgtype.UUID
+	State                string
+	CurrentRevision      int32
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
+type SourceBookAssertionReview struct {
+	ID             pgtype.UUID
+	AssertionID    pgtype.UUID
+	RevisionNumber int32
+	ReviewerID     pgtype.UUID
+	Decision       string
+	NoteAr         pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+}
+
+type SourceBookAssertionRevision struct {
+	ID             pgtype.UUID
+	AssertionID    pgtype.UUID
+	RevisionNumber int32
+	ReviewerID     pgtype.UUID
+	Payload        []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
 type SourceCandidate struct {
 	ID                     pgtype.UUID
 	SourceID               pgtype.UUID
@@ -878,6 +911,7 @@ type SourceCandidate struct {
 	AcceptedRecordID       pgtype.UUID
 	CreatedAt              pgtype.Timestamptz
 	UpdatedAt              pgtype.Timestamptz
+	SourceProcessingRunID  pgtype.UUID
 }
 
 type SourceCandidateReview struct {
@@ -938,6 +972,50 @@ type SourceCharacterizationRun struct {
 	UpdatedAt                  pgtype.Timestamptz
 }
 
+type SourceChartAnalysisReviewRevision struct {
+	RunID          pgtype.UUID
+	RevisionNumber int32
+	ReviewerID     pgtype.UUID
+	Payload        []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+type SourceChartAnalysisRun struct {
+	ID                    pgtype.UUID
+	SourceID              pgtype.UUID
+	SourceFileID          pgtype.UUID
+	CreatedBy             pgtype.UUID
+	JobID                 pgtype.UUID
+	SourceChecksumSha256  string
+	Status                string
+	QualityStatus         string
+	PipelineConfig        []byte
+	ModelVersion          string
+	PageCount             int32
+	ProviderCallCount     int32
+	InputImageBytes       int64
+	CurrentReviewRevision int32
+	ErrorCode             pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+}
+
+type SourceChartAnalysisUnit struct {
+	ID            pgtype.UUID
+	RunID         pgtype.UUID
+	UnitKey       string
+	UnitKind      string
+	PageNumber    int32
+	InputGeometry []byte
+	Status        string
+	OutputPayload []byte
+	ErrorCode     pgtype.Text
+	Attempts      int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type SourceDependency struct {
 	ID                pgtype.UUID
 	SourceID          pgtype.UUID
@@ -974,53 +1052,156 @@ type SourceFile struct {
 	ProcessingStatus   string
 	ProcessingError    pgtype.Text
 	ProcessedAt        pgtype.Timestamptz
+	DocumentKind       string
+}
+
+type SourcePageEvidence struct {
+	ID               pgtype.UUID
+	RunID            pgtype.UUID
+	SourceID         pgtype.UUID
+	SourceFileID     pgtype.UUID
+	PageNumber       int32
+	PageWidth        float64
+	PageHeight       float64
+	ExtractionStatus string
+	SelectedMethod   string
+	TextAr           string
+	Readings         []byte
+	Regions          []byte
+	RegionCount      int32
+	CreatedAt        pgtype.Timestamptz
+}
+
+type SourcePageReviewRevision struct {
+	ID                   pgtype.UUID
+	SourcePageEvidenceID pgtype.UUID
+	RevisionNumber       int32
+	ReviewerID           pgtype.UUID
+	Status               string
+	TranscriptionTextAr  string
+	NoteAr               pgtype.Text
+	CreatedAt            pgtype.Timestamptz
 }
 
 type SourcePassage struct {
-	ID               pgtype.UUID
-	SourceID         pgtype.UUID
-	SequenceNumber   int32
-	PageNumber       pgtype.Int4
-	LocatorAr        pgtype.Text
-	TextAr           string
-	NormalizedTextAr string
-	Embedding        pgvector.Vector
-	CreatedAt        pgtype.Timestamptz
-	SourceFileID     pgtype.UUID
-	StartOffset      pgtype.Int4
-	EndOffset        pgtype.Int4
+	ID                         pgtype.UUID
+	SourceID                   pgtype.UUID
+	SequenceNumber             int32
+	PageNumber                 pgtype.Int4
+	LocatorAr                  pgtype.Text
+	TextAr                     string
+	NormalizedTextAr           string
+	Embedding                  pgvector.Vector
+	CreatedAt                  pgtype.Timestamptz
+	SourceFileID               pgtype.UUID
+	StartOffset                pgtype.Int4
+	EndOffset                  pgtype.Int4
+	SourceProcessingRunID      pgtype.UUID
+	SourcePageEvidenceID       pgtype.UUID
+	SourcePageReviewRevisionID pgtype.UUID
 }
 
 type SourceProcessingRun struct {
-	ID             pgtype.UUID
-	SourceID       pgtype.UUID
-	SourceFileID   pgtype.UUID
-	JobID          pgtype.UUID
-	Status         string
-	Stage          string
-	PageCount      int32
-	PassageCount   int32
-	CandidateCount int32
-	ModelVersion   pgtype.Text
-	Error          pgtype.Text
-	StartedAt      pgtype.Timestamptz
-	CompletedAt    pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                        pgtype.UUID
+	SourceID                  pgtype.UUID
+	SourceFileID              pgtype.UUID
+	JobID                     pgtype.UUID
+	Status                    string
+	Stage                     string
+	PageCount                 int32
+	PassageCount              int32
+	CandidateCount            int32
+	ModelVersion              pgtype.Text
+	Error                     pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	CompletedAt               pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	RunKind                   string
+	PipelineConfig            []byte
+	TriggeredBy               pgtype.UUID
+	InputPageReviewRevisionID pgtype.UUID
 }
 
 type SourceStatement struct {
-	ID               pgtype.UUID
-	SourceID         pgtype.UUID
-	SourcePassageID  pgtype.UUID
-	StatementTextAr  string
-	LocatorAr        pgtype.Text
-	ExtractionMethod string
-	ReviewStatus     string
-	CreatedBy        pgtype.UUID
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	SourceFileID     pgtype.UUID
+	ID                         pgtype.UUID
+	SourceID                   pgtype.UUID
+	SourcePassageID            pgtype.UUID
+	StatementTextAr            string
+	LocatorAr                  pgtype.Text
+	ExtractionMethod           string
+	ReviewStatus               string
+	CreatedBy                  pgtype.UUID
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	SourceFileID               pgtype.UUID
+	SourcePageEvidenceID       pgtype.UUID
+	SourcePageReviewRevisionID pgtype.UUID
+	SourceProcessingRunID      pgtype.UUID
+}
+
+type SourceTreeDraft struct {
+	ID                    pgtype.UUID
+	SourceID              pgtype.UUID
+	SourceFileID          pgtype.UUID
+	CreatedBy             pgtype.UUID
+	TitleAr               string
+	State                 string
+	CurrentRevision       int32
+	TreeID                pgtype.UUID
+	TreeVersionID         pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	SourceProcessingRunID pgtype.UUID
+}
+
+type SourceTreeDraftEdgeReview struct {
+	DraftID         pgtype.UUID
+	EdgeID          pgtype.UUID
+	EdgeFingerprint string
+	ReviewerID      pgtype.UUID
+	RevisionNumber  int32
+	CreatedAt       pgtype.Timestamptz
+}
+
+type SourceTreeDraftImport struct {
+	ID            pgtype.UUID
+	DraftID       pgtype.UUID
+	ActorID       pgtype.UUID
+	TreeID        pgtype.UUID
+	TreeVersionID pgtype.UUID
+	Status        string
+	Manifest      []byte
+	CreatedAt     pgtype.Timestamptz
+	RetractedAt   pgtype.Timestamptz
+}
+
+type SourceTreeDraftRevision struct {
+	ID             pgtype.UUID
+	DraftID        pgtype.UUID
+	RevisionNumber int32
+	ReviewerID     pgtype.UUID
+	Payload        []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+type SourceTreeImportEdgeEvidence struct {
+	ImportID           pgtype.UUID
+	TreeRelationshipID pgtype.UUID
+	DraftEdgeID        pgtype.UUID
+	PageEvidenceID     pgtype.UUID
+	ConnectorPath      []byte
+	Status             string
+}
+
+type SourceTreeImportNodeEvidence struct {
+	ImportID       pgtype.UUID
+	TreeNodeID     pgtype.UUID
+	DraftNodeID    pgtype.UUID
+	PageEvidenceID pgtype.UUID
+	LabelAr        string
+	Region         []byte
+	Status         string
 }
 
 type SpatialEvidence struct {

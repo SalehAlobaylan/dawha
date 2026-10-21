@@ -67,6 +67,20 @@ import type {
   ReviewTemporalFindingInput,
   SearchResponse,
   SourceCandidate,
+  SourceTreeDraft,
+  SaveSourceTreeDraftInput,
+  SourceTreeDraftImportResult,
+  SourceTreeDraftRetractionResult,
+  ChartAnalysisView,
+  ChartAnalysisReviewPayload,
+  SourcePageEvidence,
+  SourcePageEvidenceIndex,
+  SourcePageReviewInput,
+  SourcePageReviewRevision,
+  BookAssertion,
+  BookAssertionInput,
+  ReviewBookAssertionInput,
+  SourceFileDownload,
   SourceDetail,
   SourceCharacterizationInput,
   SourceCharacterizationRun,
@@ -75,6 +89,8 @@ import type {
   SourceFile,
   SourceMetadata,
   SourceProcessing,
+  SourceProcessingRun,
+  ReextractReviewedPageInput,
   StartTemporalAnalysisInput,
   StartGeospatialIntelligenceInput,
   TemporalAnalysisRun,
@@ -1472,6 +1488,277 @@ export async function fetchSourceProcessing(sourceId: string): Promise<SourcePro
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as SourceProcessing;
+}
+
+export async function fetchSourcePageEvidence(fileId: string, pageNumber: number): Promise<SourcePageEvidence> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لمراجعة صفحة المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourcePageEvidence;
+}
+
+export async function reviewSourcePage(fileId: string, pageNumber: number, input: SourcePageReviewInput): Promise<SourcePageReviewRevision> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لحفظ مراجعة صفحة المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/review`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourcePageReviewRevision;
+}
+
+export async function reprocessSourceFile(fileId: string, renderDpi: 300 | 400 = 400): Promise<SourceProcessingRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لإعادة معالجة ملف المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/reprocess`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ renderDpi }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceProcessingRun;
+}
+
+export async function reextractReviewedPage(fileId: string, pageNumber: number, input: ReextractReviewedPageInput): Promise<SourceProcessingRun> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لإعادة استخراج النص المصحح.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/reextract-reviewed`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceProcessingRun;
+}
+
+export async function fetchSourcePageEvidenceIndex(fileId: string): Promise<SourcePageEvidenceIndex> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض صفحات PDF الأصلية.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourcePageEvidenceIndex;
+}
+
+export async function fetchSourcePagePreview(fileId: string, pageNumber: number): Promise<Blob> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لمعاينة صفحة المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/preview`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return response.blob();
+}
+
+export async function startSourceChartAnalysis(fileId: string): Promise<ChartAnalysisView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لبدء تحليل الشجرة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/chart-analysis`, {
+    method: "POST", credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ChartAnalysisView;
+}
+
+export async function fetchSourceChartAnalysis(fileId: string): Promise<ChartAnalysisView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض تحليل الشجرة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/chart-analysis`, {
+    credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ChartAnalysisView;
+}
+
+export async function retrySourceChartAnalysis(runId: string): Promise<ChartAnalysisView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعادة المحاولة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-chart-analysis-runs/${encodeURIComponent(runId)}/retry`, {
+    method: "POST", credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ChartAnalysisView;
+}
+
+export async function saveSourceChartAnalysisReview(runId: string, input: ChartAnalysisReviewPayload): Promise<ChartAnalysisView> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لحفظ مراجعة الشجرة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-chart-analysis-runs/${encodeURIComponent(runId)}/review`, {
+    method: "PUT", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as ChartAnalysisView;
+}
+
+export async function createSourceTreeDraft(fileId: string, titleAr?: string): Promise<SourceTreeDraft> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لإنشاء مسودة شجرة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/tree-drafts`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ titleAr: titleAr ?? "" }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraft;
+}
+
+export async function fetchSourceTreeDraft(draftId: string): Promise<SourceTreeDraft> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لمراجعة مسودة الشجرة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraft;
+}
+
+export async function saveSourceTreeDraft(draftId: string, input: SaveSourceTreeDraftInput): Promise<SourceTreeDraft> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لحفظ مسودة الشجرة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}`, {
+    method: "PUT",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraft;
+}
+
+export async function importSourceTreeDraft(draftId: string, expectedRevision: number): Promise<SourceTreeDraftImportResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لاستيراد مسودة الشجرة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/import`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedRevision }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraftImportResult;
+}
+
+export async function retractSourceTreeDraft(draftId: string): Promise<SourceTreeDraftRetractionResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API للتراجع عن استيراد الشجرة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/retract`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraftRetractionResult;
+}
+
+export async function createBookAssertion(fileId: string, input: BookAssertionInput): Promise<BookAssertion> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتسجيل عبارة من الكتاب.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/book-assertions`, {
+    method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as BookAssertion;
+}
+
+export async function updateBookAssertion(assertionId: string, input: BookAssertionInput & { expectedRevision: number }): Promise<BookAssertion> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتعديل عبارة الكتاب.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-book-assertions/${encodeURIComponent(assertionId)}`, {
+    method: "PUT", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as BookAssertion;
+}
+
+export async function reviewBookAssertion(assertionId: string, input: ReviewBookAssertionInput): Promise<BookAssertion> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لمراجعة عبارة الكتاب.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-book-assertions/${encodeURIComponent(assertionId)}/review`, {
+    method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as BookAssertion;
+}
+
+export async function fetchBookAssertions(fileId: string): Promise<BookAssertion[]> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض عبارات الكتاب.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/book-assertions`, {
+    credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as BookAssertion[];
+}
+
+export async function createSourceFileDownloadLink(fileId: string): Promise<SourceFileDownload> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض ملف المصدر.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/download`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceFileDownload;
 }
 
 export async function uploadSourceFile(sourceId: string, file: File): Promise<SourceFile> {
