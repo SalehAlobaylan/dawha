@@ -520,13 +520,57 @@ export interface SaveSourceTreeDraftInput {
   edges: SourceTreeDraftEdge[];
 }
 
+export interface SourceTreeDraftCollision {
+  draftNodeId: string;
+  draftNameAr: string;
+  existingPersonId: string;
+  existingNameAr: string;
+  matchClass: string;
+  score: number;
+  basis: string;
+}
+
+export interface SourceTreeDraftImportPreview {
+  draftId: string;
+  expectedRevision: number;
+  sourceFileChecksum: string;
+  newPeople: number;
+  linkedExisting: number;
+  collisions: SourceTreeDraftCollision[];
+  relations: number;
+  stagedRelations: number;
+  statements: number;
+  aliases: number;
+  candidates: number;
+  excludedNodes: number;
+  warnings: string[];
+}
+
+export interface SourceTreeDraftImportInput {
+  expectedRevision: number;
+  acknowledgePreview: boolean;
+  sourceFileChecksum: string;
+  expectedNewPeople: number;
+  expectedLinkedPeople: number;
+  expectedCollisions: number;
+  expectedRelations: number;
+  expectedStatements: number;
+  expectedAliases: number;
+}
+
 export interface SourceTreeDraftImportResult {
   draftId: string;
   treeId: string;
   treeVersionId: string;
   importedPeople: number;
+  linkedExistingPeople: number;
   importedRelations: number;
   stagedRelations: number;
+  statements: number;
+  aliases: number;
+  candidates: number;
+  resolutionRunId?: string;
+  collisions: SourceTreeDraftCollision[];
   warnings: string[];
 }
 
@@ -536,6 +580,10 @@ export interface SourceTreeDraftRetractionResult {
   supersedingVersionId: string;
   excludedNodes: number;
   excludedRelations: number;
+  retractedStatements: number;
+  retractedRelationships: number;
+  retractedAliases: number;
+  preservedGraphRows: number;
 }
 
 export type ChartRunStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
@@ -2833,4 +2881,120 @@ export interface PlaceRecord {
   latitude: number;
   evidence: number;
   status: "موثق" | "مقترح" | "متنازع عليه";
+}
+
+// A suggestion is one machine reading of one place on a page, waiting for a
+// person's decision. The confidence is MEASURED - it is the share of the reading
+// views that agreed - so it orders the queue and decides nothing.
+export interface SourceTreeSuggestion {
+  id: string;
+  occurrenceId: string;
+  pageNumber: number;
+  kind: "name";
+  suggestedTextAr: string;
+  decidedTextAr?: string;
+  /** The reader's own alternatives, best first. Hypotheses, never decisions. */
+  alternatives?: string[];
+  region: { x: number; y: number; width: number; height: number };
+  confidence: number;
+  viewCount: number;
+  readingMethod: string;
+  readingModel: string;
+  status: "suggested" | "accepted" | "corrected" | "rejected" | "deferred";
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNoteAr?: string;
+  sourcePageEvidenceId?: string;
+}
+
+export type SourceTreeSuggestionDecision = "accepted" | "corrected" | "rejected" | "deferred";
+
+export type SourceTreeSuggestionInputMethod = "legacy" | "reader" | "candidate" | "typed" | "none";
+
+export type SourceTreeSuggestionCandidateSource = "reader" | "ai" | "file" | "common";
+
+// What the reviewer saw at the moment of the decision. The snapshot is review
+// evidence, not a new reading: the machine's suggestion stays in
+// suggestedTextAr, and the reviewer's text stays in decidedTextAr.
+export interface SourceTreeSuggestionCandidateSnapshot {
+  value: string;
+  key: string;
+  compactKey?: string;
+  particleKey?: string;
+  skeletonKey?: string;
+  sources: SourceTreeSuggestionCandidateSource[];
+  ranks: Partial<Record<SourceTreeSuggestionCandidateSource, number>>;
+  score: number;
+  fileCount?: number;
+  shown: boolean;
+  position: number;
+}
+
+// A judge's answer is recorded as evidence and never applied to the suggestion.
+// The choice must be one of the snapshot values or "unclear".
+export interface SourceTreeSuggestionJudgeOutput {
+  mode: "shadow" | "active";
+  provider: "jev" | "liquid";
+  model: string;
+  promptVersion: string;
+  choice?: string;
+  probabilities: Record<string, number>;
+  confidence: number;
+  abstained: boolean;
+  readable?: boolean | null;
+  shown: boolean;
+  used?: boolean;
+  latencyMs: number;
+}
+
+export type NameJudgeMode = "off" | "shadow" | "active";
+
+export interface NameJudgeConfig {
+  mode: NameJudgeMode;
+  imageEnabled: boolean;
+  available: boolean;
+  sample: number;
+}
+
+export interface NameJudgeCandidateInput {
+  value: string;
+  source: SourceTreeSuggestionCandidateSource;
+  rank: number;
+}
+
+// The core maps the provider's ASCII option keys back to these display values
+// before the browser sees them. A judge cannot introduce a new name here.
+export interface NameJudgeResult {
+  choice: string | null;
+  abstained: boolean;
+  probabilities: Record<string, number>;
+  confidence: number;
+  readable: boolean | null;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  cacheHit: boolean;
+}
+
+export interface SourceTreeSuggestionDecisionEvidence {
+  candidateSnapshot?: SourceTreeSuggestionCandidateSnapshot[];
+  selectedCandidate?: string;
+  inputMethod?: SourceTreeSuggestionInputMethod;
+  judgeOutput?: SourceTreeSuggestionJudgeOutput;
+  normalizerVersion?: string;
+  candidatePoolVersion?: string;
+  durationMs?: number;
+}
+
+// The accuracy the review decisions imply. The count is reported beside the
+// figure, because a percentage computed from a handful of suggestions is not a
+// percentage.
+export interface SourceSuggestionAccuracy {
+  total: number;
+  accepted: number;
+  corrected: number;
+  rejected: number;
+  deferred: number;
+  unchangedRate: number;
+  measurable: boolean;
 }

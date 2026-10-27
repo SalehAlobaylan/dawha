@@ -69,6 +69,8 @@ import type {
   SourceCandidate,
   SourceTreeDraft,
   SaveSourceTreeDraftInput,
+  SourceTreeDraftImportInput,
+  SourceTreeDraftImportPreview,
   SourceTreeDraftImportResult,
   SourceTreeDraftRetractionResult,
   ChartAnalysisView,
@@ -114,6 +116,13 @@ import type {
   UpdatePermissionInput,
   UpdateQuestionInput,
   UpdateRelationshipInput,
+  SourceSuggestionAccuracy,
+  SourceTreeSuggestion,
+  SourceTreeSuggestionDecision,
+  SourceTreeSuggestionDecisionEvidence,
+  NameJudgeCandidateInput,
+  NameJudgeConfig,
+  NameJudgeResult,
 } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
@@ -1673,7 +1682,28 @@ export async function saveSourceTreeDraft(draftId: string, input: SaveSourceTree
   return (await response.json()) as SourceTreeDraft;
 }
 
-export async function importSourceTreeDraft(draftId: string, expectedRevision: number): Promise<SourceTreeDraftImportResult> {
+// previewSourceTreeDraftImport is the import's dry run: it computes the
+// counts, the links and the candidates and writes nothing. The apply run
+// refuses to proceed without this report carried back.
+export async function previewSourceTreeDraftImport(draftId: string, expectedRevision: number): Promise<SourceTreeDraftImportPreview> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لفحص مسودة الشجرة قبل الاستيراد.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/import-preview`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedRevision }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeDraftImportPreview;
+}
+
+export async function importSourceTreeDraft(draftId: string, input: SourceTreeDraftImportInput): Promise<SourceTreeDraftImportResult> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API لاستيراد مسودة الشجرة.", 503);
   }
@@ -1682,7 +1712,7 @@ export async function importSourceTreeDraft(draftId: string, expectedRevision: n
     credentials: "include",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ expectedRevision }),
+    body: JSON.stringify(input),
     signal: AbortSignal.timeout(30000),
   });
   if (!response.ok) {
@@ -2028,4 +2058,257 @@ async function readApiError(response: Response): Promise<ApiError> {
   } catch {
     return new ApiError("تعذر إكمال العملية.", response.status);
   }
+}
+
+// The suggestion queue: the machine's readings of a file, the most certain
+// first. The confidence orders the queue and decides nothing - every suggestion
+// waits for a person.
+export async function fetchSourceTreeSuggestions(fileId: string, status = "suggested", limit = 50, offset = 0): Promise<SourceTreeSuggestion[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لجلب اقتراحات القراءة.", 503);
+  }
+  const query = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions?${query.toString()}`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceTreeSuggestion[];
+}
+
+// The source-resolution crops for one suggestion. The endpoint returns two
+// base64 PNGs in one response so the page is opened once; the browser gets an
+// object URL for each and revokes them when the active name changes.
+export async function fetchSourceSuggestionCrop(suggestionId: string): Promise<{ tight: Blob; context: Blob }> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لعرض صورة الاسم.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/crop`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { tightPng?: string; contextPng?: string };
+  if (!payload.tightPng || !payload.contextPng) {
+    throw new ApiError("لم تُرجع الخدمة صورة الاسم.", 502);
+  }
+  return { tight: base64PNG(payload.tightPng), context: base64PNG(payload.contextPng) };
+}
+
+// On-demand spelling candidates from the vision model for ONE tight crop. It is
+// deliberately not automatic: every call is a paid model request and the answer
+// is only a list of hypotheses for the reviewer.
+export async function fetchSourceSuggestionCandidates(suggestionId: string): Promise<string[]> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لطلب اقتراحات الأسماء.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/candidates`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { candidates?: unknown };
+  if (!Array.isArray(payload.candidates)) {
+    throw new ApiError("لم تُرجع الخدمة قائمة اقتراحات صالحة.", 502);
+  }
+  return payload.candidates
+    .filter((candidate): candidate is string => typeof candidate === "string")
+    .map((candidate) => candidate.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+// The review bench asks once for the judge posture. Off and unavailable are
+// normal states, not errors: the bench is fully usable without a judge.
+export async function fetchNameJudgeConfig(): Promise<NameJudgeConfig> {
+  if (!apiBaseUrl) {
+    return { mode: "off", imageEnabled: false, available: false, sample: 0 };
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/name-judge/config`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as Partial<NameJudgeConfig>;
+  if (payload.mode !== "off" && payload.mode !== "shadow" && payload.mode !== "active") {
+    throw new ApiError("أعادت الخدمة إعداد حكم أسماء غير صالح.", 502);
+  }
+  return {
+    mode: payload.mode,
+    imageEnabled: payload.imageEnabled === true,
+    available: payload.available === true,
+    sample: typeof payload.sample === "number" ? Math.max(0, Math.min(1, payload.sample)) : 0,
+  };
+}
+
+// Ask the bounded judge for an opinion. Candidate values are the only payload:
+// no source id, family id, account id, reviewer identity, or page image is sent
+// from the browser. The core owns the experimental crop gate.
+export async function judgeSourceTreeSuggestion(
+  suggestionId: string,
+  candidates: NameJudgeCandidateInput[],
+): Promise<NameJudgeResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لطلب رأي النموذج.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/judge`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidates }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as Partial<NameJudgeResult>;
+  const probabilities = payload.probabilities;
+  if (
+    (payload.choice !== null && typeof payload.choice !== "string") ||
+    typeof payload.abstained !== "boolean" ||
+    typeof payload.confidence !== "number" ||
+    payload.confidence < 0 ||
+    payload.confidence > 1 ||
+    typeof payload.provider !== "string" ||
+    typeof payload.model !== "string" ||
+    typeof payload.promptVersion !== "string" ||
+    !probabilities ||
+    typeof probabilities !== "object" ||
+    Object.values(probabilities).some((value) => typeof value !== "number" || value < 0 || value > 1)
+  ) {
+    throw new ApiError("أعادت الخدمة رأي نموذج غير صالح.", 502);
+  }
+  if (payload.abstained && payload.choice !== null) {
+    throw new ApiError("أعادت الخدمة رأي نموذج غير متسق.", 502);
+  }
+  return {
+    choice: payload.choice ?? null,
+    abstained: payload.abstained,
+    probabilities: probabilities as Record<string, number>,
+    confidence: payload.confidence,
+    readable: payload.readable === true ? true : payload.readable === false ? false : null,
+    provider: payload.provider,
+    model: payload.model,
+    promptVersion: payload.promptVersion,
+    cacheHit: payload.cacheHit === true,
+  };
+}
+
+function base64PNG(value: string): Blob {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: "image/png" });
+}
+
+// Record what a reviewer decided about a suggestion. A correction must carry the
+// correction; a rejection must carry no text. The optional evidence is what the
+// reviewer saw at decision time: a candidate snapshot, the selected candidate,
+// how it was entered, and an optional judge answer. It is evidence, not a new
+// suggestion, and the server validates it before adding it to the ledger.
+//
+// A rejected snapshot must not lose the reviewer's decision. If the server
+// rejects the evidence as malformed (400/422), retry exactly once without it and
+// report that the evidence was not recorded. The report counts the missing
+// snapshot as a measurement gap; the decision itself is still real.
+export interface SourceTreeSuggestionDecisionResult {
+  suggestion: SourceTreeSuggestion;
+  evidenceRecorded: boolean;
+}
+
+function hasDecisionEvidence(evidence: SourceTreeSuggestionDecisionEvidence): boolean {
+  return Boolean(
+    evidence.candidateSnapshot?.length ||
+    evidence.selectedCandidate ||
+    evidence.inputMethod ||
+    evidence.judgeOutput ||
+    evidence.normalizerVersion ||
+    evidence.candidatePoolVersion ||
+    evidence.durationMs !== undefined,
+  );
+}
+
+export async function decideSourceTreeSuggestion(
+  suggestionId: string,
+  decision: SourceTreeSuggestionDecision,
+  textAr = "",
+  noteAr = "",
+  evidence: SourceTreeSuggestionDecisionEvidence = {},
+): Promise<SourceTreeSuggestionDecisionResult> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لحفظ قرار المراجعة.", 503);
+  }
+  const post = (includeEvidence: boolean) => fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/decision`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(includeEvidence ? { decision, textAr, noteAr, ...evidence } : { decision, textAr, noteAr }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  let evidenceRecorded = true;
+  let response = await post(true);
+  if (!response.ok && (response.status === 400 || response.status === 422) && hasDecisionEvidence(evidence)) {
+    // No names, text, or evidence are logged: only the fact that this decision
+    // will be counted with a missing snapshot.
+    console.warn(`source suggestion decision evidence was rejected (${response.status}); retrying once without it`);
+    response = await post(false);
+    evidenceRecorded = false;
+  }
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return {
+    suggestion: (await response.json()) as SourceTreeSuggestion,
+    evidenceRecorded,
+  };
+}
+
+// How often the reader was right without correction, from the decisions the
+// reviewers made.
+export async function fetchSourceSuggestionAccuracy(fileId: string): Promise<SourceSuggestionAccuracy> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لقياس دقة القراءة.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions/accuracy`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SourceSuggestionAccuracy;
+}
+
+// Run the reading pipeline over a file and record the suggestions it finds.
+export async function readSourceTreeSuggestions(fileId: string): Promise<{ pages: number; detected: number; named: number; unreadable: number; read: boolean; medianNameHeightPx?: number; sourceTooSmall?: boolean }> {
+  if (!apiBaseUrl) {
+    throw new ApiError("شغّل Core API لقراءة الملف.", 503);
+  }
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions/read`, {
+    method: "POST",
+    credentials: "include",
+    signal: AbortSignal.timeout(300000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { pages: number; detected: number; named: number; unreadable: number; read: boolean; medianNameHeightPx?: number; sourceTooSmall?: boolean };
 }

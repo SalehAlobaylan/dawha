@@ -11,6 +11,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.chart_vision import configured_chart_vision, create_chart_vision_router
+from app.name_judge import (
+    configured_name_judge,
+    create_name_judge_router,
+    name_judge_images_enabled,
+)
 
 _DIACRITICS = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACES = re.compile(r"\s+")
@@ -117,25 +122,34 @@ app = FastAPI(
     description="Research assistance that never decides historical truth.",
 )
 app.include_router(create_chart_vision_router(configured_chart_vision()))
+app.include_router(
+    create_name_judge_router(
+        configured_name_judge(),
+        images_enabled=name_judge_images_enabled(),
+    )
+)
 
 
 @app.middleware("http")
-async def bound_chart_vision_request_body(request: Request, call_next):
-    if request.url.path.startswith("/v1/vision/chart/"):
+async def bound_ai_request_body(request: Request, call_next):
+    is_chart_vision = request.url.path.startswith("/v1/vision/chart/")
+    is_name_judge = request.url.path.startswith("/v1/names/")
+    if is_chart_vision or is_name_judge:
         content_length = request.headers.get("content-length")
         if content_length is None:
             return JSONResponse(
                 status_code=411,
-                content={"detail": "chart vision requests need a bounded Content-Length"},
+                content={"detail": "AI requests need a bounded Content-Length"},
             )
         try:
             body_size = int(content_length)
         except ValueError:
             return JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})
-        if body_size < 1 or body_size > 24 * 1024 * 1024:
+        limit = 24 * 1024 * 1024 if is_chart_vision else 8 * 1024 * 1024
+        if body_size < 1 or body_size > limit:
             return JSONResponse(
                 status_code=413,
-                content={"detail": "chart vision request body exceeds the limit"},
+                content={"detail": "AI request body exceeds the limit"},
             )
     return await call_next(request)
 

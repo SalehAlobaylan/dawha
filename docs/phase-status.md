@@ -367,15 +367,43 @@ representative-corpus gates remain open.
 | unclear chart edges require a second distinct reviewer | `TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted` |
 | lineage-book quotations retain exact Unicode spans and page-review provenance | `internal/sourceprocessing/book_assertions_acceptance_test.go` |
 | provider comparison has a reproducible evaluator contract | `tools/ocr-eval/evaluate.py`, `docs/ocr-benchmark-format.md` |
+| the name carrier localiser finds the same names in two renderings of one family | `internal/sourceprocessing/carrier_localiser_corpus_test.go`, `TestNameCarrierLocaliserAgreesAcrossTwoRenderingsOfTheSameFacts` — 474 names on the drawn rendering and 493 on the photographic one, 4 % apart |
+| a raster image is a one-page document, and the original stays the authority | `TestValidateUploadInputAcceptsRasterCharts`, `TestImageExtractionProducesOneReviewablePage`, `TestUploadProcessAndReviewAnImageSource` — JPEG/PNG/GIF accepted to 40 megapixels, previews and readings bounded, page evidence written even without Tesseract |
+| a page with no coloured shapes still yields its name groups | `carrier_localiser_test.go`, `TestDetectNameCarriersGroupsInkOnAPageWithNoColour` — the early return that made the ink pass depend on colour is gone; the reading model is `colour-text-anchor-v1+ink-name-groups-v1` |
+| an oversized chart is read at the source's resolution, not the preview's | `name_reading_test.go`, `TestPlanNameReadingTilesPartitionsThePage`, `TestReadNamesOnPageReadsEachNameOnceFromSourceTiles` — 1,920-px tiles with 256-px overlap at 240 DPI, each name assigned to one tile by its centre; آل الصباح is 54 tiles, 3,014 proposed names with a median height of 36 px, instead of ~18×7-px fragments at the old preview |
+| a source too small to read says so instead of looking like a reader failure | `tree_suggestions_test.go`, `TestNameHeightSummaryWarnsWhenTheSourceIsTooSmall` — the read result reports median name height in source pixels and warns below 18 px; the three chat images measure 3, 11 and 5 px, آل الصباح 36 px |
+| an image above the old analysis cap is accepted at the upload bound | `TestOpenChartPageAcceptsAnImageAboveThePreviewBound` — a 16.8-megapixel image opens for analysis instead of looking like a chart with no names |
+| two renderings are compared by the names they produced, not only by their counts | `internal/sourceprocessing/carrier_pairing.go`, `cmd/ocr-eval --compare` — normalised exact pairing plus trigram variants, one pairing per occurrence, Dice agreement and the unpaired names on each side. The first Jasser run paired zero names because the proposals are letter fragments at the current render; the finding is recorded in `docs/import-reading-strategy.md` §1.9 rather than reported as agreement |
+| machine readings are queued for a person, and every decision is recorded | `internal/sourceprocessing/tree_suggestions_acceptance_test.go`, `tree_suggestions.go` — the machine's reading is kept beside the reviewer's answer, a decided suggestion cannot be decided again, and no suggestion creates a person |
+| the reader's accuracy is measured from the decisions, and refuses to be a percentage too soon | `TestTheAccuracyIsMeasuredFromTheDecisionsAndRefusesToBeAPercentageTooSoon` |
+| a reviewer checks the name against the original, not a review thumbnail | `suggestion_crops.go`, `TestASuggestionCropComesFromTheOriginalSource` — tight and context crops are rendered from the stored source, capped at 1,600 px/2.5 MP, and the reviewer's crop is the exact image sent to the candidate model |
+| ambiguous readings survive as one-click corrections, not flattened text | migration `0052_source_tree_suggestion_alternatives.sql`, `ReadSuggestions`, and the workbench's reader-alternative chips |
+| spelling help can be requested for one crop without becoming a decision | `POST /api/v1/source-tree-suggestions/{id}/candidates`, `/v1/vision/chart/candidates`, `arabicNames.ts` — at most eight hypotheses, no persistence, no automatic write |
+| the decision record carries what the reviewer saw, and it stays evidence | migration `0053_source_tree_suggestion_decision_context.sql`, `TestADecisionKeepsTheCandidateEvidenceWithoutTurningItIntoAName`, `TestAMalformedCandidateSnapshotIsRejected` — snapshot, selected candidate, input method, versions, and duration are validated and written in the decision transaction; no candidate becomes a name |
+| candidate quality can be replayed without reading a source or calling a model | `cmd/name-eval`, `make name-eval`, `TestSummarizeCountsRecallRankingAndMissingEvidence`, `TestSummarizeDoesNotReinterpretASnapshotFromAnotherNormalizer`, `TestSummarizeReportsCandidateSourcesJudgeAbstentionAndCalibration` — read-only recall@8, any-shown recall, no-candidate/all-wrong rates, top-1/top-3/MRR, typed rate, median time, source coverage, file-class/resolution/page/confidence/date breakdowns, judge abstention/calibration/lift, and missing/stale snapshots; no candidate or file names are printed |
+| a bounded judge is local by default, cannot write a name, and never changes the candidate order | `services/ai-research/app/name_judge.py`, `internal/sourceprocessing/name_judge.go`, config/judge routes, `tests/test_name_judge.py`, `name_judge_test.go`, `TestTheJudgeSeesTheReviewCropAndFileContextButWritesNothing` — 1–12 ASCII-keyed options or `unclear`, pinned model/prompt, strict probabilities/confidence/choice, no source/family/account/reviewer ids, image mode off by default and tight crop only; local Liquid `d1:3b` on `/v1/systemone` is the default provider, `.env.example` enables the separate active row, and the eight-name shadow pilot is too small for a quality claim |
+| a private family document can never be committed | `infra/local/check-corpus-privacy.py`, `make ocr-corpus-check` — a leak is recognised by the sha256 of a recorded original |
+| the upload bound admits a real scanned chart | `TestValidateUploadInputAcceptsARealFamilyChart` — the exact 61,079,149-byte آل مقبل chart that the old 25 MiB bound refused |
+| an import links an exact name instead of duplicating the person | `internal/sourceprocessing/tree_import_link_test.go`, `TestTreeDraftImportLinksExactNormalizedNameInsteadOfDuplicating` — no second `people` row, the occurrence rides the existing person, the verbatim reading survives as a `source_spelling` alias |
+| two occurrences of one name stay two people | `TestTreeDraftImportSecondOccurrenceOfOneNameBecomesANewPerson` — the one-use rule with a warning, kinship kept independent |
+| near-name matches are proposed, never merged | `TestTreeDraftImportProposesFuzzyCandidateAndNeverMerges` — bounded trigram candidates inside the import's own resolution run, no `entity_merges`, no `identity_status` change |
+| imported relationships reach the research graph with provenance | the same file, dry-run test — `entity_relationships` + `source_statements` with `extraction_method='imported'`, locator naming the reviewed draft edge |
+| a dry run binds the apply | `TestTreeDraftImportDryRunWritesNothingAndApplyMatchesTheReport`, `TestTreeDraftImportRefusesToApplyWithoutTheDryRunReport` — same plan builder for both, apply refuses the unacknowledged or stale report |
+| retraction reverses the graph but keeps later research | `TestTreeDraftRetractionReversesTheGraphButKeepsLaterResearch` — graph rows, statements and aliases deleted only if nothing after the import touched them; touched rows survive and are counted |
 
 **The absent stage: `text/OCR extraction` (`IMPLEMENTATION_PLAN.md:1144`) is now partially implemented.**
-The API accepts PDFs with a `%PDF-` signature up to 25 MiB; the queued worker caps them at 200
+The API accepts PDFs with a `%PDF-` signature up to 128 MiB (raised from 25 MiB on 2026-10-22
+because a real scanned family chart is 58 MB — `TestValidateUploadInputAcceptsARealFamilyChart`
+pins the real size) and raster images (JPEG, PNG and GIF, at most 40 megapixels of source; a
+raster is one page); the queued worker caps PDFs at 200
 pages and 30 minutes and uses local Poppler plus Tesseract Arabic data. Each physical page
 preserves embedded text, an independent OCR reading where available, normalized word boxes, and
-unreadable-page status. Page readings are checkpointed before AI candidate extraction, so an AI
+unreadable-page status. An image has no native text layer, so its page is kept with an
+unavailable reading when Tesseract cannot run, and a reviewer can transcribe it like a scan.
+Page readings are checkpointed before AI candidate extraction, so an AI
 failure does not erase them; partial page failures retain completed pages and index later pages
-as not processed. Reviewers can browse every physical page and open the original PDF even when a
-page produced no candidate. An append-only
+as not processed. Reviewers can browse every physical page and open the original PDF or image
+even when a page produced no candidate. An append-only
 review endpoint stores human page transcriptions and unreadability decisions against the exact
 machine-reading version, rejects stale concurrent edits, and leaves OCR readings intact. Each
 retry appends a new page-reading snapshot; earlier human transcriptions remain visible and are
@@ -398,6 +426,29 @@ per-unit opaque `user_id` for DeepSeek's documented KV-cache isolation; its key 
 Keychain or `DEEPSEEK_API_KEY`, and it has no silent local fallback. DeepSeek's automatic disk
 context cache can retain prefixes for hours to days. The corrected v6 Jasser run used 25 calls and
 produced two name-region proposals, no branches or connectors, and 20 failed tile/subtile units.
+
+Separately from the v8 path, the plan 021 suggestion reader now localises and reads names from
+source-resolution tiles. It renders the page at 240 DPI in 1,920-px tiles with a 256-px overlap
+and assigns each name to one tile by its centre; on the 59-inch آل الصباح wall chart this is 54
+tiles and 3,014 proposals whose median height is 36 px, rather than ~18×7-px fragments. The
+read result now warns below 18 px; the three chat images measure 3, 11 and 5 px. The limit has moved
+to the reader: DeepSeek V4.1 Flash read a clean crop that a person reads as `أحمد` as `معصرة`
+at 240 DPI, `معمول` at 480, `معصم` at 600 and `معصرة` at 900, and the whole box at 1,200 DPI as
+`حماة`, while synthetic `محمد` was read correctly. The model can read Arabic but not this
+chart's calligraphic letterforms; Tesseract is inconsistent on the same crops. That is plan
+019's STOP condition recorded as a product outcome — the crisp crop and the reviewer's decision
+are the honest feature — not a reading-accuracy claim. Painted and leaf charts still fragment,
+and a larger grouping gap merges branches instead. See `docs/import-reading-strategy.md` §1.10.
+
+The suggestion review surface is now a full-screen workbench: source-resolution tight and
+context crops, a page map, the reader's reading and stored alternatives, a keyboard-first Arabic
+editor, file-local spelling suggestions, and a deliberately on-demand vision-candidate call for
+the same tight crop. Accepted and corrected names become suggestions for later names in that
+file; normalisation is used for matching only and never rewrites the display text. The accuracy
+header reports its decision count and stays a dash until the sample supports a rate. Nothing is
+auto-accepted. The remaining plan-021 work is the identity-choice and relationship-review parts,
+and folding the suggestion bench into the normal draft dialog rather than opening it from source
+processing.
 The v7 smaller-crop run stopped at 15 calls with two name regions, no branches, eight invalid
 outputs, and 31 pending units. Pipeline v8 completed 139 calls with 39 name-region proposals (14
 readable, nine partial, 16 unreadable), 21 connector paths, no branches, 38 failed subtiles, and

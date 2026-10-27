@@ -155,10 +155,39 @@ class ReadBatchResponse(BaseModel):
     readings: list[NameReading] = Field(max_length=MAX_READ_ITEMS)
 
 
+class CandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image_base64: str = Field(min_length=16, max_length=((4 * 1024 * 1024 + 2) // 3) * 4)
+
+
+class CandidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    candidates: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("candidates")
+    @classmethod
+    def bounded_candidates(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = value.strip()
+            if not text:
+                continue
+            if len(text) > 200:
+                raise ValueError("name candidates are limited to 200 characters")
+            if text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+        return cleaned
+
+
 class ChartVisionModel(Protocol):
     async def locate(self, image: bytes, tile_id: str) -> LocateResponse: ...
 
     async def read(self, items: list[tuple[str, bytes, bytes]]) -> ReadBatchResponse: ...
+
+    async def suggest(self, image: bytes) -> CandidateResponse: ...
 
 
 def _decode_png(encoded: str, limit: int) -> bytes:
@@ -328,6 +357,20 @@ READ_SCHEMA: dict[str, Any] = {
 }
 
 
+CANDIDATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "candidates": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {"type": "string", "maxLength": 200},
+        }
+    },
+    "required": ["candidates"],
+}
+
+
 class DeepSeekChartVision:
     def __init__(self, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.api_key = api_key
@@ -352,6 +395,12 @@ class DeepSeekChartVision:
                     "residual_regions": [],
                     "completeness_note": "",
                 },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        elif schema is CANDIDATE_SCHEMA:
+            example = json.dumps(
+                {"candidates": ["محمد", "أحمد"]},
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
@@ -539,6 +588,32 @@ class DeepSeekChartVision:
             )
         return result
 
+    async def suggest(self, image: bytes) -> CandidateResponse:
+        prompt = (
+            "The image is a tight crop of one name from a Kuwaiti family-tree chart "
+            "printed in a bold decorative calligraphic font. Propose up to 8 candidate "
+            "Arabic personal names that the visible marks could be, best first. A candidate "
+            "may be a given name, a kunyah, or a family name. Include short variants when "
+            "the dots or letter joins are ambiguous. This is only a spelling-suggestion list "
+            "for a human to choose from: do not invent a genealogy fact and do not explain. "
+            "If no candidate is plausible, return an empty list."
+        )
+        # One crop per request. Scope the provider cache to the crop's content, not
+        # a shared constant, so candidates from one name cannot sit in the same
+        # prefix scope as another name.
+        crop_scope = "candidate:" + hashlib.sha256(image).hexdigest()
+        raw = await self._interact(
+            prompt, [image], CANDIDATE_SCHEMA, 1024, crop_scope
+        )
+        try:
+            return CandidateResponse.model_validate_json(raw)
+        except ValidationError as error:
+            raise HTTPException(
+                status_code=422, detail=_validation_detail("vision_candidates_invalid", error)
+            ) from error
+        except Exception:
+            raise HTTPException(status_code=422, detail="vision_candidates_invalid:unknown")
+
 
 def create_chart_vision_router(model: ChartVisionModel) -> APIRouter:
     router = APIRouter()
@@ -572,6 +647,11 @@ def create_chart_vision_router(model: ChartVisionModel) -> APIRouter:
                 status_code=413, detail="reading batch image data exceeds the limit"
             )
         return await model.read(items)
+
+    @router.post("/v1/vision/chart/candidates", response_model=CandidateResponse)
+    async def candidates(request: CandidateRequest) -> CandidateResponse:
+        image = _decode_png(request.image_base64, 4 * 1024 * 1024)
+        return await model.suggest(image)
 
     return router
 

@@ -38,6 +38,11 @@ func (e chartVisionOutputValidationError) Is(target error) bool {
 type ChartVisionProvider interface {
 	LocateTile(context.Context, string, []byte) (ChartTileReading, error)
 	ReadBatch(context.Context, []ChartCropInput) ([]ChartNameReading, error)
+	// SuggestNames asks the same vision model for spelling candidates for ONE
+	// tight name crop. It is an on-demand aid, not a reading: the caller presents
+	// the names as hypotheses beside the source and never writes one without a
+	// human decision.
+	SuggestNames(ctx context.Context, tightPNG []byte) ([]string, error)
 }
 
 type ChartBox struct {
@@ -170,6 +175,40 @@ func (c *chartVisionHTTPClient) ReadBatch(ctx context.Context, items []ChartCrop
 		}
 	}
 	return response.Readings, nil
+}
+
+func (c *chartVisionHTTPClient) SuggestNames(ctx context.Context, tightPNG []byte) ([]string, error) {
+	if len(tightPNG) == 0 || len(tightPNG) > 4<<20 {
+		return nil, ErrValidation
+	}
+	var response struct {
+		Candidates []string `json:"candidates"`
+	}
+	if err := c.post(ctx, "/v1/vision/chart/candidates", map[string]any{
+		"image_base64": base64.StdEncoding.EncodeToString(tightPNG),
+	}, &response); err != nil {
+		return nil, err
+	}
+	if len(response.Candidates) > 8 {
+		return nil, ErrValidation
+	}
+	seen := make(map[string]struct{}, len(response.Candidates))
+	names := make([]string, 0, len(response.Candidates))
+	for _, candidate := range response.Candidates {
+		name := strings.TrimSpace(candidate)
+		if name == "" {
+			continue
+		}
+		if len([]rune(name)) > 200 {
+			return nil, ErrValidation
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 func (c *chartVisionHTTPClient) post(ctx context.Context, path string, input, output any) error {

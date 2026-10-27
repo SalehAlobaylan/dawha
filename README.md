@@ -60,6 +60,31 @@ extraction. The default URL points to this repository's local deterministic serv
 If a deployment points it elsewhere, that service receives extracted page text; the
 PDF bytes are not sent to it.
 
+The optional name judge defaults to a **local Liquid `d1:3b`** decision model
+served by Ollama at `/v1/systemone`. The code remains fail-closed: an unset
+`NAME_JUDGE_MODE` means off. The checked-in `.env.example` enables `active` mode
+for the local model, where the judge appears only as a separate
+`رأي النموذج` row. It never accepts a name, prefills the editor, reorders the
+candidate chips, or shows a percentage.
+
+The AI service sends only the bounded candidate set and the machine-reading
+context described in
+[`docs/name-judge-privacy-and-evaluation.md`](docs/name-judge-privacy-and-evaluation.md).
+No source, family, account, or reviewer id is sent. `NAME_JUDGE_IMAGES=false`
+keeps the image path off; when explicitly enabled, only the tight name crop is
+sent, never the page preview or context crop. `LIQUID_BASE_URL` is the exact
+System One endpoint, `LIQUID_MODEL` is a pinned local model id, and
+`LIQUID_API_KEY` is optional (only for a protected proxy). The hosted `JEV_*`
+provider remains selectable with `NAME_JUDGE_PROVIDER=jev`; it is not the
+default.
+
+To run the local judge:
+
+```sh
+ollama pull d1:3b
+ollama serve        # 127.0.0.1:11434
+```
+
 ## Database
 
 ```sh
@@ -266,6 +291,9 @@ the file to copy to `.env`.
 | `WEB_ORIGIN` | the API | the exact origin allowed to send the session cookie |
 | `CORE_API_PORT`, `AI_RESEARCH_PORT` | the API, the E2E stack | listen ports |
 | `AI_RESEARCH_URL` | the API, the workers | where the AI service is |
+| `NAME_JUDGE_PROVIDER`, `NAME_JUDGE_MODE`, `NAME_JUDGE_SAMPLE`, `NAME_JUDGE_IMAGES` | the API and AI service | the optional name-judge posture. The code default is off; `.env.example` sets the local Liquid provider and active mode. Shadow sampling is deterministic; image mode sends only the opt-in tight crop. The active row is an opinion, not an acceptance or ranking change |
+| `LIQUID_BASE_URL`, `LIQUID_MODEL`, `LIQUID_PROMPT_VERSION`, `LIQUID_API_KEY` | the AI service | the local System One endpoint, pinned model, pinned prompt, and optional key for a protected proxy. `LIQUID_API_KEY` is never required for local inference and no key belongs in this repository |
+| `JEV_API_KEY`, `JEV_BASE_URL`, `JEV_MODEL`, `JEV_PROMPT_VERSION` | the AI service | the optional hosted provider, selected only with `NAME_JUDGE_PROVIDER=jev`: credential, exact OpenAI-compatible chat-completions URL, pinned model, and pinned prompt. Unset means the judge answers 503 and the bench still works |
 | `SOURCE_STORAGE_DIR` | the API, the workers | the local storage driver's directory |
 | `PDFINFO_BINARY`, `PDFTOTEXT_BINARY`, `PDFTOPPM_BINARY`, `TESSERACT_BINARY`, `TESSDATA_PREFIX` | the source-processing worker | optional local PDF/OCR executable paths and Tesseract data directory; defaults use `PATH` and the system data location |
 | `SOURCE_WORKER_POLL_INTERVAL`, `ANALYSIS_WORKER_POLL_INTERVAL` | the workers | how often a worker looks for a job |

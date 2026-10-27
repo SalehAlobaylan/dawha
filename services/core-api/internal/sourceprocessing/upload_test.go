@@ -1,7 +1,15 @@
 package sourceprocessing
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,8 +38,10 @@ func TestSupportedContentTypesMatrix(t *testing.T) {
 		{"application/json; charset=utf-8", true},
 		{"application/xml", true},
 		{"application/pdf", true},
-		{"image/jpeg", false},
-		{"image/png", false},
+		{"image/jpeg", true},
+		{"image/jpg", true},
+		{"image/png", true},
+		{"image/gif", true},
 		{"image/tiff", false},
 		{"application/octet-stream", false},
 		{"application/msword", false},
@@ -53,6 +63,9 @@ func TestSupportedContentTypesMatrix(t *testing.T) {
 // TestSupportedContentTypesRefusedByValidator drives the same matrix through
 // the upload boundary, which is the decision a caller actually meets.
 func TestSupportedContentTypesRefusedByValidator(t *testing.T) {
+	pngContent := string(testImageBytes(t, "png"))
+	jpegContent := string(testImageBytes(t, "jpeg"))
+	gifContent := string(testImageBytes(t, "gif"))
 	cases := []struct {
 		contentType string
 		content     string
@@ -65,6 +78,10 @@ func TestSupportedContentTypesRefusedByValidator(t *testing.T) {
 		{"application/xml", "<doc>نص</doc>", true},
 		{"text/xml", "<doc>نص</doc>", true},
 		{"application/pdf", "%PDF-1.7\nbinary", true},
+		{"image/png", pngContent, true},
+		{"image/jpeg", jpegContent, true},
+		{"image/jpg", jpegContent, true},
+		{"image/gif", gifContent, true},
 		{"image/png", "\x89PNG\r\n\x1a\n", false},
 		{"image/jpeg", "\xFF\xD8\xFF\xE0", false},
 		{"image/tiff", "II*\x00binary", false},
@@ -96,7 +113,7 @@ func TestUnsupportedContentErrorNamesTheSupportedFormats(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("error = %v, want an *UnsupportedContentError", err)
 	}
-	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf"} {
+	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf", "image/png"} {
 		if !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("message %q does not mention %q", err.Error(), fragment)
 		}
@@ -149,6 +166,28 @@ func TestValidateUploadInputKeepsFilenameAndSizeRules(t *testing.T) {
 	// the format contract rather than a bare validation error.
 	if _, err := validateUploadInput(UploadInput{Filename: "source.txt", ContentType: "text/plain", Content: []byte("\xff\xfe\xfd")}); !errors.Is(err, ErrUnsupportedContent) {
 		t.Fatalf("invalid utf-8 content = %v, want ErrUnsupportedContent", err)
+	}
+}
+
+// TestValidateUploadInputAcceptsARealFamilyChart pins the size bound to an
+// input that exists in the world: the scanned chart of آل مقبل is
+// 61,079,149 bytes, and it was refused when the bound was 25 MiB. A bound that
+// refuses the real thing is not a bound on abuse, it is a refusal of the
+// product's own material. The 25 MiB bound was raised on 2026-10-22 for
+// exactly this input.
+func TestValidateUploadInputAcceptsARealFamilyChart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the real chart is 61 MB; skipped in -short runs")
+	}
+	const realChartBytes = 61_079_149
+	content := make([]byte, realChartBytes)
+	copy(content, "%PDF-1.7")
+	input, err := validateUploadInput(UploadInput{Filename: "شجرة أسر آل مقبل.pdf", ContentType: "application/pdf", Content: content})
+	if err != nil {
+		t.Fatalf("a real 61 MB family chart = %v, want accepted", err)
+	}
+	if input.ContentType != "application/pdf" {
+		t.Fatalf("content type = %q, want application/pdf", input.ContentType)
 	}
 }
 
@@ -212,7 +251,7 @@ func TestSourceFormatPanelMatchesTheSharedMatrix(t *testing.T) {
 	if !regexp.MustCompile(`accept=\{SUPPORTED_UPLOAD_ACCEPT\}`).MatchString(panel) {
 		t.Fatal("the source file input must take its accept list from SUPPORTED_UPLOAD_ACCEPT")
 	}
-	refusedExtensions := []string{".png", ".jpg", ".jpeg", ".tif", ".tiff", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".gz", ".bin", ".exe", ".mp3", ".mp4"}
+	refusedExtensions := []string{".tif", ".tiff", ".bmp", ".heic", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".gz", ".bin", ".exe", ".mp3", ".mp4"}
 	for _, entry := range strings.Split(accept, ",") {
 		entry = strings.TrimSpace(entry)
 		if !strings.HasPrefix(entry, ".") {
@@ -253,6 +292,93 @@ func panelAcceptAttribute(t *testing.T, panel string) string {
 		t.Fatal("the source processing panel no longer declares SUPPORTED_UPLOAD_ACCEPT")
 	}
 	return accept[1]
+}
+
+// testImageBytes encodes a small real image in one of the accepted raster
+// formats. The upload boundary decodes the header, so a fixture has to be a
+// real file rather than a signature prefix.
+func testImageBytes(t *testing.T, format string) []byte {
+	t.Helper()
+	canvas := image.NewRGBA(image.Rect(0, 0, 16, 12))
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 16; x++ {
+			canvas.Set(x, y, color.RGBA{R: uint8(20 + x*4), G: uint8(60 + y*5), B: 40, A: 255})
+		}
+	}
+	var buffer bytes.Buffer
+	var err error
+	switch format {
+	case "png":
+		err = png.Encode(&buffer, canvas)
+	case "jpeg":
+		err = jpeg.Encode(&buffer, canvas, nil)
+	case "gif":
+		err = gif.Encode(&buffer, canvas, nil)
+	default:
+		t.Fatalf("no encoder for %q", format)
+	}
+	if err != nil {
+		t.Fatalf("could not encode a %s fixture: %v", format, err)
+	}
+	return buffer.Bytes()
+}
+
+// pngHeaderWithSize patches a PNG's IHDR dimensions and CRC, so the upload
+// boundary can be tested against an image that announces more pixels than the
+// worker will decode.
+func pngHeaderWithSize(t *testing.T, width, height uint32) []byte {
+	t.Helper()
+	data := testImageBytes(t, "png")
+	if len(data) < 33 || string(data[12:16]) != "IHDR" {
+		t.Fatal("the PNG fixture does not start with an IHDR chunk")
+	}
+	binary.BigEndian.PutUint32(data[16:20], width)
+	binary.BigEndian.PutUint32(data[20:24], height)
+	binary.BigEndian.PutUint32(data[29:33], crc32.ChecksumIEEE(data[12:29]))
+	return data
+}
+
+// TestValidateUploadInputAcceptsRasterCharts pins the raster arm of the source
+// contract: JPEG, PNG and GIF are documents, and the bytes decide whether a
+// declaration is honest. The GIF matters because a published tree is often one
+// GIF embedded in a web page.
+func TestValidateUploadInputAcceptsRasterCharts(t *testing.T) {
+	for _, format := range []string{"png", "jpeg", "gif"} {
+		data := testImageBytes(t, format)
+		input, err := validateUploadInput(UploadInput{Filename: "شجرة." + format, ContentType: "image/" + format, Content: data})
+		if err != nil {
+			t.Fatalf("a real %s chart = %v, want accepted", format, err)
+		}
+		if input.ContentType != "image/"+format {
+			t.Fatalf("content type = %q, want image/%s", input.ContentType, format)
+		}
+	}
+	// A scanner or browser that calls a JPEG image/jpg is naming the same
+	// format, and the alias is normalised rather than refused.
+	jpegData := testImageBytes(t, "jpeg")
+	input, err := validateUploadInput(UploadInput{Filename: "شجرة.jpg", ContentType: "image/jpg", Content: jpegData})
+	if err != nil || input.ContentType != "image/jpeg" {
+		t.Fatalf("image/jpg alias = %+v, %v, want accepted as image/jpeg", input, err)
+	}
+	// Undeclared images are detected from their bytes, like undeclared PDFs.
+	input, err = validateUploadInput(UploadInput{Filename: "شجرة", ContentType: undeclaredContentType, Content: jpegData})
+	if err != nil || input.ContentType != "image/jpeg" {
+		t.Fatalf("undeclared jpeg = %+v, %v, want sniffed image/jpeg", input, err)
+	}
+	// A PNG declaration over JPEG bytes is refused rather than stored under a
+	// misleading type.
+	if _, err := validateUploadInput(UploadInput{Filename: "شجرة.png", ContentType: "image/png", Content: jpegData}); !errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("png declared over jpeg bytes = %v, want a contradiction", err)
+	}
+	// Truncated bytes with a raster signature are not a readable image.
+	if _, err := validateUploadInput(UploadInput{Filename: "شجرة.png", ContentType: "image/png", Content: []byte("\x89PNG\r\n\x1a\n")}); !errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("truncated png = %v, want ErrUnsupportedContent", err)
+	}
+	// The pixel bound is a worker-memory bound, so it is enforced at upload.
+	_, err = validateUploadInput(UploadInput{Filename: "panorama.png", ContentType: "image/png", Content: pngHeaderWithSize(t, 9000, 9000)})
+	if !errors.Is(err, ErrUnsupportedContent) || !strings.Contains(err.Error(), "megapixels") {
+		t.Fatalf("a 81-megapixel image = %v, want a refusal naming the pixel bound", err)
+	}
 }
 
 // readSourceFormatPanel walks up from this file to the module root, then two

@@ -15,10 +15,16 @@ import (
 )
 
 const (
-	SourceProcessJobType = "source_process"
+	SourceProcessJobType       = "source_process"
 	SourceChartAnalysisJobType = "source_chart_analysis"
-	EmbeddingDimensions  = 1536
-	MaxUploadBytes       = 25 << 20
+	EmbeddingDimensions        = 1536
+	// MaxUploadBytes refuses an upload before it is stored. The bound is not a
+	// guess about what a family owns: the corpus holds a flattened 300 ppi
+	// chart of آل مقبل at 61,079,149 bytes, smaller than the plausible
+	// 300 ppi rendering of the largest poster already in hand, and 61 MiB of
+	// live bytes during processing is within the budget of the lease queue.
+	// Raised from 25 MiB on 2026-10-22, when a real chart was refused.
+	MaxUploadBytes       = 128 << 20
 	MaxPages             = 200
 	MaxCandidates        = 10000
 	MaxCandidatesPerPage = 1000
@@ -287,10 +293,16 @@ type Service struct {
 	// Jobs enqueues work and fences the writes that finish it. A processor
 	// without it can accept uploads but cannot process them, which is the safe
 	// way round: an upload is recoverable, a duplicate extraction is not.
-	Jobs      LeaseQueue
-	AI        ai.Provider
-	Extractor Extractor
+	Jobs        LeaseQueue
+	AI          ai.Provider
+	Extractor   Extractor
 	ChartVision ChartVisionProvider
+	// NameJudge is optional. It judges a bounded candidate set; it is not a
+	// reader and never writes a suggestion or a person.
+	NameJudge             NameJudge
+	NameJudgeMode         string
+	NameJudgeSample       float64
+	NameJudgeImageEnabled bool
 }
 
 type processedEntity struct {

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Eye, FileText, GitBranch, Quote, Save, ScanSearch, Upload, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useRef, useState } from "react";
-import { createSourceFileDownloadLink, createSourceTreeDraft, fetchSourceChartAnalysis, fetchSourcePageEvidence, fetchSourcePageEvidenceIndex, fetchSourceProcessing, reextractReviewedPage as reextractReviewedPageAPI, reprocessSourceFile, reviewSourceCandidate, reviewSourcePage, startSourceChartAnalysis, uploadSourceFile } from "../lib/api";
+import { createSourceFileDownloadLink, createSourceTreeDraft, fetchSourceChartAnalysis, fetchSourcePageEvidence, fetchSourcePageEvidenceIndex, fetchSourceProcessing, readSourceTreeSuggestions, reextractReviewedPage as reextractReviewedPageAPI, reprocessSourceFile, reviewSourceCandidate, reviewSourcePage, startSourceChartAnalysis, uploadSourceFile } from "../lib/api";
 import { ApiError } from "../lib/api";
 import { suggestBookQuoteSpans } from "../lib/book-quote-suggestions";
 import { StatusBadge } from "./StatusBadge";
 import type { ChartAnalysisView, SourceCandidate, SourcePageEvidence, SourcePageEvidenceIndex, SourcePageReviewInput, SourceProcessing, SourceProcessingRun, SourceTreeDraft } from "../types";
+import { SourceSuggestionReview } from "./SourceSuggestionReview";
 import { SourceTreeDraftDialog } from "./SourceTreeDraftDialog";
 import { SourceBookAssertionDialog } from "./SourceBookAssertionDialog";
 import { SourceChartAnalysisDialog } from "./SourceChartAnalysisDialog";
@@ -20,9 +21,14 @@ interface SourceProcessingPanelProps {
 
 // The same format matrix the API enforces. This copy is the pre-upload version
 // of the answer the caller would otherwise get after a failed upload.
-const SUPPORTED_UPLOAD_MEDIA_TYPES = ["text/*", "application/json", "application/xml", "application/pdf"];
-const SUPPORTED_UPLOAD_ACCEPT = "text/*,.txt,.md,.json,.xml,.pdf,application/json,application/xml,application/pdf";
-const SUPPORTED_UPLOAD_HINT = "الصيغ المدعومة: نص و JSON و XML بترميز UTF-8، وملفات PDF حتى 25 ميغابايت و200 صفحة. يُجرى استخراج PDF و OCR محلياً، ثم يُمرر نص الصفحات إلى خدمة الذكاء الاصطناعي المهيأة لاستخراج المرشحين؛ وتبقى النتائج بحاجة للمراجعة.";
+const SUPPORTED_UPLOAD_MEDIA_TYPES = ["text/*", "application/json", "application/xml", "application/pdf", "image/jpeg", "image/png", "image/gif"];
+const SUPPORTED_UPLOAD_ACCEPT = "text/*,.txt,.md,.json,.xml,.pdf,application/json,application/xml,application/pdf,image/jpeg,image/png,image/gif,.jpg,.jpeg,.png,.gif";
+const SUPPORTED_UPLOAD_HINT = "الصيغ المدعومة: نص و JSON و XML بترميز UTF-8، وملفات PDF، والصور JPG وPNG وGIF، حتى 128 ميغابايت لكل ملف. يُجرى استخراج PDF و OCR للصور محلياً، ثم يُمرر نص الصفحات إلى خدمة الذكاء الاصطناعي المهيأة لاستخراج المرشحين؛ وتبقى النتائج بحاجة للمراجعة.";
+
+// A visual source is a page a reviewer can open: a PDF page or a raster image.
+// They share the review surfaces even though only a PDF has many pages and a
+// native text layer.
+const isVisualSource = (mimeType: string | null | undefined) => Boolean(mimeType && (mimeType === "application/pdf" || mimeType.startsWith("image/")));
 const UNDECLARED_UPLOAD_MEDIA_TYPE = "application/octet-stream";
 
 function isSupportedUploadType(value: string): boolean {
@@ -41,6 +47,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
   const [pageReview, setPageReview] = useState<{ evidence?: SourcePageEvidence; fileUrl: string } | null>(null);
   const [pageReviewLoading, setPageReviewLoading] = useState(false);
   const [treeDraft, setTreeDraft] = useState<SourceTreeDraft | null>(null);
+  const [suggestionFileID, setSuggestionFileID] = useState<string | null>(null);
   const [treeDraftLoading, setTreeDraftLoading] = useState(false);
   const [chartAnalysis, setChartAnalysis] = useState<{ fileId: string; initial: ChartAnalysisView } | null>(null);
   const processingQuery = useQuery({
@@ -74,6 +81,27 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
     },
     onError: (error) => setMessage(errorMessage(error)),
   });
+  const suggestionReadMutation = useMutation({
+    mutationFn: async (fileId: string) => {
+      const result = await readSourceTreeSuggestions(fileId);
+      setSuggestionFileID(fileId);
+      return result;
+    },
+    onSuccess: (result) => {
+      const summary = result.read
+        ? `قُرئت ${result.pages} صفحة: ${result.detected} موضعاً، و${result.named} اسماً قُرئ.`
+        : `عُثر على ${result.detected} موضعاً للاسم؛ لا يوجد قارئ مهيّأ، فبقيت المواضع بلا قراءة.`;
+      setMessage(
+        result.sourceTooSmall
+          ? `${summary} أسماء هذا الملف صغيرة في الأصل (الوسيط ${result.medianNameHeightPx ?? 0} بكسل)؛ ارفع نسخة بدقة أعلى لقراءة أفضل.`
+          : summary,
+      );
+    },
+    onError: (error) => {
+      setMessage(error instanceof ApiError ? error.message : "تعذّرت قراءة الملف.");
+    },
+  });
+
   const chartAnalysisMutation = useMutation({
     mutationFn: async (fileId: string) => {
       try {
@@ -202,7 +230,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
         <div>
           <div className="eyebrow">معالجة المصدر</div>
           <h3>{sourceTitle}</h3>
-          <p>ارفع نصاً أو PDF عربياً، ثم راجع كل نتيجة على الصفحة الأصلية قبل اتخاذ قرار.</p>
+          <p>ارفع نصاً أو PDF أو صورة شجرة عربية، ثم راجع كل نتيجة على الصفحة الأصلية قبل اتخاذ قرار.</p>
         </div>
         <FileText size={18} />
       </div>
@@ -230,18 +258,19 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
       {processingQuery.isPending ? <p className="evidence-empty">جارٍ تحميل حالة المعالجة…</p> : null}
       {pageReviewLoading ? <div className="evidence-workspace-message" role="status">جارٍ تحميل الملف الأصلي وقراءات الصفحات…</div> : null}
       {treeDraftLoading ? <div className="evidence-workspace-message" role="status">جارٍ تجهيز مسودة الشجرة ومربعات الأسماء…</div> : null}
-      {processing ? <ProcessingSummary processing={processing} sourceType={sourceType} reviewPending={reviewMutation.isPending} reviewNote={reviewNote} setReviewNote={setReviewNote} onReview={(candidateId, decision) => reviewMutation.mutate({ candidateId, decision, note: reviewNote })} onViewPage={viewSourcePage} onViewOriginalPDF={viewOriginalPDF} onStartTreeDraft={(fileId) => void startTreeDraft(fileId)} treeDraftLoading={treeDraftLoading} reprocessPending={reprocessMutation.isPending} onReprocess={(fileId) => reprocessMutation.mutate(fileId)} chartAnalysisPending={chartAnalysisMutation.isPending} onStartChartAnalysis={(fileId) => chartAnalysisMutation.mutate(fileId)} /> : null}
+      {processing ? <ProcessingSummary processing={processing} sourceType={sourceType} reviewPending={reviewMutation.isPending} reviewNote={reviewNote} setReviewNote={setReviewNote} onReview={(candidateId, decision) => reviewMutation.mutate({ candidateId, decision, note: reviewNote })} onViewPage={viewSourcePage} onViewOriginalPDF={viewOriginalPDF} onStartTreeDraft={(fileId) => void startTreeDraft(fileId)} treeDraftLoading={treeDraftLoading} reprocessPending={reprocessMutation.isPending} onReprocess={(fileId) => reprocessMutation.mutate(fileId)} chartAnalysisPending={chartAnalysisMutation.isPending} onStartChartAnalysis={(fileId) => chartAnalysisMutation.mutate(fileId)} onReviewSuggestions={(fileId) => setSuggestionFileID(fileId)} suggestionReadPending={suggestionReadMutation.isPending} onReadSuggestions={(fileId) => suggestionReadMutation.mutate(fileId)} /> : null}
       {pageReview ? <SourcePageReviewDialog review={pageReview} sourceType={sourceType} onClose={() => setPageReview(null)} onSaveReview={savePageReview} onBookAssertionAccepted={async () => {
         await queryClient.invalidateQueries({ queryKey: ["source", sourceId] });
         await queryClient.invalidateQueries({ queryKey: ["sources"] });
       }} reextractPending={pageReextractMutation.isPending} onReextractReviewedPage={(evidence) => pageReextractMutation.mutateAsync(evidence)} /> : null}
       {treeDraft ? <SourceTreeDraftDialog initialDraft={treeDraft} onClose={() => setTreeDraft(null)} onChanged={setTreeDraft} /> : null}
+      {suggestionFileID ? <SourceSuggestionReview fileId={suggestionFileID} sourceTitle={sourceTitle} onClose={() => setSuggestionFileID(null)} /> : null}
       {chartAnalysis ? <SourceChartAnalysisDialog fileId={chartAnalysis.fileId} titleAr={sourceTitle} initial={chartAnalysis.initial} onClose={() => setChartAnalysis(null)} onManualDraft={(fileId) => { setChartAnalysis(null); void startTreeDraft(fileId); }} /> : null}
     </section>
   );
 }
 
-function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, setReviewNote, onReview, onViewPage, onViewOriginalPDF, onStartTreeDraft, treeDraftLoading, reprocessPending, onReprocess, chartAnalysisPending, onStartChartAnalysis }: { processing: SourceProcessing; sourceType: string; reviewPending: boolean; reviewNote: string; setReviewNote: (value: string) => void; onReview: (candidateId: string, decision: "accepted" | "rejected") => void; onViewPage: (fileId: string, pageNumber: number) => void; onViewOriginalPDF: (fileId: string) => void; onStartTreeDraft: (fileId: string) => void; treeDraftLoading: boolean; reprocessPending: boolean; onReprocess: (fileId: string) => void; chartAnalysisPending: boolean; onStartChartAnalysis: (fileId: string) => void }) {
+function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, setReviewNote, onReview, onViewPage, onViewOriginalPDF, onStartTreeDraft, treeDraftLoading, reprocessPending, onReprocess, chartAnalysisPending, onStartChartAnalysis, onReviewSuggestions, suggestionReadPending, onReadSuggestions }: { processing: SourceProcessing; sourceType: string; reviewPending: boolean; reviewNote: string; setReviewNote: (value: string) => void; onReview: (candidateId: string, decision: "accepted" | "rejected") => void; onViewPage: (fileId: string, pageNumber: number) => void; onViewOriginalPDF: (fileId: string) => void; onStartTreeDraft: (fileId: string) => void; treeDraftLoading: boolean; reprocessPending: boolean; onReprocess: (fileId: string) => void; chartAnalysisPending: boolean; onStartChartAnalysis: (fileId: string) => void; onReviewSuggestions: (fileId: string) => void; suggestionReadPending: boolean; onReadSuggestions: (fileId: string) => void }) {
   const latestRun = processing.runs[0];
   const recentRuns = processing.runs.slice(0, 8);
   return (
@@ -259,18 +288,20 @@ function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, 
         <div className="source-processing-file-detail">
           <span>{file.originalFilenameAr}</span>
           {file.processingError ? <p className="source-processing-error">{file.processingError}</p> : null}
-          {file.mimeType === "application/pdf" ? <>
-            <button className="source-pdf-page-index-toggle" type="button" disabled={active || reprocessPending || (file.processingStatus !== "succeeded" && file.processingStatus !== "failed")} onClick={() => onReprocess(file.id)}>{reprocessPending ? "جارٍ بدء إعادة OCR…" : "إعادة OCR بدقة أعلى (400 نقطة/بوصة)"}</button>
-            <button className="source-pdf-page-index-toggle" type="button" onClick={() => void onViewOriginalPDF(file.id)}><Eye size={14} /> فتح ملف PDF الأصلي</button>
-            <SourcePDFPagePicker fileId={file.id} onViewPage={onViewPage} />
-            {sourceType === "family_document" && file.checksumSha256.toLowerCase() === JASSER_CHART_CHECKSUM ? <><button className="source-chart-analysis-start" type="button" disabled={chartAnalysisPending} onClick={() => onStartChartAnalysis(file.id)}><ScanSearch size={15} /> {chartAnalysisPending ? "جارٍ فتح تحليل الرؤية…" : "فتح التحليل البصري التجريبي"}</button><small className="source-chart-analysis-hint">متاح لهذا الملف الخاص فقط. اقتراحات الرؤية معزولة عن الاستيراد حتى تأهيلها معيارياً.</small></> : null}
-            {sourceType === "family_document" ? <><button className="source-tree-draft-start" type="button" disabled={treeDraftLoading || file.processingStatus !== "succeeded"} onClick={() => onStartTreeDraft(file.id)}><GitBranch size={15} /> إعداد مسودة شجرة من هذا الملف</button><small className="source-tree-draft-start-hint">ستراجع الأسماء والوصلات على صورة كل صفحة قبل إنشاء شجرة خاصة غير منشورة.</small></> : null}
+          {isVisualSource(file.mimeType) ? <>
+            <button className="source-pdf-page-index-toggle" type="button" disabled={active || reprocessPending || (file.processingStatus !== "succeeded" && file.processingStatus !== "failed")} onClick={() => onReprocess(file.id)}>{reprocessPending ? "جارٍ بدء إعادة القراءة…" : file.mimeType === "application/pdf" ? "إعادة OCR بدقة أعلى (400 نقطة/بوصة)" : "إعادة قراءة الصورة"}</button>
+            {file.mimeType === "application/pdf" ? <>
+              <button className="source-pdf-page-index-toggle" type="button" onClick={() => void onViewOriginalPDF(file.id)}><Eye size={14} /> فتح ملف PDF الأصلي</button>
+              <SourcePDFPagePicker fileId={file.id} onViewPage={onViewPage} />
+              {sourceType === "family_document" && file.checksumSha256.toLowerCase() === JASSER_CHART_CHECKSUM ? <><button className="source-chart-analysis-start" type="button" disabled={chartAnalysisPending} onClick={() => onStartChartAnalysis(file.id)}><ScanSearch size={15} /> {chartAnalysisPending ? "جارٍ فتح تحليل الرؤية…" : "فتح التحليل البصري التجريبي"}</button><small className="source-chart-analysis-hint">متاح لهذا الملف الخاص فقط. اقتراحات الرؤية معزولة عن الاستيراد حتى تأهيلها معيارياً.</small></> : null}
+            </> : <button className="source-pdf-page-index-toggle" type="button" onClick={() => onViewPage(file.id, 1)}><Eye size={14} /> عرض الصفحة الأصلية</button>}
+            {sourceType === "family_document" ? <><button className="source-tree-draft-start" type="button" disabled={treeDraftLoading || file.processingStatus !== "succeeded"} onClick={() => onStartTreeDraft(file.id)}><GitBranch size={15} /> إعداد مسودة شجرة من هذا الملف</button><button className="source-tree-draft-start" type="button" disabled={suggestionReadPending} onClick={() => onReadSuggestions(file.id)}><ScanSearch size={15} /> قراءة الملف واستخراج الأسماء</button><button className="source-tree-draft-start" type="button" onClick={() => onReviewSuggestions(file.id)}><Quote size={15} /> مراجعة اقتراحات القراءة</button><small className="source-tree-draft-start-hint">ستراجع الأسماء على صورة كل صفحة؛ تبقى الوصلات لمرحلة مسودة الشجرة.</small></> : null}
           </> : null}
         </div>
         <StatusBadge tone={file.processingStatus === "failed" ? "disputed" : "source"}>{file.processingStatus === "succeeded" ? "اكتملت" : file.processingStatus === "failed" ? "فشلت" : "قيد المعالجة"}</StatusBadge>
       </div>;
       })}</div> : null}
-      {processing.candidates.length > 0 ? <div className="source-candidate-list">{processing.candidates.map((candidate) => <CandidateRow candidate={candidate} key={candidate.id} reviewPending={reviewPending} isPDF={processing.files.find((file) => file.id === candidate.sourceFileId)?.mimeType === "application/pdf"} onReview={onReview} onViewPage={onViewPage} />)}</div> : latestRun?.status === "succeeded" ? <p className="evidence-empty">اكتملت المعالجة دون استخراج مرشحين.</p> : null}
+      {processing.candidates.length > 0 ? <div className="source-candidate-list">{processing.candidates.map((candidate) => <CandidateRow candidate={candidate} key={candidate.id} reviewPending={reviewPending} isVisual={isVisualSource(processing.files.find((file) => file.id === candidate.sourceFileId)?.mimeType)} onReview={onReview} onViewPage={onViewPage} />)}</div> : latestRun?.status === "succeeded" ? <p className="evidence-empty">اكتملت المعالجة دون استخراج مرشحين.</p> : null}
     </div>
   );
 }
@@ -301,7 +332,7 @@ function SourcePDFPagePicker({ fileId, onViewPage }: { fileId: string; onViewPag
   );
 }
 
-function CandidateRow({ candidate, reviewPending, isPDF, onReview, onViewPage }: { candidate: SourceCandidate; reviewPending: boolean; isPDF: boolean; onReview: (candidateId: string, decision: "accepted" | "rejected") => void; onViewPage: (fileId: string, pageNumber: number) => void }) {
+function CandidateRow({ candidate, reviewPending, isVisual, onReview, onViewPage }: { candidate: SourceCandidate; reviewPending: boolean; isVisual: boolean; onReview: (candidateId: string, decision: "accepted" | "rejected") => void; onViewPage: (fileId: string, pageNumber: number) => void }) {
   const canReview = candidate.status === "unreviewed" || candidate.status === "needs_review";
   return (
     <article className="source-candidate-row">
@@ -310,7 +341,7 @@ function CandidateRow({ candidate, reviewPending, isPDF, onReview, onViewPage }:
       <p className="source-candidate-passage">{candidate.passageTextAr}</p>
       <div className="source-candidate-meta"><span>{candidate.candidateType === "claim" ? relationLabel(candidate) : candidate.proposedEntityNameAr ? `مطابقة مقترحة: ${candidate.proposedEntityNameAr}` : "لا توجد مطابقة كيان مقترحة"}</span>{candidate.proposedMatchScore !== undefined ? <span>درجة المطابقة: {Math.round(candidate.proposedMatchScore * 100)}%</span> : null}<span>{candidate.rationaleAr}</span></div>
       <div className="source-candidate-actions">
-        {isPDF && candidate.pageNumber ? <button className="secondary-button" type="button" onClick={() => onViewPage(candidate.sourceFileId, candidate.pageNumber!)}><Eye size={14} /> الصفحة الأصلية ومقارنة القراءات</button> : null}
+        {isVisual && candidate.pageNumber ? <button className="secondary-button" type="button" onClick={() => onViewPage(candidate.sourceFileId, candidate.pageNumber!)}><Eye size={14} /> الصفحة الأصلية ومقارنة القراءات</button> : null}
         {canReview ? <><button className="primary-button" type="button" disabled={reviewPending} onClick={() => onReview(candidate.id, "accepted")}><Check size={14} /> قبول</button><button className="secondary-button" type="button" disabled={reviewPending} onClick={() => onReview(candidate.id, "rejected")}><X size={14} /> رفض</button></> : <span className="source-candidate-reviewed">{candidate.status === "accepted" ? "مقبول" : candidate.status === "rejected" ? "مرفوض" : candidate.status === "superseded" ? "استُبدل بتشغيل أحدث" : "راجعته سابقاً"}{candidate.reviews.length ? ` · ${candidate.reviews.length} قرار` : ""}</span>}
       </div>
     </article>
@@ -405,11 +436,11 @@ function SourcePageReviewDialog({ review, sourceType, onClose, onSaveReview, onB
         }
       }}>
         <header className="source-page-review-head">
-          <div><div className="eyebrow">دليل المصدر</div><h3 id="source-page-review-title">{evidence ? `الصفحة ${evidence.pageNumber}` : "ملف PDF الأصلي"}</h3><p>{evidence ? evidence.selectedMethod === "not_processed" ? "توقف الاستخراج قبل معالجة هذه الصفحة. افتح موضعها في PDF واكتب ما يمكن قراءته دون تخمين." : "قارن النص المقروء بالنسخة الأصلية. درجات OCR خام وليست احتمالاً معايراً للصحة." : "تصفح النسخة الأصلية حتى عند تعذر حفظ قراءة آلية لهذه الصفحات."}</p></div>
+          <div><div className="eyebrow">دليل المصدر</div><h3 id="source-page-review-title">{evidence ? `الصفحة ${evidence.pageNumber}` : "الملف الأصلي"}</h3><p>{evidence ? evidence.selectedMethod === "not_processed" ? "توقف الاستخراج قبل معالجة هذه الصفحة. افتح موضعها في الملف الأصلي واكتب ما يمكن قراءته دون تخمين." : "قارن النص المقروء بالنسخة الأصلية. درجات OCR خام وليست احتمالاً معايراً للصحة." : "تصفح النسخة الأصلية حتى عند تعذر حفظ قراءة آلية لهذه الصفحات."}</p></div>
           <button className="secondary-button" type="button" autoFocus onClick={onClose} aria-label="إغلاق"><X size={16} /></button>
         </header>
         <div className="source-page-review-grid">
-          <iframe className="source-page-review-pdf" title={evidence ? `الصفحة الأصلية رقم ${evidence.pageNumber}` : "ملف PDF الأصلي"} src={review.fileUrl} referrerPolicy="no-referrer" />
+          <iframe className="source-page-review-pdf" title={evidence ? `الصفحة الأصلية رقم ${evidence.pageNumber}` : "الملف الأصلي"} src={review.fileUrl} referrerPolicy="no-referrer" />
           {evidence ? <div className="source-page-review-readings">
             <div className="source-page-review-meta">{evidence.selectedMethod === "not_processed" ? "حالة الصفحة: لم تُعالج" : `القراءة المختارة: ${readingMethodLabel(evidence.selectedMethod)} · ${evidence.regions.length} منطقة نصية · درجات OCR خام وليست احتمالاً للصحة`}</div>
             {evidence.readings.map((reading) => <article className="source-page-reading" key={`${reading.method}:${reading.model}`}>

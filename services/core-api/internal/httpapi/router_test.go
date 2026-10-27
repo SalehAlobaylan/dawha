@@ -103,3 +103,41 @@ func TestResearchLayersEndpointRespectsDemoMode(t *testing.T) {
 		}
 	}
 }
+
+// The CORS preflight must advertise every method the router actually serves. Three
+// source routes save a tree draft, a chart-analysis review and a book assertion with
+// PUT, and a browser preflight that does not list PUT is refused before the request
+// is sent, so the route exists and is unreachable from the web app.
+//
+// The list is stated here rather than read from the router, because http.ServeMux
+// exposes no way to enumerate its patterns. A new method on a source route needs
+// adding to this list, and to the header, in the same change.
+func TestCORSPreflightAdvertisesEveryMethodTheRouterServes(t *testing.T) {
+	router := NewRouter(Dependencies{})
+
+	advertised := map[string]bool{}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+		advertised[method] = false
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/api/v1/source-tree-drafts/00000000-0000-0000-0000-000000000000", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	router.ServeHTTP(recorder, request)
+
+	header := recorder.Header().Get("Access-Control-Allow-Methods")
+	if header == "" {
+		t.Fatal("preflight did not return Access-Control-Allow-Methods")
+	}
+	for method := range advertised {
+		if strings.Contains(header, method) {
+			advertised[method] = true
+		}
+	}
+
+	for method, present := range advertised {
+		if !present {
+			t.Errorf("preflight does not advertise %s; allowed methods are %q", method, header)
+		}
+	}
+}

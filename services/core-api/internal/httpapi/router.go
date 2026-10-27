@@ -41,7 +41,11 @@ type Dependencies struct {
 	Jobs          *jobs.Service
 	AI            ai.Provider
 	ChartVision   sourceprocessing.ChartVisionProvider
-	SourceStorage storage.Store
+	// NameJudge is optional and default-off. It only ever sees a bounded
+	// candidate set; it is not a reader and it writes nothing.
+	NameJudge         sourceprocessing.NameJudge
+	NameJudgeSettings sourceprocessing.NameJudgeSettings
+	SourceStorage     storage.Store
 	// RateLimits is the abuse-control configuration. The zero value is NOT the
 	// default: NewRouter calls ratelimit.DefaultConfig when it is zero, so a
 	// caller that forgets is protected, and a caller that wants them off says so
@@ -113,6 +117,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewPDFExtractor())
 	sourceProcessingService.ChartVision = dependencies.ChartVision
+	sourceProcessingService.NameJudge = dependencies.NameJudge
+	sourceProcessingService.NameJudgeMode = dependencies.NameJudgeSettings.Mode
+	sourceProcessingService.NameJudgeSample = dependencies.NameJudgeSettings.Sample
+	sourceProcessingService.NameJudgeImageEnabled = dependencies.NameJudgeSettings.ImageEnabled
 	sourceProcessingHandler := sourceProcessingHandler{Service: sourceProcessingService, Auth: authService}
 	suggestionService := suggestions.NewService(dependencies.DB)
 	suggestionHandler := suggestionHandler{Service: suggestionService, Auth: authService}
@@ -226,8 +234,17 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/source-files/{fileID}/book-assertions", sourceProcessingHandler.createBookAssertion)
 	mux.HandleFunc("GET /api/v1/source-tree-drafts/{draftID}", sourceProcessingHandler.getTreeDraft)
 	mux.HandleFunc("PUT /api/v1/source-tree-drafts/{draftID}", sourceProcessingHandler.saveTreeDraft)
+	mux.HandleFunc("POST /api/v1/source-tree-drafts/{draftID}/import-preview", sourceProcessingHandler.previewTreeDraftImport)
 	mux.HandleFunc("POST /api/v1/source-tree-drafts/{draftID}/import", sourceProcessingHandler.importTreeDraft)
 	mux.HandleFunc("POST /api/v1/source-tree-drafts/{draftID}/retract", sourceProcessingHandler.retractTreeDraft)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/suggestions", sourceProcessingHandler.listSourceSuggestions)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/suggestions/accuracy", sourceProcessingHandler.sourceSuggestionAccuracy)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/suggestions/read", sourceProcessingHandler.readSourceSuggestions)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/decision", sourceProcessingHandler.decideSourceSuggestion)
+	mux.HandleFunc("GET /api/v1/source-tree-suggestions/{suggestionID}/crop", sourceProcessingHandler.sourceSuggestionCrop)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/candidates", sourceProcessingHandler.sourceSuggestionCandidates)
+	mux.HandleFunc("GET /api/v1/name-judge/config", sourceProcessingHandler.nameJudgeConfig)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/judge", sourceProcessingHandler.judgeSourceSuggestion)
 	mux.HandleFunc("PUT /api/v1/source-book-assertions/{assertionID}", sourceProcessingHandler.updateBookAssertion)
 	mux.HandleFunc("POST /api/v1/source-book-assertions/{assertionID}/review", sourceProcessingHandler.reviewBookAssertion)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}/processing", sourceProcessingHandler.getProcessing)
@@ -404,7 +421,10 @@ func withCORS(next http.Handler, allowedOrigin string) http.Handler {
 			w.Header().Add("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		// PUT is required: the source routes below save a tree draft, a chart-analysis
+		// review and a book assertion with it, and a browser preflight that does not
+		// advertise PUT is rejected before the request is ever sent.
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

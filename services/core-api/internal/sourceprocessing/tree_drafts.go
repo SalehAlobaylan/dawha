@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -94,21 +93,34 @@ type SaveTreeDraftInput struct {
 }
 
 type TreeDraftImportResult struct {
-	DraftID           string   `json:"draftId"`
-	TreeID            string   `json:"treeId"`
-	TreeVersionID     string   `json:"treeVersionId"`
-	ImportedPeople    int      `json:"importedPeople"`
-	ImportedRelations int      `json:"importedRelations"`
-	StagedRelations   int      `json:"stagedRelations"`
-	Warnings          []string `json:"warnings"`
+	DraftID       string `json:"draftId"`
+	TreeID        string `json:"treeId"`
+	TreeVersionID string `json:"treeVersionId"`
+	// ImportedPeople counts the people the import CREATED. An occurrence whose
+	// name matched an existing person is linked to that person and is not
+	// counted here, so the two numbers never overlap.
+	ImportedPeople       int                  `json:"importedPeople"`
+	LinkedExistingPeople int                  `json:"linkedExistingPeople"`
+	ImportedRelations    int                  `json:"importedRelations"`
+	StagedRelations      int                  `json:"stagedRelations"`
+	Statements           int                  `json:"statements"`
+	Aliases              int                  `json:"aliases"`
+	Candidates           int                  `json:"candidates"`
+	ResolutionRunID      string               `json:"resolutionRunId,omitempty"`
+	Collisions           []TreeDraftCollision `json:"collisions"`
+	Warnings             []string             `json:"warnings"`
 }
 
 type TreeDraftRetractionResult struct {
-	DraftID              string `json:"draftId"`
-	TreeID               string `json:"treeId"`
-	SupersedingVersionID string `json:"supersedingVersionId"`
-	ExcludedNodes        int    `json:"excludedNodes"`
-	ExcludedRelations    int    `json:"excludedRelations"`
+	DraftID                string `json:"draftId"`
+	TreeID                 string `json:"treeId"`
+	SupersedingVersionID   string `json:"supersedingVersionId"`
+	ExcludedNodes          int    `json:"excludedNodes"`
+	ExcludedRelations      int    `json:"excludedRelations"`
+	RetractedStatements    int    `json:"retractedStatements"`
+	RetractedRelationships int    `json:"retractedRelationships"`
+	RetractedAliases       int    `json:"retractedAliases"`
+	PreservedGraphRows     int    `json:"preservedGraphRows"`
 }
 
 type treeDraftPayload struct {
@@ -168,7 +180,7 @@ func (s *Service) CreateTreeDraft(ctx context.Context, fileID, actorID, titleAR 
 	if !allowed {
 		return TreeDraftView{}, ErrForbidden
 	}
-	if normalizeContentType(mimeType) != "application/pdf" {
+	if normalizeContentType(mimeType) != "application/pdf" && !isImageContentType(mimeType) {
 		return TreeDraftView{}, ErrUnsupportedDocument
 	}
 	var processingRunID uuid.UUID
@@ -406,7 +418,112 @@ func (s *Service) SaveTreeDraft(ctx context.Context, draftID, actorID string, in
 
 // ImportTreeDraft creates a new private draft tree. It never merges people by
 // name and leaves imported relationships unresolved in Dawha's tree model.
-func (s *Service) ImportTreeDraft(ctx context.Context, draftID, actorID string, expectedRevision int) (TreeDraftImportResult, error) {
+// PreviewTreeDraftImport is the import's dry run. It computes everything the
+// apply run computes — the people, the links, the relationships, the
+// statements, the aliases, the candidates — and writes none of it.
+//
+// It is the same code path with the writes suppressed: one validation, one
+// plan builder, and an executor that only the apply run calls. That is what
+// makes the report trustworthy; a separate estimator could drift.
+func (s *Service) PreviewTreeDraftImport(ctx context.Context, draftID, actorID string, expectedRevision int) (TreeDraftImportPreview, error) {
+	if err := s.databaseReady(); err != nil {
+		return TreeDraftImportPreview{}, err
+	}
+	draftUUID, actorUUID, err := parseIDs(draftID, actorID)
+	if err != nil {
+		return TreeDraftImportPreview{}, err
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return TreeDraftImportPreview{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, _, plan, err := s.prepareTreeImport(ctx, tx, draftUUID, actorUUID, expectedRevision)
+	if err != nil {
+		return TreeDraftImportPreview{}, err
+	}
+	return previewFromPlan(draftID, plan), nil
+}
+
+func previewFromPlan(draftID string, plan treeImportPlan) TreeDraftImportPreview {
+	return TreeDraftImportPreview{
+		DraftID:            draftID,
+		ExpectedRevision:   plan.DraftRevision,
+		SourceFileChecksum: plan.SourceFileChecksum,
+		NewPeople:          plan.NewPeople,
+		LinkedExisting:     plan.LinkedPeople,
+		Collisions:         plan.Collisions,
+		Relations:          len(plan.Edges),
+		StagedRelations:    plan.StagedRelations,
+		Statements:         plan.Statements,
+		Aliases:            plan.Aliases,
+		Candidates:         plan.Candidates,
+		ExcludedNodes:      plan.ExcludedNodes,
+		Warnings:           plan.Warnings,
+	}
+}
+
+// prepareTreeImport holds the validations the dry run and the apply run share.
+// Running them once here is why the two cannot drift apart.
+func (s *Service) prepareTreeImport(ctx context.Context, tx pgx.Tx, draftUUID, actorUUID uuid.UUID, expectedRevision int) (treeDraftRow, TreeDraftView, treeImportPlan, error) {
+	var (
+		row  treeDraftRow
+		view TreeDraftView
+		plan treeImportPlan
+	)
+	row, err := readTreeDraftForUpdate(ctx, tx, draftUUID)
+	if err != nil {
+		return row, view, plan, err
+	}
+	allowed, err := canReviewSource(ctx, tx, row.SourceID, actorUUID)
+	if err != nil {
+		return row, view, plan, err
+	}
+	if !allowed {
+		return row, view, plan, ErrForbidden
+	}
+	if row.State != "draft" || row.Revision != expectedRevision {
+		return row, view, plan, fmt.Errorf("tree draft state or revision changed: %w", ErrConflict)
+	}
+	var body []byte
+	if err := tx.QueryRow(ctx, `SELECT payload FROM source_tree_draft_revisions WHERE draft_id = $1 AND revision_number = $2`, draftUUID, row.Revision).Scan(&body); err != nil {
+		return row, view, plan, err
+	}
+	view, err = treeDraftView(row, body)
+	if err != nil {
+		return row, view, plan, err
+	}
+	if err := validateImportableGraph(view.Nodes, view.Edges); err != nil {
+		return row, view, plan, fmt.Errorf("tree draft still has unresolved review items: %w", err)
+	}
+	nodesByID := make(map[string]TreeDraftNode, len(view.Nodes))
+	for _, node := range view.Nodes {
+		nodesByID[node.ID] = node
+	}
+	for _, edge := range view.Edges {
+		if edge.Status == "rejected" || !edge.SecondReviewRequired {
+			continue
+		}
+		if edge.Status != "reviewed" {
+			return row, view, plan, fmt.Errorf("a connector requiring independent review is not yet reviewed: %w", ErrConflict)
+		}
+		var reviewerCount int
+		fingerprint := treeDraftEdgeFingerprint(edge, nodesByID)
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM source_tree_draft_edge_reviews WHERE draft_id = $1 AND edge_id = $2 AND edge_fingerprint = $3`, draftUUID, uuid.MustParse(edge.ID), fingerprint).Scan(&reviewerCount); err != nil {
+			return row, view, plan, err
+		}
+		if reviewerCount < 2 {
+			return row, view, plan, fmt.Errorf("a connector needs two distinct reviewers: %w", ErrConflict)
+		}
+	}
+	plan, err = buildTreeImportPlan(ctx, tx, row, view)
+	return row, view, plan, err
+}
+
+// ImportTreeDraft creates a new private draft tree. It links an occurrence to
+// an existing person instead of duplicating them, proposes — never applies —
+// the rest, and refuses to run without the dry run's report in hand.
+func (s *Service) ImportTreeDraft(ctx context.Context, draftID, actorID string, input TreeDraftImportInput) (TreeDraftImportResult, error) {
 	if err := s.databaseReady(); err != nil {
 		return TreeDraftImportResult{}, err
 	}
@@ -419,138 +536,115 @@ func (s *Service) ImportTreeDraft(ctx context.Context, draftID, actorID string, 
 		return TreeDraftImportResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	row, err := readTreeDraftForUpdate(ctx, tx, draftUUID)
+	row, _, plan, err := s.prepareTreeImport(ctx, tx, draftUUID, actorUUID, input.ExpectedRevision)
 	if err != nil {
 		return TreeDraftImportResult{}, err
 	}
-	allowed, err := canReviewSource(ctx, tx, row.SourceID, actorUUID)
-	if err != nil {
-		return TreeDraftImportResult{}, err
+	// A dry run the apply run may ignore is not a dry run. The apply carries
+	// the report back — the replayed preconditions — and refuses when the
+	// data it described has since changed.
+	if !input.AcknowledgePreview {
+		return TreeDraftImportResult{}, fmt.Errorf("import refused: present and review the dry-run report before applying: %w", ErrConflict)
 	}
-	if !allowed {
-		return TreeDraftImportResult{}, ErrForbidden
+	if input.SourceFileChecksum != plan.SourceFileChecksum {
+		return TreeDraftImportResult{}, fmt.Errorf("import refused: the source file changed after the dry run: %w", ErrConflict)
 	}
-	if row.State != "draft" || row.Revision != expectedRevision {
-		return TreeDraftImportResult{}, fmt.Errorf("tree draft state or revision changed: %w", ErrConflict)
-	}
-	var body []byte
-	if err := tx.QueryRow(ctx, `SELECT payload FROM source_tree_draft_revisions WHERE draft_id = $1 AND revision_number = $2`, draftUUID, row.Revision).Scan(&body); err != nil {
-		return TreeDraftImportResult{}, err
-	}
-	view, err := treeDraftView(row, body)
-	if err != nil {
-		return TreeDraftImportResult{}, err
-	}
-	if err := validateImportableGraph(view.Nodes, view.Edges); err != nil {
-		return TreeDraftImportResult{}, fmt.Errorf("tree draft still has unresolved review items: %w", err)
-	}
-	nodesByID := make(map[string]TreeDraftNode, len(view.Nodes))
-	for _, node := range view.Nodes {
-		nodesByID[node.ID] = node
-	}
-	for _, edge := range view.Edges {
-		if edge.Status == "rejected" || !edge.SecondReviewRequired {
-			continue
-		}
-		if edge.Status != "reviewed" {
-			return TreeDraftImportResult{}, fmt.Errorf("a connector requiring independent review is not yet reviewed: %w", ErrConflict)
-		}
-		var reviewerCount int
-		fingerprint := treeDraftEdgeFingerprint(edge, nodesByID)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM source_tree_draft_edge_reviews WHERE draft_id = $1 AND edge_id = $2 AND edge_fingerprint = $3`, draftUUID, uuid.MustParse(edge.ID), fingerprint).Scan(&reviewerCount); err != nil {
-			return TreeDraftImportResult{}, err
-		}
-		if reviewerCount < 2 {
-			return TreeDraftImportResult{}, fmt.Errorf("a connector needs two distinct reviewers: %w", ErrConflict)
-		}
+	if mismatch := treeImportBindingMismatch(input, plan); mismatch != "" {
+		return TreeDraftImportResult{}, fmt.Errorf("import refused: the dry-run report no longer matches (%s): %w", mismatch, ErrConflict)
 	}
 
-	var sourceTitle string
-	if err := tx.QueryRow(ctx, `SELECT title_ar FROM sources WHERE id = $1`, row.SourceID).Scan(&sourceTitle); err != nil {
+	treeID, versionID, edgeRows, resolutionRunID, wrote, err := executeTreeImportPlan(ctx, s, tx, row, draftUUID, actorUUID, &plan)
+	if err != nil {
 		return TreeDraftImportResult{}, err
 	}
-	treeID, versionID := uuid.New(), uuid.New()
-	if _, err := tx.Exec(ctx, `INSERT INTO trees (id, name_ar, description_ar, visibility, owner_id) VALUES ($1, $2, $3, 'private', $4)`, treeID, row.TitleAR, "مسودة خاصة مستوردة من مصدر: "+sourceTitle, actorUUID); err != nil {
-		return TreeDraftImportResult{}, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO tree_versions (id, tree_id, version_number, state, created_by) VALUES ($1, $2, 1, 'draft', $3)`, versionID, treeID, actorUUID); err != nil {
-		return TreeDraftImportResult{}, err
-	}
-	nodeIDMap := make(map[string]uuid.UUID)
+
 	manifestNodes := make([]map[string]any, 0)
-	sort.SliceStable(view.Nodes, func(i, j int) bool { return view.Nodes[i].ID < view.Nodes[j].ID })
-	for index, node := range view.Nodes {
-		if !node.Included {
-			continue
+	for _, entry := range plan.Nodes {
+		node := entry.Node
+		record := map[string]any{
+			"draftNodeId": node.ID, "treeNodeId": wrote.NodeIDMap[node.ID].String(),
+			"personId": entry.PersonID.String(), "nameAr": node.NameAR, "linked": entry.Linked != nil,
 		}
-		personID, treeNodeID := uuid.New(), uuid.New()
-		if _, err := tx.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, gender, created_by) VALUES ($1, $2, $3, 'unknown', $4)`, personID, node.NameAR, identity.NormalizeArabicName(node.NameAR), actorUUID); err != nil {
-			return TreeDraftImportResult{}, err
+		if entry.SourceSpellingAliasID != nil {
+			record["sourceSpellingAliasId"] = entry.SourceSpellingAliasID.String()
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar, sort_order) VALUES ($1, $2, $3, $4, $5)`, treeNodeID, versionID, personID, node.NameAR, index); err != nil {
-			return TreeDraftImportResult{}, err
+		if entry.KunyahAliasID != nil {
+			record["kunyahAliasId"] = entry.KunyahAliasID.String()
 		}
-		nodeIDMap[node.ID] = treeNodeID
-		manifestNodes = append(manifestNodes, map[string]any{"draftNodeId": node.ID, "treeNodeId": treeNodeID.String(), "personId": personID.String(), "nameAr": node.NameAR})
+		manifestNodes = append(manifestNodes, record)
 	}
 	manifestEdges := make([]map[string]any, 0)
-	result := TreeDraftImportResult{DraftID: draftUUID.String(), TreeID: treeID.String(), TreeVersionID: versionID.String(), ImportedPeople: len(nodeIDMap), Warnings: []string{}}
-	for _, edge := range view.Edges {
-		if edge.Status != "reviewed" {
-			continue
-		}
-		if !supportedTreePredicate(edge.Predicate) {
-			result.StagedRelations++
-			result.Warnings = append(result.Warnings, "A reviewed relationship uses a meaning Dawha's tree model cannot yet represent; it remains in the source draft.")
-			continue
-		}
-		subject, subjectOK := nodeIDMap[edge.SubjectNodeID]
-		object, objectOK := nodeIDMap[edge.ObjectNodeID]
-		if !subjectOK || !objectOK {
-			return TreeDraftImportResult{}, ErrValidation
-		}
-		relationshipID := uuid.New()
-		if _, err := tx.Exec(ctx, `INSERT INTO tree_relationships (id, tree_version_id, subject_node_id, object_node_id, predicate, status, source_id, created_by) VALUES ($1, $2, $3, $4, $5, 'unresolved', $6, $7)`, relationshipID, versionID, subject, object, edge.Predicate, row.SourceID, actorUUID); err != nil {
-			return TreeDraftImportResult{}, err
-		}
-		manifestEdges = append(manifestEdges, map[string]any{"draftEdgeId": edge.ID, "treeRelationshipId": relationshipID.String(), "subjectNodeId": subject.String(), "objectNodeId": object.String(), "predicate": edge.Predicate})
-		result.ImportedRelations++
+	for _, edge := range edgeRows {
+		manifestEdges = append(manifestEdges, map[string]any{
+			"draftEdgeId": edge.Edge.ID, "treeRelationshipId": edge.TreeRelationshipID.String(),
+			"sourceStatementId": edge.StatementID.String(), "entityRelationshipId": edge.EntityRelationshipID.String(),
+			"predicate": edge.Edge.Predicate,
+		})
 	}
-	manifest := map[string]any{"sourceId": row.SourceID.String(), "sourceFileId": row.SourceFileID.String(), "draftRevision": row.Revision, "nodes": manifestNodes, "edges": manifestEdges}
+	manifest := map[string]any{
+		"sourceId": row.SourceID.String(), "sourceFileId": row.SourceFileID.String(),
+		"draftRevision": row.Revision, "sourceFileChecksum": plan.SourceFileChecksum,
+		"nodes": manifestNodes, "edges": manifestEdges,
+		"resolution": map[string]any{"runId": resolutionRunID},
+	}
 	importID := uuid.New()
 	if _, err := tx.Exec(ctx, `INSERT INTO source_tree_draft_imports (id, draft_id, actor_id, tree_id, tree_version_id, manifest) VALUES ($1, $2, $3, $4, $5, $6)`, importID, draftUUID, actorUUID, treeID, versionID, mustJSON(manifest)); err != nil {
 		return TreeDraftImportResult{}, err
 	}
-	for _, node := range view.Nodes {
-		treeNodeID, included := nodeIDMap[node.ID]
-		if !included {
-			continue
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO source_tree_import_node_evidence (import_id, tree_node_id, draft_node_id, page_evidence_id, label_ar, region) VALUES ($1, $2, $3, $4, $5, $6)`, importID, treeNodeID, uuid.MustParse(node.ID), uuid.MustParse(node.PageEvidenceID), node.NameAR, mustJSON(node.Region)); err != nil {
+	for _, entry := range plan.Nodes {
+		node := entry.Node
+		if _, err := tx.Exec(ctx, `INSERT INTO source_tree_import_node_evidence (import_id, tree_node_id, draft_node_id, page_evidence_id, label_ar, region) VALUES ($1, $2, $3, $4, $5, $6)`, importID, wrote.NodeIDMap[node.ID], uuid.MustParse(node.ID), uuid.MustParse(node.PageEvidenceID), node.NameAR, mustJSON(node.Region)); err != nil {
 			return TreeDraftImportResult{}, err
 		}
 	}
-	for _, edge := range view.Edges {
-		for _, record := range manifestEdges {
-			if record["draftEdgeId"] != edge.ID {
-				continue
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO source_tree_import_edge_evidence (import_id, tree_relationship_id, draft_edge_id, page_evidence_id, connector_path) VALUES ($1, $2, $3, $4, $5)`, importID, uuid.MustParse(record["treeRelationshipId"].(string)), uuid.MustParse(edge.ID), uuid.MustParse(edge.PageEvidenceID), mustJSON(edge.Path)); err != nil {
-				return TreeDraftImportResult{}, err
-			}
-			break
+	for _, edge := range edgeRows {
+		if _, err := tx.Exec(ctx, `INSERT INTO source_tree_import_edge_evidence (import_id, tree_relationship_id, draft_edge_id, page_evidence_id, connector_path) VALUES ($1, $2, $3, $4, $5)`, importID, edge.TreeRelationshipID, uuid.MustParse(edge.Edge.ID), uuid.MustParse(edge.Edge.PageEvidenceID), mustJSON(edge.Edge.Path)); err != nil {
+			return TreeDraftImportResult{}, err
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE source_tree_drafts SET state = 'imported', tree_id = $1, tree_version_id = $2, updated_at = now() WHERE id = $3`, treeID, versionID, draftUUID); err != nil {
 		return TreeDraftImportResult{}, err
 	}
-	if err := writeAudit(ctx, tx, &actorUUID, "source_tree_draft_imported", "tree", treeID, nil, map[string]any{"draftId": draftUUID.String(), "treeVersionId": versionID.String(), "people": result.ImportedPeople, "relationships": result.ImportedRelations, "stagedRelationships": result.StagedRelations}); err != nil {
+	result := TreeDraftImportResult{
+		DraftID: draftUUID.String(), TreeID: treeID.String(), TreeVersionID: versionID.String(),
+		ImportedPeople: plan.NewPeople, LinkedExistingPeople: plan.LinkedPeople,
+		ImportedRelations: len(edgeRows), StagedRelations: plan.StagedRelations,
+		Statements: wrote.Statements, Aliases: wrote.Aliases, Candidates: wrote.Candidates,
+		ResolutionRunID: resolutionRunID, Collisions: plan.Collisions, Warnings: plan.Warnings,
+	}
+	if result.Warnings == nil {
+		result.Warnings = []string{}
+	}
+	if err := writeAudit(ctx, tx, &actorUUID, "source_tree_draft_imported", "tree", treeID, nil, map[string]any{"draftId": draftUUID.String(), "treeVersionId": versionID.String(), "people": result.ImportedPeople, "linkedExistingPeople": result.LinkedExistingPeople, "relationships": result.ImportedRelations, "stagedRelationships": result.StagedRelations, "statements": result.Statements, "aliases": result.Aliases, "candidates": result.Candidates}); err != nil {
 		return TreeDraftImportResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return TreeDraftImportResult{}, err
 	}
 	return result, nil
+}
+
+// treeImportBindingMismatch names the first precondition the apply's
+// acknowledgement disagrees with, or "" when the report still stands.
+func treeImportBindingMismatch(input TreeDraftImportInput, plan treeImportPlan) string {
+	cases := []struct {
+		name     string
+		expected int
+		actual   int
+	}{
+		{"new people", input.ExpectedNewPeople, plan.NewPeople},
+		{"linked people", input.ExpectedLinkedPeople, plan.LinkedPeople},
+		{"collisions", input.ExpectedCollisions, plan.LinkedPeople},
+		{"relations", input.ExpectedRelations, len(plan.Edges)},
+		{"statements", input.ExpectedStatements, plan.Statements},
+		{"aliases", input.ExpectedAliases, plan.Aliases},
+	}
+	for _, item := range cases {
+		if item.expected != item.actual {
+			return fmt.Sprintf("%s: reported %d, now %d", item.name, item.expected, item.actual)
+		}
+	}
+	return ""
 }
 
 // RetractTreeDraft supersedes the imported version with a new draft that omits
@@ -674,6 +768,87 @@ func (s *Service) RetractTreeDraft(ctx context.Context, draftID, actorID string)
 		return TreeDraftRetractionResult{}, ErrConflict
 	}
 
+	// The import's research-graph rows and aliases belong to the retraction
+	// ledger, so the tree and the graph stay consistent: deleting the tree
+	// rows while their statements outlive them would leave the graph citing
+	// something this import no longer produces. A row a later researcher has
+	// changed (its updated_at moved past the import) is left in place and
+	// reported, never destroyed.
+	var manifestBytes []byte
+	var importCreatedAt string
+	if err := tx.QueryRow(ctx, `SELECT manifest, created_at::text FROM source_tree_draft_imports WHERE id = $1`, uuidValue(importID)).Scan(&manifestBytes, &importCreatedAt); err != nil {
+		return TreeDraftRetractionResult{}, err
+	}
+	var manifest struct {
+		Nodes []map[string]any `json:"nodes"`
+		Edges []map[string]any `json:"edges"`
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return TreeDraftRetractionResult{}, fmt.Errorf("import manifest: %w", err)
+	}
+	aliasIDs := make([]uuid.UUID, 0, len(manifest.Nodes))
+	for _, node := range manifest.Nodes {
+		for _, key := range []string{"sourceSpellingAliasId", "kunyahAliasId"} {
+			if raw, present := node[key]; present {
+				id, err := uuid.Parse(raw.(string))
+				if err != nil {
+					return TreeDraftRetractionResult{}, fmt.Errorf("import manifest alias id: %w", err)
+				}
+				aliasIDs = append(aliasIDs, id)
+			}
+		}
+	}
+	statementIDs := make([]uuid.UUID, 0, len(manifest.Edges))
+	relationshipIDs := make([]uuid.UUID, 0, len(manifest.Edges))
+	for _, edge := range manifest.Edges {
+		for key, target := range map[string]*[]uuid.UUID{
+			"sourceStatementId":    &statementIDs,
+			"entityRelationshipId": &relationshipIDs,
+		} {
+			if raw, present := edge[key]; present {
+				id, err := uuid.Parse(raw.(string))
+				if err != nil {
+					return TreeDraftRetractionResult{}, fmt.Errorf("import manifest graph id: %w", err)
+				}
+				*target = append(*target, id)
+			}
+		}
+	}
+	var retractedAliases, retractedStatements, retractedRelationships, preserved int
+	for _, aliasID := range aliasIDs {
+		tag, err := tx.Exec(ctx, `DELETE FROM person_aliases WHERE id = $1`, aliasID)
+		if err != nil {
+			return TreeDraftRetractionResult{}, err
+		}
+		retractedAliases += int(tag.RowsAffected())
+		if tag.RowsAffected() == 0 {
+			// An alias that no longer exists was removed by someone else;
+			// count it as preserved, not as a failure of this retraction.
+			preserved++
+		}
+	}
+	for _, statementID := range statementIDs {
+		// A statement a later claim cites is later work; the retraction keeps
+		// it and reports it instead of destroying someone else's evidence link.
+		tag, err := tx.Exec(ctx, `DELETE FROM source_statements WHERE id = $1 AND updated_at <= $2::timestamptz AND NOT EXISTS (SELECT 1 FROM claim_evidence evidence WHERE evidence.source_statement_id = $1)`, statementID, importCreatedAt)
+		if err != nil {
+			return TreeDraftRetractionResult{}, err
+		}
+		retractedStatements += int(tag.RowsAffected())
+		if tag.RowsAffected() == 0 {
+			preserved++
+		}
+	}
+	for _, relationshipID := range relationshipIDs {
+		tag, err := tx.Exec(ctx, `DELETE FROM entity_relationships WHERE id = $1 AND updated_at <= $2::timestamptz`, relationshipID, importCreatedAt)
+		if err != nil {
+			return TreeDraftRetractionResult{}, err
+		}
+		retractedRelationships += int(tag.RowsAffected())
+		if tag.RowsAffected() == 0 {
+			preserved++
+		}
+	}
 	newVersionID := uuid.New()
 	var nextVersion int
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(version_number), 0) + 1 FROM tree_versions WHERE tree_id = $1`, uuidValue(row.TreeID)).Scan(&nextVersion); err != nil {
@@ -783,7 +958,7 @@ func (s *Service) RetractTreeDraft(ctx context.Context, draftID, actorID string)
 	if err := tx.Commit(ctx); err != nil {
 		return TreeDraftRetractionResult{}, err
 	}
-	return TreeDraftRetractionResult{DraftID: draftUUID.String(), TreeID: uuidValue(row.TreeID).String(), SupersedingVersionID: newVersionID.String(), ExcludedNodes: len(importedNodeIDs), ExcludedRelations: removedRelations}, nil
+	return TreeDraftRetractionResult{DraftID: draftUUID.String(), TreeID: uuidValue(row.TreeID).String(), SupersedingVersionID: newVersionID.String(), ExcludedNodes: len(importedNodeIDs), ExcludedRelations: removedRelations, RetractedStatements: retractedStatements, RetractedRelationships: retractedRelationships, RetractedAliases: retractedAliases, PreservedGraphRows: preserved}, nil
 }
 
 func readTreeDraft(ctx context.Context, q interface {

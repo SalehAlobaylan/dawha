@@ -23,11 +23,92 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 015 | Make Phase 18's cost criterion measurable, or say plainly that it cannot be | P2 | M | 008, 009, 014 | DONE (merged `6621961`) |
 | 016 | Fix the remaining correctness, privacy and consistency defects | P1 | M | 001, 002, 006, 009, 012, 015 | DONE (merged `c6ddbf8`) |
 | 017 | Make the source-dependency measurements stable and bounded | P2 | M | 007, 009, 014 | DONE (merged `2be2996`) |
-| 018 | Build the corpus, produce the gold, and measure the state that actually exists | P1 | L | 003, 008, 014 | TODO |
-| 019 | Localise the name carriers instead of the ink runs, and read each one in isolation | P1 | L | 018 | TODO |
-| 020 | Make an import resolve identity, and make it reach the research graph | P1 | L | 018 | TODO |
+| 018 | Build the corpus, produce the gold, and measure the state that actually exists | P1 | L | 003, 008, 014 | IN PROGRESS (corpus: 12 documents — 11 charts incl. the web GIF, the آل الصباح vector chart and three chat PNGs, plus the book; name-level paired check implemented; agreement blocked by fragment-sized proposals at the current render — §1.9; source-tile reading added for oversized charts in the product, but the corpus arm still reads captured page images and the Jasser pair is a 202/236-ppi painted source that still fragments) |
+| 019 | Localise the name carriers instead of the ink runs, and read each one in isolation | P1 | L | 018 | IN PROGRESS (uncommitted: colour carriers + ink name groups on every page, hosted reader, raster-image path, source-resolution tiled reading on boxed charts; open: name grouping on dense/painted charts, separating names from prose, and a reader that can transcribe the calligraphic font — §1.10) |
+| 020 | Make an import resolve identity, and make it reach the research graph | P1 | L | 018 | IN PROGRESS (uncommitted: linking, candidates, graph rows, aliases, dry run, retraction — 9 acceptances) |
+| 021 | Put the machine's suggestions in the normal review screen | P1 | L | 019, 020 | IN PROGRESS (uncommitted: record, queue, source-crop workbench, stored alternatives, on-demand vision candidates, decision measurement; remaining: identity choices, relationship review, normal-draft fold-in, single-file gate) |
+| 022 | Make name candidates measurable, and use the local judge only where it earns its place | P2 | L | 019, 021 | IMPLEMENTED, measurement pending (uncommitted: multi-key normalizer, evidence-aware bounded ranking, candidate snapshot, transactional validation, one-retry evidence fallback, source/class/date/judge `make name-eval`, local Liquid `d1:3b` adapter/endpoint/flags, shadow/active paths and tests; local privacy approval recorded and separate active row enabled; remaining human measurement: shadow sample ≥300 across three classes, go/no-go, any model ordering or accuracy claim) |
+| 023 | Make reader availability explicit and keep evaluation versions separate | P1 | M | 019, 021, 022 implementation | TODO — local/hosted capability policy, truthful action states, diagnostics, bounded failure handling, version cohorts |
+| 024 | Prepare local name readings once and resume them as durable jobs | P1 | L | 023 | TODO — detection checkpoints, private crop reuse, source metadata, local crop reader/variants, prepare/resume/cancel tools |
+| 025 | Build complete file context and prepare shadow evidence before human input | P1 | L | 023, 024 | TODO — counted file lexicon, versioned candidate pools, separate initial/final evidence, frozen durable judge requests |
+| 026 | Give reviewers history, deferred work, and region-repair tools | P1/P2 | L | 023, 024; evaluation joins from 025 | TODO — reopen/revisions, deferred/history views, crop repair/local reread, split/merge lineage, isolated bench verification |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
+
+## Local name-reading pipeline: stages after the 111-action pilot
+
+The operator selected a staged plan for the full local pipeline on 2026-10-27.
+The read-only audit was performed at `f0fcb6e` with the existing uncommitted
+Plan 018–022 implementation. The pilot has 111 review actions: 80 accepted or
+corrected names, 14 deferrals, and 17 rejections. Of those 80 truth labels, 79
+have complete shadow evidence, all in `calligraphic_dense`. The saved top-eight
+pool contains the answer in 18 of the 80 cases. These counts identify engineering
+failure examples; they are below the rate floor and do not establish model quality.
+
+Execute the stages in this order:
+
+1. [023 — capabilities and cohorts](023-local-reading-capabilities-and-cohorts.md):
+   make the unavailable hosted-reader button honest, keep privacy policy explicit,
+   provide operator diagnostics, and separate evaluation versions before changing them.
+2. [024 — durable local reading](024-durable-local-name-reading.md):
+   preserve detection before transcription, reuse crops, run local preprocessing/OCR
+   through resumable jobs, and expose preparation/status/resume/cancel tools.
+3. [025 — candidates and shadow preparation](025-name-context-and-shadow-preparation.md):
+   use complete counted file context and local alternatives, freeze all judge input
+   before human input, and let model completion happen without slowing a decision.
+4. [026 — reviewer tools](026-name-review-repair-and-verification.md):
+   return to deferred work, correct history through new revisions, repair crop
+   geometry, reread locally, and verify the real bench on an isolated test stack.
+
+Plan 026's history/geometry implementation may proceed after 024; its evaluation
+counting must use 025's final versioned evidence contracts. Start with deferred
+reopening and rectangle adjustment before split/merge. Existing Plan 019 owns the
+reader intent and Plan 021 owns human review; these stages finish their missing
+operational paths rather than replacing their provenance rules.
+
+The implementation is still TODO. This audit covered the name-reading, candidate,
+shadow-evidence, and review-tool paths. It did not audit unrelated application
+features, database query plans, dependency advisories, or external model quality.
+
+### Vetted pipeline findings
+
+Effort is for implementation including tests: S is hours, M about a day, and L
+multiple days. Risk describes the proposed change, not the severity of the
+current issue. These findings were confirmed from the live source; confidence
+is HIGH for each.
+
+| Finding | Impact | Effort | Change risk | Evidence | Stage |
+|---|---|---|---|---|---|
+| Image-reader availability is absent from the UI contract | A disabled service still offers a working-looking action | M | LOW | `apps/web/src/components/SourceSuggestionReview.tsx:1128`; `services/ai-research/app/chart_vision.py:387` | 023 |
+| Service failures fan out as individual crop requests | Setup/transport errors waste up to a batch's worth of repeated calls | S | LOW | `services/core-api/internal/sourceprocessing/carrier_reader.go:372`; `services/core-api/internal/sourceprocessing/chart_vision_client.go:243` | 023 |
+| Full-file name reading runs inline | Work can exceed the API response timeout without durable progress/resume | L | MED | `services/core-api/internal/httpapi/source_processing_handler.go:443`; `services/core-api/cmd/api/main.go:120` | 024 |
+| Detection/local transcription are not independent durable stages | Optional-reader failure prevents the normal path from saving detected geometry | L | MED | `services/core-api/internal/sourceprocessing/name_reading.go:203`; `services/core-api/internal/sourceprocessing/tree_suggestions.go:864` | 024 |
+| Text-only judging reopens the original source | Each reviewed name repeats source I/O and PDF preparation already done for its crop | M | MED | `services/core-api/internal/sourceprocessing/name_judge.go:376`; `services/core-api/internal/sourceprocessing/pdf_extractor.go:153` | 024 |
+| The bench discards file-name frequency and truncates context | The ranker's file-count signal is effectively one and larger-file context is incomplete | M | MED | `apps/web/src/components/SourceSuggestionReview.tsx:230`; `apps/web/src/lib/arabicNames.ts:244` | 025 |
+| Shadow evidence exists only if the browser receives it before save | Fast valid decisions can lose judge evidence despite a frozen candidate snapshot | L | HIGH | `apps/web/src/components/SourceSuggestionReview.tsx:508`; `apps/web/src/components/SourceSuggestionReview.tsx:614` | 025 |
+| Deferral has no return path and region repair is absent | Difficult/mistaken work cannot be resumed or repaired in the bench | L | HIGH | `services/core-api/internal/sourceprocessing/tree_suggestions.go:398`; `apps/web/src/components/SourceSuggestionReview.tsx:1326` | 026 |
+
+The grounded product directions are an inspectable local reading workbench
+(variants, crop repair, explicit reread) and a durable preparation/operator tool
+(capabilities, stage progress, resume/cancel, aggregate evidence diagnostics).
+Both reuse existing storage and PostgreSQL jobs. Their tradeoffs are artifact
+retention/coordinate management and additional revision/cohort semantics; the
+plans make those constraints explicit before UI polish.
+
+### Pipeline options considered and rejected
+
+- Automatically enabling hosted vision to make the button work: the collection
+  session deliberately keeps source images local; availability must reflect policy.
+- Using Liquid `d1:3b` as a visual reader: it remains a bounded text-only judge.
+- Treating 111 actions as 111 truth labels or relaxing the 300-decision gate:
+  rejected/deferred actions are useful operational data but not name truth.
+- Rebuilding an old missing judge result after its human answer was known:
+  that could leak the answer through live file context and is not valid recovery.
+- Adding new queue infrastructure or a model-shopping project first: the existing
+  PostgreSQL job/lease and storage systems can support these concrete gaps.
+- Replacing the work with cosmetic polish: the current high-value problems are
+  unavailable tooling, incomplete candidate evidence, repeated work, and missing
+  review return paths.
 
 ## Scope coverage
 
@@ -53,6 +134,36 @@ Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
   and runs the comparison the harness has never been given; plan 019 recovers connector geometry
   from the PDF's vector content for digital charts and removes the positional truncation. Both
   are gated on the annotation labour, which is the real critical path.
+
+  **Progress:** the CORS `PUT` defect that made three source routes unreachable from the
+  browser is fixed and tested; the `tools/ocr-eval` harness is wired into `make verify` and
+  into CI, with a guard that fails when a private family document is tracked by git; the name
+  carrier localiser and the per-crop reader are implemented, and the reading path has been
+  proven end to end on the Jasser chart — **474 names on the drawn rendering and 493 on the
+  photographic one**, four per cent apart and right at the decision document's "500-plus
+  visible names" — and the hosted reader transcribes the isolated crops correctly. The
+  reading loop is now closed: the suggestions are a first-class record with a review queue,
+  four decisions (accept, correct, reject, defer), an append-only decision ledger, and an
+  accuracy figure computed from those decisions, so the feature measures itself. A suggestion
+  is never a person, and nothing is accepted without a named reviewer. What is still missing
+  is the corpus and the gold, without which no accuracy number is available.
+- Name-candidate adjudication and the local judge: plan 022. The workbench now derives canonical,
+  compact, particle, and skeleton keys, ranks a bounded candidate pool with source and file
+  evidence, and can abstain when no candidate is plausible. The append-only decision ledger
+  stores what the reviewer saw: the shown candidates and their order, the selected candidate,
+  the input method, normalizer and pool versions, and the decision duration. `make name-eval`
+  replays those snapshots into recall@8, all-shown recall, no-candidate and all-wrong rates,
+  top-1/top-3/MRR, typed rate, median time, source coverage,
+  file-class/resolution/page/confidence/date splits, judge abstention, calibration, and a paired
+  lift interval, while counting missing and stale snapshots separately. The bounded local Liquid
+  `d1:3b` adapter, core client, config/judge endpoints, deterministic shadow sampling, separate
+  active row, and optional tight-crop image path are implemented; `.env.example` enables the
+  active row for local inference while `NAME_JUDGE_IMAGES=false` stays the default, and tests use
+  a fake transport. The operator approved local inference, but the ≥300-decision shadow
+  evaluation has not run, so no model ordering, percentage, quality, or adoption claim exists.
+  The judge is a bounded opinion, not a reader or a normalizer; it cannot add a missing name, and
+  its image mode remains an experiment. See
+  [`docs/name-judge-privacy-and-evaluation.md`](../docs/name-judge-privacy-and-evaluation.md).
 - Frontend defects the browser suite found (invitation token never reaching the page, wrong published-version number, inert place search): plan 010 (done). `make e2e` now covers all ten V1 journeys with zero fixme and zero skip, and its teardown removes the synthetic rows it created, so a run leaves the development database as it found it.
 - The S3 adapter against a real endpoint, and the R2 cutover record: plan 011 (implemented, unmerged). The same contract suite now runs against an opt-in local MinIO (`make storage-up`, compose `storage` profile, nothing in the default stack starts it) and against a test double with no MinIO. It found two defects the double could not: every `Put` failed against a plaintext endpoint because the adapter's byte counter hid `Seek` from the AWS SDK, and the contract demanded a byte-identical presign that no real signer produces. `docs/storage-backends.md` records MinIO locally / Cloudflare R2 in production with the configuration difference cited to Cloudflare's own documentation, a seven-item cutover checklist that has never been run, and what a green MinIO run does not prove about R2.
 

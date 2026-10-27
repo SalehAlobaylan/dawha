@@ -1204,6 +1204,49 @@ type SourceTreeImportNodeEvidence struct {
 	Status         string
 }
 
+type SourceTreeSuggestion struct {
+	ID                   pgtype.UUID
+	SourceID             pgtype.UUID
+	SourceFileID         pgtype.UUID
+	SourcePageEvidenceID pgtype.UUID
+	ProcessingRunID      pgtype.UUID
+	OccurrenceID         string
+	PageNumber           int32
+	Kind                 string
+	SuggestedTextAr      string
+	Region               []byte
+	Confidence           float64
+	ViewCount            int32
+	ReadingMethod        string
+	ReadingModel         string
+	Status               string
+	DecidedTextAr        pgtype.Text
+	DecidedBy            pgtype.UUID
+	DecidedAt            pgtype.Timestamptz
+	DecisionNoteAr       pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	Alternatives         []byte
+}
+
+type SourceTreeSuggestionDecision struct {
+	ID                   pgtype.UUID
+	SuggestionID         pgtype.UUID
+	ReviewerID           pgtype.UUID
+	Decision             string
+	SuggestedTextAr      string
+	DecidedTextAr        pgtype.Text
+	NoteAr               pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	CandidateSnapshot    []byte
+	SelectedCandidate    pgtype.Text
+	InputMethod          string
+	JudgeOutput          []byte
+	NormalizerVersion    string
+	CandidatePoolVersion string
+	DurationMs           pgtype.Int4
+}
+
 type SpatialEvidence struct {
 	ID                      pgtype.UUID
 	GeographicAssociationID pgtype.UUID

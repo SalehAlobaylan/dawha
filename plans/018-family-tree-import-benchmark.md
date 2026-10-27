@@ -14,59 +14,68 @@
   measurement precedent this plan copies)
 - **Category**: measurement
 - **Planned at**: 2026-10-21
+- **Current state, 2026-10-22**: the corpus holds twelve documents (eleven charts, including
+  the web-published آل الشيخ GIF, the آل الصباح vector chart and three chat-supplied PNGs), plus
+  the reference book; the paired name-level check is implemented
+  (`CompareCarrierTexts`, `ocr-eval --compare`) and its first Jasser run paired zero names
+  because the proposals are letter fragments at the current render. That is recorded in
+  `docs/import-reading-strategy.md` §1.9 as a proposal-granularity finding, not as agreement.
+  The **product** has since moved to source-resolution tiled reading: آل الصباح yields 3,014
+  proposals with a median height of 36 px, and the reader misreads the calligraphic font even
+  at 1,200 DPI (§1.10). The **corpus arm in `ocr-eval` still evaluates the captured page
+  images**, so its numbers describe the preview path, not the product's tiled path; adding a
+  source-resolution arm is open. There is still no adjudicated gold and no scored report.
 
 ## In plain language
 
-This plan is the one that needs people rather than code, so here is what it is without the
-jargon.
-
 **What we are trying to find out.** We have built a machine that reads a family-tree PDF and
-lists the names on it. On the one chart we have tested it against — the Jasser tree — it found
-39 names, and a person looking at the same chart can count several hundred. So we know the
-machine is not good enough. What we do **not** know is *how* bad it is on other families'
-charts, because families make charts very differently: some are painted pictures like the
-Jasser tree, some are boxes and typed names, some are photographs of a printed sheet.
+lists the names on it. On the one chart we have tested against — the Jasser tree — it found 39
+names, and a person counting the same chart can see several hundred. So we know it is not good
+enough. What we do **not** know is how good it is on other families' charts, because families
+make charts very differently: some are painted pictures like the Jasser tree, some are boxes
+and typed names, some are photographs of a printed sheet.
 
-**What we need: example charts.** A folder of around 30–50 real family-tree PDFs from
-different families, plus some pages from lineage books. Each one needs the family's permission
-to use. We have exactly one chart today, and one chart cannot tell us whether the reader works
-on charts in general or only on that one.
+**We do not need answer keys for the charts.** This is the important correction. The answer key
+is a *test*, not an input to the feature — if you already had the answer key you would
+already have the finished tree, and you would not need the machine. So the corpus is
+collected without keys, and it is used for what it can be used for without keys:
 
-**What we need: the answer key.** For each example chart, a human writes down the correct
-answer — which name is where, and which line joins what. Then we run the machine on the same
-chart and compare. If the machine says 39 names and the answer key says 404, we know the
-machine found 9 %. If it says 390, we know it found 95 %. Without the answer key we have no
-way to tell a good result from a bad one, because the machine's own confidence score is not
-proof of anything — it is the machine grading its own work.
+- **Building and testing the review screen.** You cannot test whether a suggestions screen is
+  usable without charts to put in it. No key needed.
+- **Measuring the machine against itself.** The corrections a reviewer makes while using the
+  screen *are* the answer key, produced for free by real use. Every suggestion a reviewer
+  accepted, corrected or rejected is a labelled example. This is where the accuracy number
+  comes from, and it costs no annotation campaign.
+- **The one free check we can do today.** We have a second rendering of the Jasser chart: a
+  different diagram, the same facts. Run the reader on both. If it finds the same names in
+  both, it is consistent. The overlap between the two result sets estimates the reader's
+  accuracy **with no human labelling at all**, because we know both diagrams must yield the
+  same name set. This is the cheapest useful number in the whole area, and it is available
+  now.
 
-**Why two people, and why a third.** Two people label the same chart separately, without
-seeing each other's work, so that one missed name does not become the answer key. Where they
-disagree, a third person decides. The tooling for all of this already exists:
-`tools/ocr-eval/label.html` is a browser page that runs entirely on your own machine, draws
-boxes and connector paths, and produces the answer key file.
+**What we need, concretely:**
 
-**If annotator time is the bottleneck.** One person plus a machine's proposed labels, with the
-person confirming or correcting every one, is about half the work and produces a usable key —
-with one honest caveat: a key built from a machine's suggestions cannot fairly judge *that
-same machine*. It can judge the local reader, or a different provider. The labeler already
-supports the two-reader workflow, and the machine-proposal variant is a change to one of the
-two readers, not to the tool.
+- **Six to ten more family charts**, from different families, with permission. Half painted
+  and half boxes-and-names, so both known kinds of chart are represented. No answer key
+  needed for any of them.
+- **The second version of the Jasser chart**, which is the paired consistency check.
+- **One person who reads Arabic**, doing what they are already doing in the review screen.
+  Every correction they make is the measurement.
 
-**The smallest version that is worth doing.** Six charts is enough to start: three painted or
-photographic charts like the Jasser tree, and three boxes-and-typed-names charts, so that both
-known kinds of chart are represented. Five of them are used while building; one is held back
-untouched to test with at the end. Books can wait — they are a different problem and a
-different track.
+**What we do not need:** a specialist genealogy knowledge for the name labels, a labelling
+campaign, a held-out split, or any of the machinery this plan used to assume. The tooling for
+the paired check is the harness in `tools/ocr-eval`, which already scores two prediction files
+against each other and against a key when one exists.
 
-**Why it is worth the trouble.** The platform's whole claim is that a machine output is never
-a fact. If we skip this and ship the reader on the strength of one chart, the next family that
-uploads their tree gets garbage with no signal that it is garbage — and that is exactly the
-failure the platform is supposed to prevent.
+**Why the paired check is not the whole answer.** Two renderings of one source are not two
+independent sources, and a reader can miss the same name in both. The check bounds the error
+rather than eliminating it, and the report must say so. It is the first number, not the last.
 
-**What is not needed.** No engineering, no infrastructure, no new tooling, and no specialist
-genealogy knowledge for the *name* labels. The people who label names need to read Arabic. The
-people who label connections benefit from understanding family trees, and can be the same
-people.
+**Why this is worth doing at all.** The platform's whole claim is that a machine output is
+never a fact. If we skip this and ship on the strength of one chart, the next family that
+uploads their tree gets garbage with no signal that it is garbage.
+
+
 
 ## Why this matters
 
@@ -200,55 +209,75 @@ The harness works but nothing runs it. Requirements:
   and the comparison report live outside the repository. Add a check that fails if any file
   matching the corpus and gold shapes is tracked by git. A `.gitignore` entry alone is not
   enough — the plan 012 precedent is a leaked corpus in `db/seeds/`, and it must not recur.
-- **A documented private-corpus location convention**, so a second machine or a second
-  operator does not invent one. It must be outside the working tree, and the convention must
-  say so in `docs/ocr-benchmark-format.md`.
+- **The corpus location is fixed, and it is outside the working tree.** `~/.dawha/corpus/`,
+  with `sources/` for the originals, `pages/` for the renders the harness reads,
+  `manifest.json`, `predictions/` and `reports/`. `docs/ocr-benchmark-format.md` records the
+  layout, the render command, and the reading-resolution decision. The guard must fail if anything under
+  that path is tracked by git — a `.gitignore` entry is not a guard, and the plan 012 precedent
+  is a corpus that leaked into `db/seeds/` and shipped.
+- **A render step, so the corpus is reproducible.** The originals are the PDFs; the harness
+  reads page images. Rendering them from the original at a fixed DPI is part of collecting the
+  corpus, not a manual chore, and the render must be recorded so a rerun produces the same
+  bytes the labeler fingerprinted.
 
-### Step 2: Collect the corpus
+### Step 2: Collect the corpus — without answer keys
 
-`docs/ocr-and-import-decision.md:447` sets the target: roughly **30–50 distinct family charts**
-and **200–300 pages from at least 10 book editions**, if available. Requirements:
+The corpus is for building and testing the review screen and for the paired consistency
+check. **No document in it needs an answer key.** Requirements:
 
+- **Six to ten family charts** to start, not thirty to fifty. Half of them painted or
+  photographic like the Jasser tree, half boxes-and-typed-names, so both known kinds of chart
+  are represented. More can be added later; the number that matters is the number of *styles*.
+- **The second rendering of the Jasser chart**, which is the paired check in Step 3.
 - **Permission in writing for every document**, from the person who owns it. The hosted
   comparison in the decision document is scoped to one explicitly authorised file by SHA-256
   (`internal/sourceprocessing/chart_analysis.go:29`); the same discipline applies to local
   annotation, and a family tree can contain living people (`PRODUCT.md:1402`).
-- **Cover the strata the decision document names**, not only the easy ones: vector PDFs, clean
-  scans, low-resolution copies, huge sheets, rotation, cross-page branches, repeated names,
-  spouse/parent conventions, damaged lines, historical print, footnotes/columns, name chains,
-  negation/uncertainty, and genuinely unreadable regions. Handwriting is a separate stratum
-  and is excluded unless it is separately represented.
+- **Cover the obvious strata**, not only the easy ones: vector PDFs, clean scans,
+  low-resolution copies, huge sheets, rotation, repeated names, spouse/parent conventions, and
+  damaged lines. Handwriting is a separate stratum and is excluded unless it is separately
+  represented.
 - **The private manifest** in the format `docs/ocr-benchmark-format.md:59-76` records, per
   document: `document_id`, `source_class` (`chart` | `book` | `mixed`), `split`
   (`development` | `held_out`), and per page a `page_id`, an `image_path` relative to the
   manifest, and — for the third baseline — reviewer-corrected `branches`.
-- **Split by document and template, not by page.** Related charts, related editions, rescans and
-  synthetic variants stay together. `MIN_HELD_OUT_DOCUMENTS = 3` in `evaluate.py:26` is a
-  floor, not a target; the decision document asks for three to five held-out charts beyond
-  development, and the report must state the real count.
 - **Render every physical page from the original at native source quality.** Do not upscale a
-  poor scan. Record the SHA-256 of the exact rendered bytes — the labeler will refuse a
-  different image of the same dimensions.
+  poor scan in the manifest. Record the SHA-256 of the exact rendered bytes — the labeler will
+  refuse a different image of the same dimensions.
 
-### Step 3: Produce the adjudicated gold
+### Step 3: Two measurements that need no answer key
 
-This is the part that cannot be automated, and it is the part that makes the rest mean
-something. Requirements:
+These replace the annotation campaign, and they are the reason this plan is now small.
 
-- **Two Arabic-capable annotators** independently label every page, blind to each other and to
-  any machine output, using `tools/ocr-eval/label.html`. Each records every visible name
-  occurrence separately — repeated identical names are separate occurrences — with the exact
-  visible Arabic, a `readable` / `partial` / `unreadable` status, and the unreadable span when
-  partial. Each marks branch regions, traces connector paths, and records a relationship only
-  with explicit visible evidence text.
-- **A genealogy/domain adjudicator** loads both independent exports and the exact source
-  images, and resolves every difference. The tool already requires an explicit adjudicator
-  decision on every relationship even where both readers agreed; do not work around it.
-- **The adjudicated JSONL is the `--gold` file.** Keep the adjudicator id, the two independent
-  annotator ids, and the per-item decision ledger. The evaluator's
-  `pending_independent_review` status is deliberate and must not be overridden by this plan.
-- **Say plainly who labelled what.** If the same person wrote the corpus and the labels, the
-  report says so. Plan 014 required exactly this of its own corpus and its lesson stands.
+**The paired consistency check.** We have two renderings of the Jasser chart: different
+diagrams, the same facts. Run the reader over both. Because both must yield the same set of
+names, the overlap between the two result sets is a direct estimate of the reader's
+accuracy — a name found in both is likely correct, a name found in one only is a candidate
+error on one side or the other.
+
+- The report must state the caveat plainly: **two renderings of one source are not two
+  independent sources**, and a reader that misses the same name in both is invisible to this
+  check. It bounds the error; it does not eliminate it.
+- The evaluator already supports scoring two prediction files against each other, and against a
+  key when one exists. The paired check needs no new scoring machinery — only a way to say
+  that two documents are renderings of the same facts, which belongs in the manifest.
+- **The paired check is the first number in this area, and it is available now.**
+
+**The corrections-as-key.** Every suggestion a reviewer accepts, corrects or rejects during
+real use is a labelled example. Log the correction against the suggestion, and the accuracy
+number accrues from use rather than from a labelling campaign.
+
+- The logging must capture, per suggestion: the machine's proposed value, the reviewer's
+  final value, the decision, and the reviewer. This is the same append-only revision shape the
+  page-review path already uses
+  (`internal/sourceprocessing/page_reviews.go`).
+- **This is the durable answer to "we would not have answer keys anyway."** The corpus does not
+  need keys; the review screen produces them.
+- The report must say how many corrections the number is based on, and refuse to quote a
+  percentage computed from a handful of suggestions.
+
+**An answer key, if one ever appears, is used as-is.** The adjudicated-gold path in the
+harness is already built and must keep working. It is now optional input, not a deliverable.
 
 ### Step 4: Run the three local baselines and score them
 
@@ -321,10 +350,14 @@ This step is the one that decides what plan 019 is for, and it is the cheapest.
 - [ ] `make ocr-benchmark-test` runs both harness suites, and CI runs them.
 - [ ] A corpus of permissioned charts and book pages exists in a private location outside the
       repository, with the manifest, and no artefact of it is tracked by git.
-- [ ] An adjudicated gold file exists, produced by two independent annotators and an
-      adjudicator, with the decision ledger retained.
-- [ ] All three local baselines are scored against that gold, in one report, with per-document
-      results, coverage and abstention reported beside precision.
+- [ ] The paired consistency check is run on the two renderings of the same chart, and the
+      number is reported with its caveat stated: two renderings of one source are not two
+      independent sources, so the check bounds the error rather than eliminating it.
+- [ ] The corrections-as-key path records, per suggestion, the machine's value, the reviewer's
+      final value, the decision and the reviewer, so accuracy accrues from real use.
+- [ ] Every baseline is scored, in one report, with per-document results, coverage and
+      abstention reported beside precision — against a key where one exists, and against each
+      other where it does not.
 - [ ] The digital/scanned split is reported, and every headline metric is split by class.
 - [ ] The raster detector's truncation is measured against the corpus: segments dropped per
       page, and where.
@@ -337,13 +370,11 @@ This step is the one that decides what plan 019 is for, and it is the cheapest.
 
 ## STOP conditions
 
-- **Stop if the annotation labour cannot be staffed.** Two Arabic-capable annotators and an
-  adjudicator are the critical path, and `docs/ocr-and-import-decision.md:586` already records
-  that reviewer availability is unknown. If it cannot be staffed, that is the finding: report
-  it, name what a smaller defensible scope would be, and leave the accuracy question open.
-  Do not substitute one annotator, or a model, for the second reader.
-- Stop if the corpus cannot be assembled with explicit permission. Do not use the authorised
-  hosted-vision file as a substitute corpus.
+- **Stop if the corpus cannot be assembled with explicit permission.** Do not use the
+  authorised hosted-vision file as a substitute corpus.
+- **Do not stop the plan because the corpus has no answer key.** That is the expected state.
+  The paired consistency check and the corrections-as-key path are the measurements; a gold
+  file is optional input, not a deliverable.
 - Stop if the report cannot be regenerated from a run, or if a number cannot be traced to a
   fixture.
 - Stop if a verification gate fails twice.

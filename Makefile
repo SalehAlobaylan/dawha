@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
+.PHONY: install dev build lint typecheck test ocr-benchmark-test ocr-corpus-check ocr-benchmark db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval name-eval docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
 
 install:
 	npm install
@@ -173,6 +173,56 @@ migration-test:
 docs-check:
 	@python3 infra/local/check-doc-links.py
 
+# ocr-benchmark-test runs the two harness suites that guard the family-tree
+# benchmark: the evaluator and the local baselines in Python, and the blind
+# label/adjudicate UI in Node. They are pure and offline, so they belong in the
+# fast gate - a broken evaluator must fail the build, because a harness that
+# scores nothing is worse than no harness.
+#
+# The Python side needs nothing but the standard library. The Node side needs
+# jsdom, which the web app already installs at the repository root.
+#
+#   make ocr-benchmark-test
+ocr-benchmark-test:
+	python3 -m unittest discover -s tools/ocr-eval -p 'test_*.py'
+	node --test tools/ocr-eval/test_labeler.mjs
+
+# ocr-corpus-check fails when a private family document, or anything derived
+# from one, is tracked by git. The originals are irreplaceable family records
+# and they live outside the working tree; this is what makes "outside the tree"
+# a guarantee rather than a habit. It recognises a leak by the sha256 of a
+# recorded original, so it has no false positives, and it reads the corpus
+# provenance record for those checksums.
+#
+#   make ocr-corpus-check
+ocr-corpus-check:
+	@python3 infra/local/check-corpus-privacy.py
+
+# ocr-benchmark runs the measurement over the private corpus and writes the
+# comparison report. It needs the corpus to exist; the corpus is outside the
+# repository at $DAWHA_CORPUS_DIR (default ~/.dawha/corpus), and its location,
+# layout and provenance are documented in docs/ocr-benchmark-format.md.
+#
+# The corpus is private, so this target is not part of `verify` and does not run
+# in CI. The harness that produces the report IS in CI, through
+# ocr-benchmark-test.
+#
+#   make ocr-benchmark
+ocr-benchmark:
+	@test -n "$(DAWHA_CORPUS_DIR)" || { \
+		printf 'set DAWHA_CORPUS_DIR to the private corpus directory\n' >&2; exit 2; }
+	@test -f "$(DAWHA_CORPUS_DIR)/manifest.json" || { \
+		printf 'no manifest at $(DAWHA_CORPUS_DIR)/manifest.json\n' >&2; exit 2; }
+	python3 tools/ocr-eval/run_baselines.py \
+		--manifest "$(DAWHA_CORPUS_DIR)/manifest.json" \
+		--output-dir "$(DAWHA_CORPUS_DIR)/predictions"
+	python3 tools/ocr-eval/evaluate.py \
+		--gold "$(DAWHA_CORPUS_DIR)/gold.jsonl" \
+		--predictions full-page="$(DAWHA_CORPUS_DIR)/predictions/full_page_tesseract.jsonl" \
+		--predictions tiled="$(DAWHA_CORPUS_DIR)/predictions/tiled_tesseract.jsonl" \
+		--predictions reviewed-branches="$(DAWHA_CORPUS_DIR)/predictions/reviewed_branch_tesseract.jsonl" \
+		--output "$(DAWHA_CORPUS_DIR)/reports/comparison.json"
+
 # verify is the FAST gate and stays that way: lint, typecheck, unit tests and a
 # build. It needs no database, no browser and no service startup, so the default
 # developer loop never pays for acceptance coverage. DATABASE_URL is
@@ -182,7 +232,7 @@ docs-check:
 # It is the gate, and the gate is only worth something if it is the one everybody
 # runs. `verify-full` and `make e2e` both build on what it checks, and neither
 # replaces it.
-verify: lint typecheck test build docs-check
+verify: lint typecheck test build docs-check ocr-benchmark-test ocr-corpus-check
 
 # generated-check fails when the committed sqlc output no longer matches what the
 # current db/migrations produce.
@@ -320,6 +370,27 @@ db-verify:
 AI_EVAL_REPORT ?= evaluation/report.json
 ai-eval:
 	cd services/ai-research && AI_EVAL_REPORT="$(AI_EVAL_REPORT)" .venv/bin/python -m evaluation.evaluate
+
+# name-eval reads the suggestion decisions and reports what they say about the
+# deterministic name-candidate pipeline: candidate recall, top-1/top-3, MRR,
+# typed rate, time to decision, and the files where the sample is thin. It is a
+# read-only replay; it does not reread a source, call a model, or label anything.
+# A decision without a candidate snapshot is reported as a measurement gap, not
+# silently recomputed with today's normalizer.
+#
+# The report is internal and prints no candidate names and no file names. It
+# groups by file class, resolution, page, reader confidence, date, and candidate
+# source. The 300-decision shadow gate requires a pre-registered class map:
+#
+#   make name-eval
+#   make name-eval NAME_EVAL_ARGS="--json"
+#   make name-eval NAME_EVAL_ARGS="--since 2026-10-01T00:00:00Z"
+#   make name-eval NAME_EVAL_ARGS="--class-map path/to/source-classes.json"
+NAME_EVAL_ARGS ?=
+name-eval:
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		go run ./cmd/name-eval $(NAME_EVAL_ARGS)
 
 # graph-benchmark measures the bounded source-dependency graph in PostgreSQL at,
 # below and above the GraphMaxNodes/GraphMaxEdges bounds in

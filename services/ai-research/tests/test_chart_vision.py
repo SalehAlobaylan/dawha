@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.chart_vision import (
+    CandidateResponse,
     ChartBox,
     LocateResponse,
     NameReading,
@@ -53,6 +54,12 @@ class StubVision:
                     for item in items
                 ]
             }
+        )
+
+    async def suggest(self, image: bytes):
+        assert image.startswith(b"\x89PNG")
+        return CandidateResponse.model_validate(
+            {"candidates": ["محمد", "أحمد", "محمد", " "]}
         )
 
 
@@ -119,6 +126,20 @@ def test_chart_reader_requires_exact_unique_occurrences() -> None:
     assert response.status_code == 200
     assert response.json()["readings"][0]["status"] == "partial"
     assert duplicate.status_code == 422
+
+
+def test_name_candidate_endpoint_returns_a_deduplicated_bounded_list() -> None:
+    app = FastAPI()
+    app.include_router(create_chart_vision_router(StubVision()))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/vision/chart/candidates", json={"image_base64": png()}
+    )
+    assert response.status_code == 200
+    # The endpoint's value is a short list a person can choose from, not a
+    # second authoritative reading.
+    assert response.json()["candidates"] == ["محمد", "أحمد"]
 
 
 def test_chart_vision_refuses_non_png_and_overlarge_image() -> None:
@@ -300,3 +321,43 @@ def test_deepseek_credentials_and_transient_errors_are_reported_without_provider
             asyncio.run(adapter._interact("prompt", [b"png"], {"type": "object"}, 100, "tile"))
         assert error.value.status_code == expected
         assert "secret provider body" not in str(error.value.detail)
+
+
+def test_candidate_cache_scope_is_per_crop_not_a_shared_constant() -> None:
+    # The provider's user_id is a cache-isolation field. Candidate calls must not
+    # share one prefix scope, or a crop could reuse another name's cached context.
+    import json
+
+    from app.chart_vision import DeepSeekChartVision
+
+    observed: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        observed.append(payload["user_id"])
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps({"candidates": ["جاسم"]})},
+                    }
+                ]
+            },
+        )
+
+    adapter = DeepSeekChartVision(
+        api_key="test-only", transport=httpx.MockTransport(handler)
+    )
+    first = asyncio.run(adapter.suggest(b"crop one"))
+    second = asyncio.run(adapter.suggest(b"crop two"))
+    third = asyncio.run(adapter.suggest(b"crop one"))
+
+    assert first.candidates == ["جاسم"]
+    assert second.candidates == ["جاسم"]
+    assert third.candidates == ["جاسم"]
+    assert len(observed) == 3
+    assert all(len(value) == 64 for value in observed)
+    assert observed[0] == observed[2]
+    assert observed[0] != observed[1]

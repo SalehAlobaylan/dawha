@@ -28,7 +28,11 @@ func NewService(pool *pgxpool.Pool, store storage.Store, queue LeaseQueue, provi
 	if extractor == nil {
 		extractor = NewTextExtractor()
 	}
-	return &Service{Pool: pool, Store: store, Jobs: queue, AI: provider, Extractor: extractor}
+	return &Service{
+		Pool: pool, Store: store, Jobs: queue, AI: provider, Extractor: extractor,
+		NameJudgeMode:   DefaultNameJudgeSettings().Mode,
+		NameJudgeSample: DefaultNameJudgeSettings().Sample,
+	}
 }
 
 func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input UploadInput) (FileView, error) {
@@ -91,7 +95,11 @@ func (s *Service) Upload(ctx context.Context, sourceID, actorID string, input Up
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO source_processing_runs (id, source_id, source_file_id, status, stage, run_kind, pipeline_config, triggered_by)
 		VALUES ($1, $2, $3, 'queued', 'queued', 'document', $4, $5)
-	`, runID, sourceUUID, fileID, mustJSON(map[string]any{"renderDpi": 300, "ocr": "local_poppler_tesseract"}), actorUUID); err != nil {
+	`, runID, sourceUUID, fileID, mustJSON(map[string]any{
+		"renderDpi":        300,
+		"ocr":              "local_poppler_tesseract",
+		"carrierLocaliser": DescribeCarrierLocaliser(DefaultCarrierLocaliserConfig()),
+	}), actorUUID); err != nil {
 		_ = s.Store.Delete(ctx, key)
 		return FileView{}, err
 	}
@@ -148,7 +156,7 @@ func validateUploadInput(input UploadInput) (UploadInput, error) {
 
 // Supported source format contract. The API, worker, error copy, and UI copy
 // share this list; adding a format also requires a matching extraction path.
-var supportedContentTypes = []string{"text/*", "application/json", "application/xml", "application/pdf"}
+var supportedContentTypes = []string{"text/*", "application/json", "application/xml", "application/pdf", "image/jpeg", "image/png", "image/gif"}
 
 // undeclaredContentType is what a multipart part carries when the client does
 // not name a format. It carries no claim to verify, so the bytes decide.
@@ -245,6 +253,15 @@ func resolveContentType(declared string, content []byte) (string, error) {
 		}
 		return effective, nil
 	}
+	if isImageContentType(effective) {
+		if !isImageContentType(detected) || detected != effective {
+			return "", unsupportedContent(fmt.Sprintf("the declared content type %q contradicts the detected content type %q", effective, detected))
+		}
+		if _, ok := inspectImageSource(content); !ok {
+			return "", unsupportedContent(fmt.Sprintf("the %q content is not a readable image within %d megapixels", effective, maxSourceImagePixels/1_000_000))
+		}
+		return effective, nil
+	}
 	if !utf8.Valid(content) {
 		return "", unsupportedContent(fmt.Sprintf("the content type %q does not carry valid UTF-8 text", effective))
 	}
@@ -252,7 +269,13 @@ func resolveContentType(declared string, content []byte) (string, error) {
 }
 
 func normalizeContentType(value string) string {
-	return strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
+	normalized := strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0]))
+	// Browsers and older scanners spell the JPEG media type both ways. They
+	// name the same raster format, so the contract accepts the alias.
+	if normalized == "image/jpg" || normalized == "image/pjpeg" {
+		return "image/jpeg"
+	}
+	return normalized
 }
 
 func safeFilename(value string) string {

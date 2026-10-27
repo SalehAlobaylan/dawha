@@ -1,6 +1,7 @@
 package sourceprocessing
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -69,6 +70,26 @@ func TestTreeDraftReviewFingerprintBindsLabelsEndpointsAndConnectorGeometry(t *t
 	if treeDraftEdgeFingerprint(edge, nodes) == original {
 		t.Fatal("editing an endpoint label retained the same review fingerprint")
 	}
+}
+
+// confirmTreeDraftImport is the client flow the apply now requires: run the
+// dry run, then apply carrying the report's own preconditions back.
+func confirmTreeDraftImport(service *Service, ctx context.Context, draftID, actorID string, revision int) (TreeDraftImportResult, error) {
+	preview, err := service.PreviewTreeDraftImport(ctx, draftID, actorID, revision)
+	if err != nil {
+		return TreeDraftImportResult{}, err
+	}
+	return service.ImportTreeDraft(ctx, draftID, actorID, TreeDraftImportInput{
+		ExpectedRevision:     revision,
+		AcknowledgePreview:   true,
+		SourceFileChecksum:   preview.SourceFileChecksum,
+		ExpectedNewPeople:    preview.NewPeople,
+		ExpectedLinkedPeople: preview.LinkedExisting,
+		ExpectedCollisions:   len(preview.Collisions),
+		ExpectedRelations:    preview.Relations,
+		ExpectedStatements:   preview.Statements,
+		ExpectedAliases:      preview.Aliases,
+	})
 }
 
 func TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted(t *testing.T) {
@@ -146,7 +167,7 @@ func TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted(t *testing
 	if len(saved.Edges) != 1 || saved.Edges[0].ReviewerCount != 1 || !saved.Edges[0].ReviewedByMe {
 		t.Fatalf("first edge review ledger = %+v, want one distinct reviewer", saved.Edges)
 	}
-	if _, err := service.ImportTreeDraft(ctx, draft.ID, owner.User.ID, saved.Revision); !errors.Is(err, ErrConflict) {
+	if _, err := confirmTreeDraftImport(service, ctx, draft.ID, owner.User.ID, saved.Revision); !errors.Is(err, ErrConflict) {
 		t.Fatalf("import without independent second review = %v, want conflict", err)
 	}
 	secondView, err := service.GetTreeDraft(ctx, draft.ID, secondReviewer.User.ID)
@@ -176,7 +197,7 @@ func TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted(t *testing
 	if changed.Edges[0].Status != "proposed" || changed.Edges[0].ReviewerCount != 0 || changed.Edges[0].ReviewedByMe {
 		t.Fatalf("edited connector retained stale approvals: %+v", changed.Edges[0])
 	}
-	if _, err := service.ImportTreeDraft(ctx, draft.ID, owner.User.ID, changed.Revision); !errors.Is(err, ErrConflict) {
+	if _, err := service.ImportTreeDraft(ctx, draft.ID, owner.User.ID, TreeDraftImportInput{ExpectedRevision: changed.Revision}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("import after reviewed connector changed = %v, want conflict", err)
 	}
 	changedEdges = append([]TreeDraftEdge(nil), changed.Edges...)
@@ -193,7 +214,7 @@ func TestTreeDraftImportCreatesPrivateUnresolvedTreeAndCanBeRetracted(t *testing
 	if err != nil || finalReview.Edges[0].ReviewerCount != 2 {
 		t.Fatalf("independent second review after edit = %+v, %v", finalReview.Edges, err)
 	}
-	imported, err := service.ImportTreeDraft(ctx, draft.ID, owner.User.ID, finalReview.Revision)
+	imported, err := confirmTreeDraftImport(service, ctx, draft.ID, owner.User.ID, finalReview.Revision)
 	if err != nil {
 		t.Fatalf("import reviewed graph with final edge decisions %+v: %v", finalReview.Edges, err)
 	}
@@ -291,7 +312,7 @@ func TestTreeDraftRetractionRefusesLaterRelationshipDependency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save draft: %v", err)
 	}
-	imported, err := service.ImportTreeDraft(ctx, draft.ID, owner.User.ID, saved.Revision)
+	imported, err := confirmTreeDraftImport(service, ctx, draft.ID, owner.User.ID, saved.Revision)
 	if err != nil {
 		t.Fatalf("import draft: %v", err)
 	}

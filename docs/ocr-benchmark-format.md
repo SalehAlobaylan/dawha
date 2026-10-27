@@ -46,6 +46,58 @@ source images, independent annotations, and gold labels stay in a permissioned p
 outside the shared repository. The adjudicated gold preserves page dimensions and image fingerprints
 alongside the reader IDs and item-level decisions.
 
+## Where the corpus lives
+
+One location, outside the repository, so a second machine or a second operator does not invent
+one:
+
+```
+~/.dawha/corpus/
+  sources/       the original PDFs and images, as the family gave them
+  pages/         rendered page images the harness reads
+  manifest.json  the private manifest, pointing at pages/
+  predictions/   harness output
+  reports/       harness output
+```
+
+`sources/` holds the originals; `pages/` holds the renders the harness actually reads, because
+the baselines take page images rather than PDFs. Render them from the original at the DPI the
+pipeline uses, and never upscale a poor scan in the manifest:
+
+```sh
+pdftoppm -f 1 -l 1 -singlefile -r 600 -png ~/.dawha/corpus/sources/family-a.pdf \
+  ~/.dawha/corpus/pages/family-a-p1
+```
+
+The `600` is a reading resolution, not a localisation one. Measured as a fraction of page
+area, colour segmentation finds the same carrier population at 300 DPI and at 600 DPI — about
+7 % more components at 600, from less fragmentation, not three times as many — so the
+localiser needs no second render and the pipeline's existing 300 DPI is enough. Rendering at
+600 keeps the glyphs large enough to read, which is a different requirement. It is
+interpolation of a 236 ppi scan, not new information, and the report must say so rather than
+implying the scan is higher resolution than it is.
+
+**Nothing under `~/.dawha/corpus/` is ever committed.** The guard that enforces it is a
+requirement of plan 018, not a `.gitignore` entry: the plan 012 precedent is a corpus that
+leaked into `db/seeds/` and shipped. The directory is outside the working tree precisely so
+that a path mistake cannot put it in a commit.
+
+**No answer key is required.** The corpus is for building and testing the review screen. The
+accuracy number comes from the reviewer's corrections, logged by the review surface (plan 021).
+An adjudicated gold file is supported and used when one exists — it is optional input, not a
+deliverable.
+
+### Provenance, for irreplaceable originals
+
+`sources.json` sits beside `manifest.json` and records, per original: the `sha256`, the family,
+the title, where it came from, what permission was given, the page geometry, the scan
+properties (embedded image size, native ppi, whether a text layer or vector content exists),
+and the document class. It also records a `renderings` map, so two documents that are two
+drawings of the same facts are grouped and the paired consistency check knows they are paired.
+
+The originals are stored read-only. The checksum list is what makes a backup verifiable: a
+restored copy can be proved identical to the original without trusting the backup.
+
 ## Local Tesseract baselines
 
 `tools/ocr-eval/run_baselines.py` compares full-page Arabic Tesseract, 1024-pixel tiles with
@@ -54,7 +106,9 @@ uses the network. Install Pillow and Tesseract with the `ara` model in the local
 page images and manifest are kept private; paths are not copied into prediction output.
 
 The private manifest is a JSON array. Image paths are relative to the manifest directory unless
-absolute. Branches in the third baseline must be corrected by a reviewer before the run:
+absolute. A document may carry a `rendering_of` key naming the group of documents that are
+different renderings of the same facts; the evaluator uses it for the paired consistency
+check, where the two prediction sets are compared against each other instead of against a key. Branches in the third baseline must be corrected by a reviewer before the run:
 
 ```json
 [

@@ -94,7 +94,9 @@ manual transcription, and requesting a better original.
 | Existing leases, permissions, identity resolution, tree versions | Concurrency and review boundaries | Chart draft import is integrated; identity resolution and historical acceptance remain separate research decisions |
 
 The text extractor's 200 limit counts returned segments, not necessarily physical PDF pages.
-The PDF path separately caps physical pages at 200, upload size at 25 MiB, text at 200,000
+The PDF path separately caps physical pages at 200, upload size at 128 MiB (raised from 25 MiB
+on 2026-10-22 when a real 58 MB family chart was refused — the constant's comment carries the
+measured reason), text at 200,000
 characters/page, stored reading text at 1 MiB/page and 128 MiB/document, OCR runtime at 30
 minutes/document, and word regions at 100,000/document. A page with more than 1,000 local line
 candidates is visibly marked incomplete in tree review; those segments remain bounded and are
@@ -644,10 +646,135 @@ fix is not a better model and not more tiles; it is changing the question from *
 of them carrying a name — so the remaining task is one isolated word per call, which is where
 a vision model is strong.
 
-The three plans that follow are `plans/018-family-tree-import-benchmark.md` (corpus, gold,
-document-class classification, and the comparison the harness in `tools/ocr-eval` has never
-been given), `plans/019-family-tree-import-name-localisation.md` (a name-carrier localiser in
-place of the ink-run detector, and a per-crop transcription arm), and
+The four plans that follow are `plans/018-family-tree-import-benchmark.md` (the corpus, the
+document-class classification, and the measurements the harness in `tools/ocr-eval` has never
+been given — **no answer key is required**, because the corpus is for building the review
+screen and the reviewer's own corrections become the key),
+`plans/019-family-tree-import-name-localisation.md` (a name-carrier localiser in place of the
+ink-run detector, and a per-crop transcription arm),
 `plans/020-family-tree-import-identity-linking.md` (identity resolution and entry into the
-research graph). All are gated on the annotation labour, which §12 already identifies as the
-real critical path.
+research graph), and `plans/021-family-tree-import-suggestion-review.md` (the machine's
+suggestions in the normal review screen, which is the feature itself).
+
+**Addendum, 2026-10-22 — the corpus has grown past the planning assumption.** Four more family
+charts are ingested (البليهي، الفراج، السكران، آل مقبل — three new families), plus a 356-page
+genealogical reference book. The chart class that plan 018's "document-class classification"
+step was to determine turned out to have **five members**, not one or two: painted fruit,
+drawn leaves, a printed oval canopy, a calligraphic tree with names written along the branches,
+and a desert tree with a tabular list. The full table of measured name-group counts and reader
+probes is §1.8 of `docs/import-reading-strategy.md`; the short version is that the reader
+transcribed real names from every class between 96 and 300 ppi while the localiser's colour
+assumptions hold on only two classes. The 58 MB chart (آل مقبل) that exceeded the old 25 MiB
+upload limit is accepted since 2026-10-22, when the bound was raised to 128 MiB.
+`TestValidateUploadInputAcceptsARealFamilyChart` pins the exact real size. The reference book carries a *working* OCR
+text layer whose entries are already kinship-structured, which moves the book track from OCR
+toward structured extraction (§8).
+
+**Status note, 2026-10-22 — plan 020 is implemented (uncommitted).** The import now links an
+occurrence whose normalised name matches an existing person instead of duplicating them
+(preview-gated, one occurrence per person per import), proposes never merges for near names
+(`entity_resolution_candidates` inside the import's own run), writes `entity_relationships`
+and `source_statements` (`extraction_method='imported'`) for every reviewed representable
+edge, keeps the verbatim page spelling as a `source_spelling` alias beside the canonical name,
+and has a dry run the apply must carry back or refuse. Retraction reverses the graph rows it
+wrote and refuses to touch anything a later researcher changed. §6.6 of
+`docs/import-reading-strategy.md` records the shapes; nine acceptance tests pin them.
+
+**Status note, 2026-10-22 — raster images are a source format (uncommitted).** The upload
+contract now accepts JPEG, PNG and GIF (128 MiB, 40 megapixels of source) and the worker treats
+a raster as a one-page document: the same bounded render feeds Tesseract, the line detector and
+the page review, previews and page evidence work, and suggestions and tree drafts accept the
+file. (The plan 021 suggestion reader no longer crops names from that bounded render; it reads
+them from source-resolution tiles — see the note below.) This is the answer to the "website" input: `https://www.obaikan.net/ALALSHEEKH.htm` is a
+FrontPage page whose entire body is one 1,962×2,919 GIF, so there is no HTML tree to parse —
+the website is an image with a URL in front of it. The آل الصباح PDF (one vector page, no text
+layer, no embedded image) is the same reading problem as an exported image. The ink half of the
+localiser now runs even when a page has no coloured shape: an early return was the only colour
+dependency, and it is gone (`colour-text-anchor-v1+ink-name-groups-v1`). The name-level paired
+check is implemented (`CompareCarrierTexts`, `cmd/ocr-eval --compare`) and its first run on the
+Jasser renderings paired zero names because the crops are letter fragments at the current render
+resolution — a proposal-granularity finding, recorded in §1.9 of the strategy document, not a
+claim of accuracy. Upload and extraction are pinned by
+`TestValidateUploadInputAcceptsRasterCharts`, `TestImageExtractionProducesOneReviewablePage`
+and `TestUploadProcessAndReviewAnImageSource`. The three charts supplied as chat images
+(العجلان والعيب، أسرة الحيان، عبد الرحمن سعد الشرمي) are accessioned as PNG documents as well;
+at screenshot resolution their name crops are unreadable, which is recorded in §1.9 as a
+source-resolution finding rather than a parser failure.
+
+**Status note, 2026-10-22 — names are read at source resolution, and the limit moved to the
+reader (uncommitted).** `ReadSuggestions` no longer crops names from a 2,400-px preview. It
+opens the page at 240 DPI, renders it in 1,920-px tiles with a 256-px overlap, runs the
+localiser on each tile, and assigns each name to one tile by its centre; the name is then read
+from that tile. A raster page larger than the old 16-megapixel analysis cap is now accepted up
+to the source bound (40 megapixels), because refusing it after a successful upload looked like
+a chart with no names. The reading model string is
+`colour-text-anchor-v1+ink-name-groups-v1+source-tiles-v1`, and
+`TestPlanNameReadingTilesPartitionsThePage`,
+`TestReadNamesOnPageReadsEachNameOnceFromSourceTiles` and
+`TestOpenChartPageAcceptsAnImageAboveThePreviewBound` pin the parts that can be pinned without
+the private corpus.
+
+The result is a clean localisation on the boxed آل الصباح chart: 54 tiles, 3,014 proposed
+names (against 2,259 at the old preview) with a median height of 36 px, instead of 18×7 px
+crops. It is not a clean reading. A crop that a person
+reads as `أحمد` was returned as `معصرة` at 240 DPI, `معمول` at 480, `معصم` at 600 and `معصرة`
+at 900; the whole box at 1,200 DPI came back `حماة`, and a synthetic `محمد` in Geeza Pro was
+read correctly. The model can read Arabic; it cannot read this chart's calligraphic letterforms.
+Tesseract read the same box correctly from one 8× crop and returned nothing or `معمل` from
+others. This is plan 019's STOP condition, recorded rather than engineered around: the class
+needs manual transcription or a better original, and the review queue is the product. Painted
+and leaf charts still fragment; on آل مقبل a larger grouping gap merges branches rather than
+forming names. The read result now reports the median name height in source pixels and warns
+below 18 px (the three chat images measure 3, 11 and 5 px; آل الصباح measures 36 px), so a
+screenshot that was accepted at upload is not silently presented as a reading failure. The measurements are in §1.10 of `docs/import-reading-strategy.md`.
+
+### Addendum, 2026-10-23 — the suggestion review bench
+
+The suggestion review is now a separate, full-screen bench opened from source processing, and
+it is deliberately built around the source rather than around the reader's output. It renders
+the active name's tight crop and a wider context crop from the original through
+`GET /api/v1/source-tree-suggestions/{id}/crop`, keeps the reader's reading and its stored
+alternatives visible, and records the reviewer's decision in the existing append-only decision
+log. A dedicated `POST /api/v1/source-tree-suggestions/{id}/candidates` endpoint can ask the
+vision model for at most eight spelling candidates for that same tight crop, on demand; it
+persists nothing and never accepts or writes a name. The crop and context views are capped at
+1,600 px/2.5 MP, and the read itself is still the source-resolution tiled pipeline.
+
+This does not change the central rule. The model's text, its alternatives, and its candidates
+are hypotheses; the reviewer's action is the only acceptance. The bench reports the unchanged
+reading rate with its decision count and refuses to present a rate too early. For the
+calligraphic آل الصباح chart and the three low-resolution chat images, the honest supported
+outcome remains manual transcription from the best available source crop, with the machine
+reading preserved beside it. Automatic identity matching and relationship review remain open
+parts of plan 021. The detailed measurements are in `docs/import-reading-strategy.md` §1.10 and
+its 2026-10-23 status note.
+
+### Addendum, 2026-10-26 — candidate evidence and a default-off judge
+
+Plan 022's first delivery makes the candidate list measurable without changing who decides.
+The decision ledger now carries the candidate snapshot, the selected candidate, input method,
+normalizer/pool versions, duration, and an empty judge-output slot in the same transaction as
+the decision. Migration `0053_source_tree_suggestion_decision_context.sql` is additive, and the
+server validates bounds, positions, sources, and selections; an old client still writes the
+legacy defaults. If the server rejects malformed evidence, the web client retries once without
+it and tells the reviewer that the decision was saved but the measurement was not.
+
+`make name-eval` is a read-only report over those decisions. It computes candidate recall@8,
+recall among any shown candidate, the no-candidate and all-wrong rates, top-1/top-3/MRR, typed
+rate, median time to decision, candidate-source coverage, breakdowns by file class, resolution,
+page, reader confidence and date, judge abstention split by truth presence, judge versus
+deterministic top-1/top-3, a paired bootstrap interval, calibration buckets, and the
+300-decision gate. It separates missing snapshots and snapshots produced by a different
+normalizer. It does not read source files, call a model, or print candidate or file names. The
+local database has an eight-name shadow pilot in one class, below the rate floor, so no rate can
+be quoted.
+
+A bounded judge adapter, core client, config endpoint, shadow sampling, separate active row,
+and optional tight-crop image path are implemented. The default provider is a local Liquid
+`d1:3b` model served by Ollama at `/v1/systemone`; `.env.example` enables active mode for that
+local model, where the row is an opinion only and cannot accept, prefill, or reorder a name.
+`NAME_JUDGE_IMAGES=false` remains the default. The privacy decision is recorded in
+[`docs/name-judge-privacy-and-evaluation.md`](name-judge-privacy-and-evaluation.md), but the
+300-decision shadow run has not happened, so no quality or adoption claim exists. The source
+crop and manual transcription remain the supported path when the reader and the candidate pool
+both miss.

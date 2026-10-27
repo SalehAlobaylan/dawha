@@ -13,6 +13,13 @@
 - **Depends on**: plan 018 (the corpus and the measured baseline this is compared against)
 - **Category**: feature
 - **Planned at**: 2026-10-21
+- **Current state, 2026-10-22**: the colour localiser, the ink name groups and the hosted
+  reader are implemented; the ink pass now runs with or without coloured shapes, and raster
+  images (JPEG/PNG/GIF, including the web-published GIF charts) are first-class one-page
+  documents. Measured on the expanded corpus, the open work is **grouping and content**: on
+  the Jasser renderings the name groups are letter fragments at 4,000 px, and on the dense
+  modern charts the proposals include prose panels and tables. See
+  `docs/import-reading-strategy.md` §1.8–1.9.
 
 ## Why this matters
 
@@ -32,7 +39,7 @@ coloured fruit and leaf shapes. Measured (`docs/import-reading-strategy.md` §1)
 | Segments kept | **1,000** — **89.3 % discarded** |
 | Surviving candidates in the right three-quarters below the top quarter | **zero** |
 | Median candidate length | 54 px — a letter stroke, not a connector |
-| Name carriers found by colour segmentation at 600 DPI | **404**, 82 % carrying a name |
+| Name carriers found by the implemented localiser at 300 DPI | **398** on the drawn chart, **388** on the photographic one — 2.6 % apart, and the two charts carry the same facts |
 | Tesseract on a tight, legible 600 DPI crop of one name | `2`, `سد`, `!` — it cannot read the font |
 
 So the current pipeline does three wrong things at once: it thresholds a photograph, it
@@ -49,7 +56,7 @@ returns 342 garbage "words", because a greyscale ink threshold sees the landscap
 **The right architecture**, which the measurement supports directly:
 
 ```
-render at 600 DPI
+render at the reading resolution (300 DPI is enough)
    ↓
 localise the name carriers      colour segmentation (pictorial) | vector geometry
                                  (box-and-line, digital) | raster detector (fallback)
@@ -67,6 +74,49 @@ The diagram-extraction literature says exactly why that must fail — classical 
 98.8 % node F1 and 66.7 % edge F1 against 34.0 % and 10.7 % for the best vision-language
 model (FlowExtract, APMS 2026; diagram2graph). The fix is not a better model; it is changing
 the question from *find* to *transcribe*.
+
+## What is implemented, and what it measured
+
+The reading path is implemented and it works end to end. The chain, on the one chart the
+repository has:
+
+| Stage | Result |
+| --- | --- |
+| Render at 300 DPI | the resolution the pipeline already uses |
+| Saturated components | 411 carriers — the coloured shapes |
+| Ink grouped by proximity, and filtered to what is name-sized | **493** name groups on the photographic chart, **474** on the drawn one — 4 % apart |
+| Read each group in isolation, three times, and vote | the names |
+
+**474 and 493 are in the right place.** The decision document says the chart carries "500-plus
+visible names" (`docs/ocr-and-import-decision.md:55`), and the localiser finds 474 of them on
+the clean drawing and 493 on the photograph. That is the first independent check of that
+figure, made without an answer key, and it is pinned by a test.
+
+Ten of the larger groups, read by the existing hosted reader:
+
+`لبيب`, `الطفل`, `نور الحق`, `فيصل`, `حاكم`, `طارق`, `عبدالله`, `إبراهيم` — and one that was
+checked against the crop by eye and was exactly right. The ten smallest groups were unreadable,
+which is a *recall* question about the smallest names on the chart rather than a defect in the
+path.
+
+Three corrections the measurement forced, each of which was a design decision that looked
+right and was not:
+
+- **The unit is the NAME, not the shape.** The leaves of a painted tree touch, so a carrier is
+  often a dozen of them, and reading a carrier hands the reader a branch of the tree. The
+  name is a run of ink; grouping the ink by proximity gives the right unit.
+- **The context crop must not be wider than the name.** A wider context crop contains the
+  NEXT name as well, so the reader returned two readings for one occurrence and the response
+  schema refused them. The tight crop is read accurately, and the robustness comes from
+  reading it several times and voting.
+- **A text block is not a name.** The ancestor stack down the trunk and the panels of prose
+  come out as one enormous group, and an area cap excludes them.
+- **A fragment of a letter is not a name either.** The first grouping produced 1,900 groups
+  on the photographic chart, most of them single strokes of JPEG-shattered letters, and the
+  reader returned nothing for any of them. A minimum height and a minimum area took it to 493,
+  and the readings that came back were names.
+
+The arm is `cmd/ocr-eval`, which writes a prediction file the harness scores like any other.
 
 ## Current state
 
@@ -95,6 +145,19 @@ the question from *find* to *transcribe*.
   `reference_id` + region IoU ≥ 0.5, and equal Arabic strings never establish identity.
 - **No PDF vector content is read anywhere.** `pdfplumber`, `GetDrawings`, `pdftocairo`,
   `page.lines`, `page.rects` and `svg` have no matches across `internal/` and `cmd/`.
+- **The reading render is source-resolution tiles (2026-10-22).** `ReadNamesOnPage`
+  (`name_reading.go`) opens the page at 240 DPI, splits it into 1,920-px tiles with a 256-px
+  overlap, localises each tile with the page-calibrated thresholds expressed in tile pixels,
+  and assigns each name to one tile by its centre. The آل الصباح wall chart is 54 tiles, 3,014
+  proposed names with a median height of 36 px, against ~18×7 px at the old 4,000-px preview.
+  `ReadSuggestions` uses this path and records
+  `colour-text-anchor-v1+ink-name-groups-v1+source-tiles-v1`; the image opener now accepts the
+  upload bound of 40 megapixels instead of refusing above 16, and the read result warns when
+  the median name height is below 18 px (the three chat images measure 3, 11 and 5 px). This closes the
+  *reading resolution* half of the plan, not the *reader* half: the hosted reader misreads the
+  calligraphic chart even at 1,200 DPI, which is the STOP condition above and is recorded in
+  `docs/import-reading-strategy.md` §1.10. Painted and leaf charts still fragment, and a larger
+  grouping gap merges branches, so the grouping measurement remains open.
 
 ## Commands you will need
 
@@ -167,11 +230,25 @@ primary path.
 
 - **Pictorial charts: colour segmentation.** Connected components over pixels whose channel
   spread exceeds a threshold, with an area filter, scored by the presence of an interior
-  high-contrast mark. Measured on the one chart we have: 493 leaf-sized components at 600 DPI,
-  **404 (82 %) carrying a name mark**, against 135 at 300 DPI. The localiser must **render at
-  600 DPI** — the yield roughly triples, and the reason is that neighbouring carriers stop
-  merging and stop fragmenting. This is upsampling a 236 ppi scan, not new information, and
-  the report must say so rather than implying the scan is higher resolution than it is.
+  high-contrast mark. Measured on the two charts we have, at the 300 DPI the pipeline
+  already renders: **398** carriers on the drawn chart and **388** on the photographic one.
+  The two charts carry the same facts, so the agreement is the calibration signal, and the
+  thresholds are chosen to hold it.
+
+  **The merge is anchored on the text and bounded by proximity.** Fragments of one leaf share
+  a word; two different leaves never do. Without the proximity bound, one long stroke crossing
+  a dense canopy merges every leaf it touches, and the merged group is too large to be a name
+  and is discarded — destroying the carriers the merge was meant to repair.
+
+  **The association is by pixels, not by box.** A blob whose pixels lie inside a carrier is
+  text on that carrier. The alternative — "the word lies within the shape's box" — is more
+  robust in principle and measurably worse: on the photographic rendering it cut the carrier
+  count from 386 to 172, because one long stroke overlaps many leaves at once.
+
+  **No second render is required.** Measured as a fraction of page area, the carrier
+  distribution is the same at 300 and 600 DPI, and 600 DPI finds about 7 % more components
+  rather than three times as many. The 16 MP render cap is therefore not in the way, and the
+  300 DPI the pipeline already produces is enough.
 - **Box-and-line charts: native vector geometry where available.** For a digital PDF, the
   connectors and boxes are vector path operators in the file and should be read as such, not
   estimated from a rasterisation. Two source options — Poppler's `pdftocairo -svg` alongside
@@ -294,7 +371,7 @@ primary path.
 - [ ] Each file records its chart style, derived deterministically, with the evidence used, and
       a wrong classification degrades to running both arms.
 - [ ] A colour-segmentation localiser finds the name carriers on the synthetic fixture and on
-      the real chart, at 600 DPI, with a measured yield.
+      the real chart, at the reading resolution, with a measured yield.
 - [ ] Native vector geometry is read for box-and-line digital charts, with a pinned coordinate
       transform, and is a fallback rather than the only path.
 - [ ] Truncation is non-positional, its limit is measured, and raising the render DPI no

@@ -21,8 +21,8 @@ type createSourceTreeDraftRequest struct {
 	TitleAR string `json:"titleAr"`
 }
 
-type importSourceTreeDraftRequest struct {
-	ExpectedRevision int `json:"expectedRevision"`
+type judgeSourceSuggestionRequest struct {
+	Candidates []sourceprocessing.JudgeCandidate `json:"candidates"`
 }
 
 func (h sourceProcessingHandler) uploadFile(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +345,157 @@ func (h sourceProcessingHandler) saveChartAnalysisReview(w http.ResponseWriter, 
 	writeJSON(w, http.StatusCreated, result)
 }
 
+// listSourceSuggestions returns the review queue for a file: the machine's
+// readings, the most certain first.
+func (h sourceProcessingHandler) listSourceSuggestions(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeSourceProcessingError(w, sourceprocessing.ErrValidation)
+			return
+		}
+		limit = parsed
+	}
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeSourceProcessingError(w, sourceprocessing.ErrValidation)
+			return
+		}
+		offset = parsed
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	result, err := h.Service.ListSuggestions(r.Context(), r.PathValue("fileID"), user.ID, status, limit, offset)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+// decideSourceSuggestion records what a reviewer decided about a suggestion.
+func (h sourceProcessingHandler) decideSourceSuggestion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionDecision
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.DecideSuggestion(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// sourceSuggestionCrop renders the suggestion's name and its surrounding context
+// from the original source, so a person can read the name instead of trusting a
+// thumbnail.
+func (h sourceProcessingHandler) sourceSuggestionCrop(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	crop, err := h.Service.GetSuggestionCrop(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, crop)
+}
+
+// sourceSuggestionCandidates asks the vision model for spelling candidates for
+// one suggestion's tight crop. It records nothing: the answer is a short list of
+// hypotheses for the editor, and the human decision remains the only record.
+func (h sourceProcessingHandler) sourceSuggestionCandidates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	candidates, err := h.Service.SuggestionCandidates(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"candidates": candidates})
+}
+
+// readSourceSuggestions runs the reading pipeline over a file and records the
+// suggestions it finds.
+func (h sourceProcessingHandler) readSourceSuggestions(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.ReadSuggestions(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// sourceSuggestionAccuracy reports how often the reader was right without
+// correction, from the decisions the reviewers made.
+func (h sourceProcessingHandler) sourceSuggestionAccuracy(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.SuggestionAccuracy(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+// nameJudgeConfig tells the review bench whether a judge is available. The
+// configuration is not a health check; a configured judge can still answer 503
+// when the hosted provider is down, and the bench must remain usable.
+func (h sourceProcessingHandler) nameJudgeConfig(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireUser(w, r); !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, h.Service.NameJudgeConfig())
+}
+
+// judgeSourceSuggestion asks the configured judge for an opinion on a bounded
+// candidate set. It never writes a decision or a name.
+func (h sourceProcessingHandler) judgeSourceSuggestion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input judgeSourceSuggestionRequest
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.JudgeSuggestion(r.Context(), r.PathValue("suggestionID"), user.ID, input.Candidates)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h sourceProcessingHandler) listBookAssertions(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.requireUser(w, r)
 	if !ok {
@@ -450,17 +601,39 @@ func (h sourceProcessingHandler) importTreeDraft(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	var input importSourceTreeDraftRequest
+	var input sourceprocessing.TreeDraftImportInput
 	if !decodeRequest(w, r, &input) {
 		return
 	}
-	result, err := h.Service.ImportTreeDraft(r.Context(), r.PathValue("draftID"), user.ID, input.ExpectedRevision)
+	result, err := h.Service.ImportTreeDraft(r.Context(), r.PathValue("draftID"), user.ID, input)
 	if err != nil {
 		writeSourceProcessingError(w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// previewTreeDraftImport is the import's dry run: the counts and the
+// collisions the apply run would realise, with nothing written.
+func (h sourceProcessingHandler) previewTreeDraftImport(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ExpectedRevision int `json:"expectedRevision"`
+	}
+	if !decodeRequest(w, r, &body) {
+		return
+	}
+	result, err := h.Service.PreviewTreeDraftImport(r.Context(), r.PathValue("draftID"), user.ID, body.ExpectedRevision)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h sourceProcessingHandler) retractTreeDraft(w http.ResponseWriter, r *http.Request) {
@@ -592,9 +765,12 @@ func writeSourceProcessingError(w http.ResponseWriter, err error) {
 		// that reads this as an access-control problem will not ask for a new one.
 		status = http.StatusGone
 		message = "the signed link has expired"
-	case errors.Is(err, sourceprocessing.ErrQueueUnavailable), errors.Is(err, sourceprocessing.ErrStorageUnavailable), errors.Is(err, sourceprocessing.ErrAIUnavailable), errors.Is(err, sourceprocessing.ErrDatabaseUnavailable):
+	case errors.Is(err, sourceprocessing.ErrQueueUnavailable), errors.Is(err, sourceprocessing.ErrStorageUnavailable), errors.Is(err, sourceprocessing.ErrAIUnavailable), errors.Is(err, sourceprocessing.ErrDatabaseUnavailable), errors.Is(err, sourceprocessing.ErrPDFToolsUnavailable), errors.Is(err, sourceprocessing.ErrArabicOCRUnavailable), errors.Is(err, sourceprocessing.ErrChartVisionUnavailable), errors.Is(err, sourceprocessing.ErrChartVisionSetup), errors.Is(err, sourceprocessing.ErrNameJudgeUnavailable), errors.Is(err, sourceprocessing.ErrNameJudgeSetup):
 		status = http.StatusServiceUnavailable
 		message = "source processing service is not configured"
+	case errors.Is(err, sourceprocessing.ErrChartVisionRejected), errors.Is(err, sourceprocessing.ErrChartVisionTruncated), errors.Is(err, sourceprocessing.ErrChartVisionOutputInvalid), errors.Is(err, sourceprocessing.ErrNameJudgeRejected), errors.Is(err, sourceprocessing.ErrNameJudgeOutputInvalid):
+		status = http.StatusUnprocessableEntity
+		message = "the name judge could not answer for this candidate set"
 	}
 	writeJSON(w, status, map[string]string{"error": message})
 }

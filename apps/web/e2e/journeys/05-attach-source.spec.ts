@@ -115,13 +115,14 @@ test.describe("attach a source", () => {
     await expect(page.getByRole("button", { name: /رفع ومعالجة/ })).toBeEnabled();
 
     await fileInput.setInputFiles({
-      name: "سجل.png",
-      mimeType: "image/png",
-      buffer: Buffer.from("\x89PNG\r\n\x1a\n", "binary"),
+      name: "سجل.tiff",
+      mimeType: "image/tiff",
+      buffer: Buffer.from("II*\x00binary", "binary"),
     });
 
     // The form refuses the unsupported image before it is sent, naming the
-    // refused format and listing what is accepted.
+    // refused format and listing what is accepted. JPEG, PNG and GIF are now
+    // accepted, so the refusal case is a raster the pipeline cannot decode.
     //
     // The browser names the accepted formats the way the panel names them, in
     // Arabic, and no longer repeats the MIME token beside "نص" - "نص" already
@@ -129,20 +130,21 @@ test.describe("attach a source", () => {
     // is asserted rather than papered over: the two surfaces do not have to
     // speak the same vocabulary, and the browser one is the one a reader reads.
     const refusal = page.locator(".source-processing-panel").getByRole("status");
-    await expect(refusal).toContainText("image/png");
+    await expect(refusal).toContainText("image/tiff");
     await expect(refusal).toContainText("نص و JSON و XML");
     await expect(refusal).toContainText("JSON");
     await expect(refusal).toContainText("XML");
     await expect(refusal).toContainText("PDF");
+    await expect(refusal).toContainText("PNG");
     await expect(page.getByRole("button", { name: /رفع ومعالجة/ })).toBeDisabled();
 
     // The API also refuses the unsupported image if a caller skips the form.
     const direct = await page.request.post(`${API_URL}/api/v1/sources/${sourceId}/files`, {
       multipart: {
         file: {
-          name: "سجل.png",
-          mimeType: "image/png",
-          buffer: Buffer.from("\x89PNG\r\n\x1a\n", "binary"),
+          name: "سجل.tiff",
+          mimeType: "image/tiff",
+          buffer: Buffer.from("II*\x00binary", "binary"),
         },
       },
     });
@@ -150,7 +152,7 @@ test.describe("attach a source", () => {
     // matters is that it is a refusal and that the body teaches the caller.
     expect(direct.status()).toBe(415);
     const body = (await direct.json()) as { error?: string };
-    expect(body.error ?? "").toContain("image/png");
+    expect(body.error ?? "").toContain("image/tiff");
     expect(body.error ?? "").toContain("text/*");
     expect(body.error ?? "").toContain("application/json");
     expect(body.error ?? "").toContain("application/xml");

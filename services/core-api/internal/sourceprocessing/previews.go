@@ -38,7 +38,7 @@ func (s *Service) PagePreview(ctx context.Context, fileID, actorID string, pageN
 	if !allowed {
 		return nil, ErrForbidden
 	}
-	if normalizeContentType(mimeType) != "application/pdf" {
+	if normalizeContentType(mimeType) != "application/pdf" && !isImageContentType(mimeType) {
 		return nil, ErrUnsupportedDocument
 	}
 	if s.Store == nil {

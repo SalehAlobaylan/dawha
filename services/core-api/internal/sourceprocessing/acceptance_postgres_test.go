@@ -156,6 +156,70 @@ func TestUploadProcessAndReviewATextSource(t *testing.T) {
 	}
 }
 
+func TestUploadProcessAndReviewAnImageSource(t *testing.T) {
+	fixture := testsupport.New(t)
+	owner := actor.RegisterAndLogin(t, fixture, "رافع صورة الشجرة")
+	store, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("local store: %v", err)
+	}
+	queue := jobs.NewService(fixture.Pool())
+	// No Tesseract: the extraction must still keep the page for a human to
+	// transcribe. The image arm is what makes a photographed chart a document.
+	service := NewService(fixture.Pool(), store, queue, newStubProvider(), &PDFExtractor{})
+	ctx := fixture.Ctx()
+
+	source, err := evidence.NewService(fixture.Pool()).CreateSource(ctx, owner.User.ID, evidence.CreateSourceInput{
+		TitleAR:    "شجرة مصورة " + fixture.Unique("s"),
+		SourceType: "manuscript",
+	})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	content := encodeTestRaster(t, 240, 160)
+	file, err := service.Upload(ctx, source.Source.ID, owner.User.ID, UploadInput{
+		Filename:    "شجرة.png",
+		ContentType: "image/png",
+		Content:     content,
+	})
+	if err != nil {
+		t.Fatalf("upload image: %v", err)
+	}
+	if file.MimeType != "image/png" {
+		t.Fatalf("stored mime type = %q, want image/png", file.MimeType)
+	}
+	job, err := queue.Claim(ctx, jobs.ClaimInput{WorkerID: "image-worker", Type: SourceProcessJobType})
+	if err != nil {
+		t.Fatalf("claim the processing job: %v", err)
+	}
+	claim := Claim{Job: job, Lease: job.Lease("image-worker")}
+	if err := service.Process(ctx, claim); err != nil {
+		t.Fatalf("process image: %v", err)
+	}
+	if _, err := queue.Complete(ctx, job.ID, jobs.CompleteInput{WorkerID: "image-worker", LeaseToken: claim.Lease.Token}); err != nil {
+		t.Fatalf("complete the processing job: %v", err)
+	}
+
+	if got := fixture.Count(`SELECT count(*) FROM source_processing_runs WHERE source_file_id = $1 AND status = 'succeeded'`, file.ID); got != 1 {
+		t.Fatalf("succeeded runs = %d, want 1", got)
+	}
+	var pageNumber int
+	var pageWidth, pageHeight float64
+	var status, method string
+	if err := fixture.Pool().QueryRow(ctx, `
+		SELECT page_number, page_width, page_height, extraction_status, selected_method
+		FROM source_page_evidence WHERE source_file_id = $1
+	`, file.ID).Scan(&pageNumber, &pageWidth, &pageHeight, &status, &method); err != nil {
+		t.Fatalf("read page evidence: %v", err)
+	}
+	if pageNumber != 1 || pageWidth != 240 || pageHeight != 160 {
+		t.Fatalf("page evidence = %d %.0fx%.0f, want page 1 at 240x160", pageNumber, pageWidth, pageHeight)
+	}
+	if status != "unreadable" || method != "tesseract_unavailable" {
+		t.Fatalf("page evidence status/method = %q/%q, want the page kept for manual transcription", status, method)
+	}
+}
+
 func TestUploadRefusesAnUnsupportedFormatWithTheAcceptedList(t *testing.T) {
 	fixture := testsupport.New(t)
 	owner := actor.RegisterAndLogin(t, fixture, "رافع المصدر")
@@ -183,7 +247,7 @@ func TestUploadRefusesAnUnsupportedFormatWithTheAcceptedList(t *testing.T) {
 	}
 	// The refusal names the format it refused and the ones it accepts, so the
 	// caller can act on it without reading the source.
-	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf"} {
+	for _, fragment := range []string{"application/zip", "text/*", "application/json", "application/xml", "application/pdf", "image/png"} {
 		if !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("refusal %q does not mention %q", err.Error(), fragment)
 		}

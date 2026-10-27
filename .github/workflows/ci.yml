@@ -136,6 +136,35 @@ jobs:
       - name: Every configured quality group, with a machine-readable report
         run: python -m evaluation.evaluate
 
+  # The family-tree benchmark harness, and the privacy guard for the corpus.
+  #
+  # The harness in tools/ocr-eval is the instrument every accuracy claim about
+  # reading a family tree is measured with. If it breaks, every number it
+  # produced is suspect, so it runs on every push rather than on demand.
+  #
+  # The corpus itself is private and is NOT in this job: the originals are
+  # irreplaceable family records that live outside the repository. What is here
+  # is the guard that proves they stayed out.
+  ocr-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: The evaluator and the local baselines
+        run: python3 -m unittest discover -s tools/ocr-eval -p 'test_*.py'
+      - name: The blind label and adjudication UI
+        run: node --test tools/ocr-eval/test_labeler.mjs
+      - name: No private family document is tracked by git
+        run: make ocr-corpus-check
+
   # The complete database suite, not a hand-picked subset.
   #
   # `go test ./...` without DATABASE_URL skips every database-backed test, so

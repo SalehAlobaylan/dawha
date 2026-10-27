@@ -90,7 +90,7 @@ func (s *Service) enqueueSourceRun(ctx context.Context, fileID, actorID string, 
 	if !allowed {
 		return ProcessingRunView{}, ErrForbidden
 	}
-	if normalizeContentType(mimeType) != "application/pdf" {
+	if normalizeContentType(mimeType) != "application/pdf" && !isImageContentType(mimeType) {
 		return ProcessingRunView{}, ErrValidation
 	}
 	if reviewed != nil {

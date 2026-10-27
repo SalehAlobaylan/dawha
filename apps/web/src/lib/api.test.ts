@@ -155,3 +155,162 @@ describe("source processing reprocessing requests", () => {
     });
   });
 });
+
+describe("the suggestion queue", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("reads the queue and records a decision without a body that invents a name", async () => {
+    const { decideSourceTreeSuggestion, fetchSourceSuggestionAccuracy, fetchSourceTreeSuggestions } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      if (String(args[0]).includes("/accuracy")) {
+        return new Response(JSON.stringify({ total: 4, accepted: 2, corrected: 1, rejected: 1, deferred: 0, unchangedRate: 0.5, measurable: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (args[1]?.method === "POST") {
+        return new Response(JSON.stringify({ id: "suggestion-1", status: "corrected" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([{ id: "suggestion-1", suggestedTextAr: "عبدالله", confidence: 0.9 }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queue = await fetchSourceTreeSuggestions("file/id");
+    expect(queue).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/source-files/file%2Fid/suggestions?");
+
+    const accuracy = await fetchSourceSuggestionAccuracy("file/id");
+    // Four decisions is an anecdote, and the client must not present it as a
+    // measurable rate.
+    expect(accuracy.measurable).toBe(false);
+
+    await decideSourceTreeSuggestion("suggestion-1", "corrected", "عبدالله");
+    const decisionCall = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
+    expect(decisionCall?.[0]).toBe("http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/decision");
+    expect(JSON.parse(String(decisionCall?.[1]?.body))).toEqual({ decision: "corrected", textAr: "عبدالله", noteAr: "" });
+  });
+
+  it("adds the candidate evidence to the decision body without changing its authority", async () => {
+    const { decideSourceTreeSuggestion } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      return new Response(JSON.stringify({ id: "suggestion-1", status: "corrected" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await decideSourceTreeSuggestion("suggestion-1", "corrected", "عبدالله", "", {
+      candidateSnapshot: [{
+        value: "عبدالله",
+        key: "عبدالله",
+        sources: ["reader"],
+        ranks: { reader: 1 },
+        score: 100,
+        shown: true,
+        position: 1,
+      }],
+      selectedCandidate: "عبدالله",
+      inputMethod: "candidate",
+      normalizerVersion: "ar-name-keys-v1",
+      candidatePoolVersion: "ar-name-pool-v1",
+      durationMs: 1200,
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      decision: "corrected",
+      textAr: "عبدالله",
+      selectedCandidate: "عبدالله",
+      inputMethod: "candidate",
+      normalizerVersion: "ar-name-keys-v1",
+      candidatePoolVersion: "ar-name-pool-v1",
+      durationMs: 1200,
+    });
+  });
+
+  it("retries once without the snapshot when the server rejects the evidence", async () => {
+    const { decideSourceTreeSuggestion } = await loadApi("http://localhost:8181");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ error: "invalid candidate snapshot" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "suggestion-1", status: "corrected" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await decideSourceTreeSuggestion("suggestion-1", "corrected", "عبدالله", "", {
+      candidateSnapshot: [{
+        value: "عبدالله",
+        key: "عبدالله",
+        sources: ["reader"],
+        ranks: { reader: 1 },
+        score: 100,
+        shown: true,
+        position: 1,
+      }],
+      selectedCandidate: "عبدالله",
+      inputMethod: "candidate",
+      normalizerVersion: "ar-name-keys-v1",
+      candidatePoolVersion: "ar-name-pool-v1",
+      durationMs: 1200,
+    });
+
+    expect(result.evidenceRecorded).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      decision: "corrected",
+      textAr: "عبدالله",
+      noteAr: "",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).not.toContain("عبدالله");
+  });
+
+  it("does not retry when the failure is not an evidence-validation rejection", async () => {
+    const { decideSourceTreeSuggestion } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      return new Response(JSON.stringify({ error: "database unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(decideSourceTreeSuggestion("suggestion-1", "corrected", "عبدالله", "", {
+      candidateSnapshot: [{
+        value: "عبدالله",
+        key: "عبدالله",
+        sources: ["reader"],
+        ranks: { reader: 1 },
+        score: 100,
+        shown: true,
+        position: 1,
+      }],
+      inputMethod: "candidate",
+      selectedCandidate: "عبدالله",
+    })).rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

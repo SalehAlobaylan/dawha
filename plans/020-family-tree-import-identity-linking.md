@@ -5,6 +5,51 @@
 > without the fix, and update the record. None of these may be closed by a comment, and none
 > may be closed by silently merging or silently duplicating.
 
+## What is implemented (2026-10-22)
+
+All four gaps are implemented in `services/core-api/internal/sourceprocessing/tree_import_link.go`,
+wired through `tree_drafts.go`, with nine acceptance tests in `tree_import_link_test.go`.
+
+- **Linking without duplication.** `buildTreeImportPlan` matches each included node against
+  existing people by exact normalised name — canonical names, then aliases — at
+  `TreeImportMatchThreshold = 0.5`, the same threshold `resolveEntity` applies. A match is a
+  **link**: the occurrence reuses the existing `people` row everywhere (tree node,
+  relationships, statement, aliases), never a duplicate. A second occurrence of an already
+  linked person becomes a new person with a warning: two names are two people.
+- **Candidates, never merges.** Below the exact match, a bounded trigram lookup
+  (`similarity ≥ 0.45`, ≤ 5 per occurrence, ≤ 20 per import) proposes existing people inside
+  the import's own `entity_resolution_runs` run (`tree-import-link-v1`), written as
+  `entity_resolution_candidates` rows the existing review surface lists and acts on. The
+  import itself writes no `entity_merges`, no `merged_into_id`, and no `identity_status`.
+- **The research graph + statements.** Every reviewed, representable edge writes
+  `entity_relationships` (`status='unresolved'`) and a `source_statements` row
+  (`extraction_method='imported'`, `review_status='accepted'`) in the same transaction as the
+  tree; no `claims` row until a human resolves the fuzzy candidates. The statement's locator
+  names the draft edge, which the manifest binds to the edge evidence — a walkable chain.
+- **The reading survives; the kunyah is captured.** Every occurrence writes a
+  `source_spelling` alias with the verbatim page string plus its normalised value and source.
+  A bounded helper records a `kunyah` alias for readings opening with `أبو`/`أم` followed by a
+  name it owns, including the عبد compound; the canonical name is never rewritten.
+- **A dry run that binds.** `PreviewTreeDraftImport` (`POST
+  /api/v1/source-tree-drafts/{draftID}/import-preview`) runs the same validations and plan
+  builder with the writes suppressed and reports the counts, the collisions and the source
+  file checksum. The apply refuses without the report's acknowledgement, the checksum and six
+  matching counts; a mismatch is a `409`. The review screen runs preview → report panel →
+  confirm (`SourceTreeDraftDialog.tsx`).
+- **Retraction covers the graph.** `RetractTreeDraft` deletes the aliases, statements and
+  entity relationships the manifest names, refusing any row whose `updated_at` moved past the
+  import or that a later `claim_evidence` cites; survivors are counted in
+  `PreservedGraphRows`.
+
+Gates at the time of the record: `make verify` exit 0; the full
+`internal/sourceprocessing`, `internal/httpapi` suites and the nine new acceptances pass
+against the real database; `make e2e` 30/30; web lint, `tsc` and 34 unit tests pass.
+
+**Deliberate scope decisions**: matching is deterministic (exact normalised equality) plus a
+bounded fuzzy *proposal* band — no AI scoring at import time, so the two paths share the same
+vocabulary and cannot drift. `claims` wait for identity resolution. The kunyah helper is
+conservative and never feeds the canonical name.
+
 ## Status
 
 - **Priority**: P1

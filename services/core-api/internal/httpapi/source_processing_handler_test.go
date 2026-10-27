@@ -5,6 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -48,6 +53,92 @@ func TestSourceProcessingRoutesRequireAuthentication(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("processing status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
+
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/name-judge/config"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/judge"},
+	} {
+		recorder = httptest.NewRecorder()
+		NewRouter(Dependencies{}).ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, strings.NewReader(`{"candidates":[]}`)))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status = %d, want %d", route.path, recorder.Code, http.StatusUnauthorized)
+		}
+	}
+}
+
+func TestNameJudgeConfigIsOffByDefaultAndActiveOnlyWhenConfigured(t *testing.T) {
+	fixture := newSourceUploadFixture(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/name-judge/config", nil)
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	recorder := httptest.NewRecorder()
+	NewRouter(Dependencies{DB: fixture.pool, SourceStorage: fixture.store}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("off config status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var config struct {
+		Mode         string  `json:"mode"`
+		ImageEnabled bool    `json:"imageEnabled"`
+		Available    bool    `json:"available"`
+		Sample       float64 `json:"sample"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &config); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if config.Mode != "off" || config.Available || config.ImageEnabled {
+		t.Fatalf("off config = %+v", config)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/judge", strings.NewReader(`{"candidates":[{"value":"محمد","source":"reader","rank":1}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	recorder = httptest.NewRecorder()
+	NewRouter(Dependencies{DB: fixture.pool, SourceStorage: fixture.store}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("off judge status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+
+	router := NewRouter(Dependencies{
+		DB:            fixture.pool,
+		SourceStorage: fixture.store,
+		NameJudge:     configNameJudge{},
+		NameJudgeSettings: sourceprocessing.NameJudgeSettings{
+			Mode:   "shadow",
+			Sample: 0.3,
+		},
+	})
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/name-judge/config", nil)
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("shadow config status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &config); err != nil {
+		t.Fatalf("decode shadow config: %v", err)
+	}
+	if config.Mode != "shadow" || !config.Available || config.ImageEnabled || config.Sample != 0.3 {
+		t.Fatalf("shadow config = %+v", config)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/judge", strings.NewReader(`{"candidates":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed judge candidates status = %d, want 422: %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "jev") || strings.Contains(recorder.Body.String(), "provider") {
+		t.Fatalf("the 422 exposed provider internals: %s", recorder.Body.String())
+	}
+}
+
+type configNameJudge struct{}
+
+func (configNameJudge) Judge(context.Context, sourceprocessing.NameJudgeRequest) (sourceprocessing.NameJudgeResult, error) {
+	return sourceprocessing.NameJudgeResult{}, sourceprocessing.ErrNameJudgeUnavailable
 }
 
 // TestSourceUploadRefusesUnsupportedFormatsBeforeAnySideEffect pins the V1
@@ -96,7 +187,7 @@ func TestSourceUploadRefusesUnsupportedFormatsBeforeAnySideEffect(t *testing.T) 
 					t.Fatalf("error %q does not teach the supported format %q", body.Error, supported)
 				}
 			}
-			if len(body.SupportedContentTypes) != 4 || body.SupportedContentTypes[0] != "text/*" {
+			if len(body.SupportedContentTypes) != len(sourceprocessing.SupportedContentTypes()) || body.SupportedContentTypes[0] != "text/*" {
 				t.Fatalf("supportedContentTypes = %v, want the shared matrix", body.SupportedContentTypes)
 			}
 			fixture.assertNoSideEffect(t)
@@ -120,6 +211,10 @@ func TestSourceUploadAcceptsEverySupportedFormat(t *testing.T) {
 		{"doc.xml", "application/xml", []byte("<doc>نص</doc>")},
 		{"doc.xml", "text/xml", []byte("<doc>نص</doc>")},
 		{"scan.pdf", "application/pdf", []byte("%PDF-1.7\n% upload boundary fixture")},
+		{"chart.png", "image/png", testSourceImage(t, "png")},
+		{"chart.jpg", "image/jpeg", testSourceImage(t, "jpeg")},
+		{"chart.gif", "image/gif", testSourceImage(t, "gif")},
+		{"chart", "", testSourceImage(t, "png")},
 		{"undeclared.txt", "", []byte("نص بلا نوع مصرح به")},
 		{"undeclared.txt", "application/octet-stream", []byte("نص بلا نوع مصرح به")},
 	}
@@ -187,9 +282,15 @@ func TestSourceProcessingErrorMapping(t *testing.T) {
 				}
 				return
 			}
-			if body.Code != testCase.code || len(body.SupportedContentTypes) != 4 {
+			if body.Code != testCase.code || len(body.SupportedContentTypes) != len(sourceprocessing.SupportedContentTypes()) {
 				t.Fatalf("body = %s, want the format payload", recorder.Body.String())
 			}
+			for _, supported := range body.SupportedContentTypes {
+				if supported == "image/png" {
+					return
+				}
+			}
+			t.Fatalf("body = %s, want the raster formats in the payload", recorder.Body.String())
 		})
 	}
 }
@@ -354,4 +455,33 @@ func (f *sourceUploadFixture) expectedKey(t *testing.T, fileID string) string {
 		t.Fatalf("storage key %q is not scoped to the source", key)
 	}
 	return key
+}
+
+// testSourceImage encodes a small real image in an accepted raster format. The
+// upload boundary decodes the header, so the fixture is a file rather than a
+// signature prefix.
+func testSourceImage(t *testing.T, format string) []byte {
+	t.Helper()
+	canvas := image.NewRGBA(image.Rect(0, 0, 16, 12))
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 16; x++ {
+			canvas.Set(x, y, color.RGBA{R: uint8(30 + x*5), G: uint8(80 + y*6), B: 45, A: 255})
+		}
+	}
+	var buffer bytes.Buffer
+	var err error
+	switch format {
+	case "png":
+		err = png.Encode(&buffer, canvas)
+	case "jpeg":
+		err = jpeg.Encode(&buffer, canvas, nil)
+	case "gif":
+		err = gif.Encode(&buffer, canvas, nil)
+	default:
+		t.Fatalf("no encoder for %q", format)
+	}
+	if err != nil {
+		t.Fatalf("could not encode a %s fixture: %v", format, err)
+	}
+	return buffer.Bytes()
 }

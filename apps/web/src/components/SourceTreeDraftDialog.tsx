@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, GitBranch, Plus, RotateCcw, Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { fetchSourcePagePreview, importSourceTreeDraft, retractSourceTreeDraft, saveSourceTreeDraft } from "../lib/api";
+import { fetchSourcePagePreview, importSourceTreeDraft, previewSourceTreeDraftImport, retractSourceTreeDraft, saveSourceTreeDraft } from "../lib/api";
 import { ApiError } from "../lib/api";
-import type { SourceTreeDraft, SourceTreeDraftEdge, SourceTreeDraftNode, SourceTreeDraftPoint } from "../types";
+import type { SourceTreeDraft, SourceTreeDraftEdge, SourceTreeDraftImportPreview, SourceTreeDraftNode, SourceTreeDraftPoint } from "../types";
 
 interface SourceTreeDraftDialogProps {
   initialDraft: SourceTreeDraft;
@@ -131,16 +131,45 @@ export function SourceTreeDraftDialog({ initialDraft, onClose, onChanged }: Sour
       setError(cause instanceof ApiError && cause.status === 409 ? "تغيرت المسودة في جلسة أخرى. أعد فتحها لتحميل أحدث مراجعة." : errorMessage(cause));
     } finally { setWorking(false); }
   };
+  const [preview, setPreview] = useState<SourceTreeDraftImportPreview | null>(null);
+  const runImport = async (pending: SourceTreeDraftImportPreview) => {
+    setWorking(true); setError("");
+    try {
+      const result = await importSourceTreeDraft(draft.id, {
+        expectedRevision: draft.revision,
+        acknowledgePreview: true,
+        sourceFileChecksum: pending.sourceFileChecksum,
+        expectedNewPeople: pending.newPeople,
+        expectedLinkedPeople: pending.linkedExisting,
+        expectedCollisions: pending.collisions.length,
+        expectedRelations: pending.relations,
+        expectedStatements: pending.statements,
+        expectedAliases: pending.aliases,
+      });
+      setPreview(null);
+      const updated: SourceTreeDraft = { ...draft, state: "imported", treeId: result.treeId, treeVersionId: result.treeVersionId };
+      setDraft(updated); onChanged?.(updated);
+      const linkedNote = result.linkedExistingPeople > 0 ? ` ورُبط ${result.linkedExistingPeople} اسم بالموجودين بدل تكرارهم` : "";
+      setMessage(`أُنشئت مسودة خاصة تضم ${result.importedPeople} أسماء${linkedNote} و${result.importedRelations} علاقات غير محسومة، ومُثّل وصل الشجرة بمشاهد بشواهد مستوردة. لم تُنشر الشجرة، ولم يُدمج شيء إلا بقرار مراجع لاحق.`);
+    } catch (cause) {
+      setPreview(null);
+      setError(cause instanceof ApiError && cause.status === 409 ? "رفض الاستيراد لأن تقرير الفحص لم يعد مطابقاً أو بقي تعارض بنيوي. أعد الفحص المبدئي ثم أكّد." : errorMessage(cause));
+    } finally { setWorking(false); }
+  };
   const applyImport = async () => {
     if (dirty) { setError("احفظ مراجعتك قبل الاستيراد."); return; }
     setWorking(true); setError(""); setMessage("");
     try {
-      const result = await importSourceTreeDraft(draft.id, draft.revision);
-      const updated: SourceTreeDraft = { ...draft, state: "imported", treeId: result.treeId, treeVersionId: result.treeVersionId };
-      setDraft(updated); onChanged?.(updated);
-      setMessage(`أُنشئت مسودة خاصة تضم ${result.importedPeople} أسماء و${result.importedRelations} علاقات غير محسومة. لم تُنشر الشجرة.`);
+      const report = await previewSourceTreeDraftImport(draft.id, draft.revision);
+      if (report.linkedExisting === 0 && report.candidates === 0 && report.stagedRelations === 0 && report.warnings.length === 0) {
+        setWorking(false);
+        await runImport(report);
+        return;
+      }
+      setPreview(report);
+      setMessage("");
     } catch (cause) {
-      setError(cause instanceof ApiError && cause.status === 409 ? "تغيرت المسودة أو بقي تعارض بنيوي. حدّثها وراجع التحذيرات." : errorMessage(cause));
+      setError(errorMessage(cause));
     } finally { setWorking(false); }
   };
   const retractImport = async () => {
@@ -229,6 +258,27 @@ export function SourceTreeDraftDialog({ initialDraft, onClose, onChanged }: Sour
             </div> : null}
             {error ? <div className="evidence-workspace-error" role="alert">{error}</div> : null}
             {message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}
+            {preview && draft.state === "draft" ? <div className="source-tree-import-preview" role="group" aria-label="تقرير الفحص المبدئي للاستيراد">
+              <strong>تقرير الفحص المبدئي (لم يُكتب شيء بعد)</strong>
+              <ul>
+                <li>سيُنشئ {preview.newPeople} اسماً جديداً و{preview.relations} علاقات و{preview.statements} شواهد مُستوردة.</li>
+                <li>سيُدوّن {preview.aliases} تهجئة مصدر بجانب الأسماء بما كتبته الصفحة، فلا يضيع نصّها أبداً.</li>
+                {preview.linkedExisting > 0 ? <li>{preview.linkedExisting} من الأسماء تطابق أشخاصاً محفوظين؛ سيُربطون بالأصل ولن يُكرَّروا.</li> : null}
+                {preview.candidates > 0 ? <li>{preview.candidates} اقتراح ربط محتمل سيُوضع في واجهة المراجعة؛ لا يُدمج شيء تلقائياً.</li> : null}
+                {preview.stagedRelations > 0 ? <li>{preview.stagedRelations} علاقة لا يستطيع نموذج الشجرة تمثيلها تبقى في المسودة.</li> : null}
+                {preview.linkedExisting === 0 && preview.candidates === 0 && preview.stagedRelations === 0 ? <li>لا تعارضات أو توسيمات تخص الأشخاص الموجودين.</li> : null}
+              </ul>
+              {preview.collisions.length > 0 ? <ul className="source-tree-import-collisions">
+                {preview.collisions.map((collision) => (
+                  <li key={collision.draftNodeId}>«{collision.draftNameAr}» ← <b>{collision.existingNameAr}</b> ({collision.basis === "alias" ? "مطابقة تهجئة سابقة" : "مطابقة الاسم"})</li>
+                ))}
+              </ul> : null}
+              {preview.warnings.length > 0 ? <ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+              <div className="source-tree-draft-actions">
+                <button className="primary-button" type="button" disabled={working} onClick={() => void runImport(preview)}>تأكيد الاستيراد كما في التقرير</button>
+                <button className="secondary-button" type="button" disabled={working} onClick={() => setPreview(null)}>إلغاء</button>
+              </div>
+            </div> : null}
             <div className="source-tree-draft-actions">
               {draft.state === "draft" ? <>
                 <button className="secondary-button" type="button" disabled={working || !dirty} onClick={() => void save()}><Save size={14} /> {working ? "جارٍ الحفظ…" : "حفظ المراجعة"}</button>

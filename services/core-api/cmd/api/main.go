@@ -81,6 +81,13 @@ func main() {
 	logger.Info("rate limits configured", "configuration", rateLimits.Describe())
 	logger.Info("demo mode configured", "enabled", demoMode())
 	logger.Info("development quick sign-in configured", "enabled", devQuickSignInEnabled())
+	nameJudgeSettings := sourceprocessing.NameJudgeSettingsFromEnvironment(os.Getenv)
+	// Log the posture, never the provider key or the names a judge will see.
+	logger.Info(
+		"name judge configured",
+		"mode", nameJudgeSettings.Mode,
+		"image_mode", nameJudgeSettings.ImageEnabled,
+	)
 
 	port := os.Getenv("CORE_API_PORT")
 	if port == "" {
@@ -89,16 +96,18 @@ func main() {
 	server := &http.Server{
 		Addr: ":" + port,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
-			DB:            pool,
-			Logger:        logger,
-			WebOrigin:     os.Getenv("WEB_ORIGIN"),
-			SecureCookies: os.Getenv("APP_ENV") == "production",
-			Jobs:          jobsService,
-			AI:            aiClient,
-			ChartVision:   sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
-			SourceStorage: sourceStore,
-			RateLimits:    rateLimits,
-			Metrics:       metrics,
+			DB:                pool,
+			Logger:            logger,
+			WebOrigin:         os.Getenv("WEB_ORIGIN"),
+			SecureCookies:     os.Getenv("APP_ENV") == "production",
+			Jobs:              jobsService,
+			AI:                aiClient,
+			ChartVision:       sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
+			NameJudge:         sourceprocessing.NewHTTPNameJudgeProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
+			NameJudgeSettings: nameJudgeSettings,
+			SourceStorage:     sourceStore,
+			RateLimits:        rateLimits,
+			Metrics:           metrics,
 			// Off unless DEMO_MODE says otherwise. The local stack and the browser
 			// acceptance stack set it explicitly; a deployment that has not been told
 			// to serve synthetic data is not served synthetic data.

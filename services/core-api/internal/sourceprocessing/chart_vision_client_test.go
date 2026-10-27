@@ -2,6 +2,8 @@ package sourceprocessing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -38,5 +40,34 @@ func TestChartVisionClientClassifiesSafeProviderValidationDetails(t *testing.T) 
 	}
 	if got := chartErrorCode(err); got != "provider_output_invalid_geometry" {
 		t.Fatalf("output error code = %q, want provider_output_invalid_geometry", got)
+	}
+}
+
+func TestSuggestNamesPostsTheTightCropAndCleansTheCandidates(t *testing.T) {
+	var received struct {
+		ImageBase64 string `json:"image_base64"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/vision/chart/candidates" || request.Method != http.MethodPost {
+			t.Errorf("unexpected request %s %s", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode candidate request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"candidates":[" محمد ","أحمد","محمد","  "]} `))
+	}))
+	defer server.Close()
+
+	provider := NewHTTPChartVisionProvider(server.URL)
+	names, err := provider.SuggestNames(context.Background(), []byte("tight png bytes"))
+	if err != nil {
+		t.Fatalf("suggest names: %v", err)
+	}
+	if got := base64.StdEncoding.EncodeToString([]byte("tight png bytes")); received.ImageBase64 != got {
+		t.Fatalf("the tight crop was not the image sent: %q", received.ImageBase64)
+	}
+	if len(names) != 2 || names[0] != "محمد" || names[1] != "أحمد" {
+		t.Fatalf("candidates were not trimmed and de-duplicated: %+v", names)
 	}
 }
