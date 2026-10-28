@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -38,9 +37,21 @@ var ErrSuggestionNotFound = errors.New("source tree suggestion was not found")
 // decided. A second decision would rewrite history rather than add to it.
 var ErrSuggestionAlreadyDecided = errors.New("source tree suggestion was already decided")
 
+// ErrSuggestionSuperseded is returned when geometry repair has retired an
+// occurrence. Its evidence remains, but it cannot receive a new decision.
+var ErrSuggestionSuperseded = errors.New("source tree suggestion was superseded by a geometry repair")
+
 // SuggestionDecision is what a reviewer decided about a suggestion.
 type SuggestionDecision struct {
 	Decision string `json:"decision"`
+	// ExpectedRevision is the review revision the reviewer saw. A first
+	// decision may omit it for old clients; every later revision must match.
+	ExpectedRevision         *int   `json:"expectedRevision,omitempty"`
+	ExpectedGeometryRevision *int   `json:"expectedGeometryRevision,omitempty"`
+	JudgeWasVisible          bool   `json:"judgeWasVisible,omitempty"`
+	EvidenceSchemaVersion    string `json:"evidenceSchemaVersion,omitempty"`
+	PreparationID            string `json:"preparationId,omitempty"`
+	PreparationSignature     string `json:"preparationSignature,omitempty"`
 	// TextAR is the reviewer's reading. It is required for a correction, and
 	// must be empty for a rejection: a rejected suggestion carries no text.
 	TextAR string `json:"textAr"`
@@ -138,6 +149,9 @@ type SuggestionView struct {
 	DecisionNoteAR       string   `json:"decisionNoteAr,omitempty"`
 	SourcePageEvidenceID string   `json:"sourcePageEvidenceId,omitempty"`
 	Alternatives         []string `json:"alternatives,omitempty"`
+	ReviewRevision       int      `json:"reviewRevision"`
+	GeometryRevision     int      `json:"geometryRevision"`
+	Superseded           bool     `json:"superseded"`
 }
 
 // Region is a normalised rectangle on a page.
@@ -222,6 +236,9 @@ func (s *Service) CreateSuggestions(ctx context.Context, sourceID, sourceFileID 
 				reading_model = EXCLUDED.reading_model,
 				updated_at = now()
 			WHERE source_tree_suggestions.status = 'suggested'
+			  AND source_tree_suggestions.superseded_at IS NULL
+			  AND source_tree_suggestions.review_revision = 0
+			  AND source_tree_suggestions.geometry_revision = 0
 		`, sourceID, sourceFileID, nullableUUIDString(suggestion.SourcePageEvidenceID), runID,
 			suggestion.OccurrenceID, suggestion.PageNumber, suggestion.SuggestedTextAR, region, alternativesJSON,
 			suggestion.Confidence, viewCount, suggestion.ReadingMethod, suggestion.ReadingModel)
@@ -292,7 +309,28 @@ func (s *Service) ListSuggestions(ctx context.Context, sourceFileID string, acto
 	if status == "" {
 		status = "suggested"
 	}
-	rows, err := s.Pool.Query(ctx, `
+	statuses := []string{status}
+	order := `sg.confidence DESC, sg.created_at, sg.id`
+	pendingOnly := true
+	historyOnly := false
+	excludeSuperseded := true
+	switch status {
+	case "suggested":
+	case "deferred":
+		order = `sg.decided_at DESC NULLS LAST, sg.created_at, sg.id`
+	case "history":
+		statuses = []string{"suggested", "accepted", "corrected", "rejected", "deferred"}
+		order = `sg.decided_at DESC NULLS LAST, sg.created_at, sg.id`
+		pendingOnly = false
+		historyOnly = true
+		excludeSuperseded = false
+	case "accepted", "corrected", "rejected":
+		order = `sg.decided_at DESC NULLS LAST, sg.created_at, sg.id`
+		pendingOnly = false
+	default:
+		return nil, ErrValidation
+	}
+	query := `
 		SELECT sg.id::text, sg.occurrence_id, sg.page_number, sg.kind,
 		       sg.suggested_text_ar, COALESCE(sg.decided_text_ar, ''),
 		       sg.region, sg.alternatives, sg.confidence, sg.view_count,
@@ -300,12 +338,18 @@ func (s *Service) ListSuggestions(ctx context.Context, sourceFileID string, acto
 		       COALESCE(sg.decided_by::text, ''),
 		       COALESCE(sg.decided_at::text, ''),
 		       COALESCE(sg.decision_note_ar, ''),
-		       COALESCE(sg.source_page_evidence_id::text, '')
+		       COALESCE(sg.source_page_evidence_id::text, ''),
+		       sg.review_revision, sg.geometry_revision, sg.superseded_at IS NOT NULL
 		FROM source_tree_suggestions sg
-		WHERE sg.source_file_id = $1 AND sg.status = $2
-		ORDER BY sg.confidence DESC, sg.created_at, sg.id
-		LIMIT $3 OFFSET $4
-	`, fileID, status, limit, offset)
+		WHERE sg.source_file_id = $1 AND sg.status = ANY($2)
+	`
+	if historyOnly {
+		query += ` AND (sg.status <> 'suggested' OR sg.superseded_at IS NOT NULL)`
+	} else if pendingOnly || excludeSuperseded {
+		query += ` AND sg.superseded_at IS NULL`
+	}
+	query += ` ORDER BY ` + order + ` LIMIT $3 OFFSET $4`
+	rows, err := s.Pool.Query(ctx, query, fileID, statuses, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +362,7 @@ func (s *Service) ListSuggestions(ctx context.Context, sourceFileID string, acto
 		if err := rows.Scan(&view.ID, &view.OccurrenceID, &view.PageNumber, &view.Kind,
 			&view.SuggestedTextAR, &view.DecidedTextAR, &regionBytes, &alternativesBytes, &view.Confidence, &view.ViewCount,
 			&view.ReadingMethod, &view.ReadingModel, &view.Status, &view.DecidedBy, &view.DecidedAt,
-			&view.DecisionNoteAR, &view.SourcePageEvidenceID); err != nil {
+			&view.DecisionNoteAR, &view.SourcePageEvidenceID, &view.ReviewRevision, &view.GeometryRevision, &view.Superseded); err != nil {
 			return nil, err
 		}
 		if len(regionBytes) > 0 {
@@ -370,33 +414,70 @@ func (s *Service) DecideSuggestion(ctx context.Context, suggestionID string, act
 	if len(input.NoteAR) > 2000 {
 		return SuggestionView{}, ErrValidation
 	}
+	if input.ExpectedRevision != nil && (*input.ExpectedRevision < 0 || *input.ExpectedRevision > maxReviewRevision) {
+		return SuggestionView{}, ErrValidation
+	}
+	if input.ExpectedGeometryRevision != nil && (*input.ExpectedGeometryRevision < 0 || *input.ExpectedGeometryRevision > maxReviewRevision) {
+		return SuggestionView{}, ErrValidation
+	}
+	if input.EvidenceSchemaVersion == NameEvidenceVersion {
+		input.JudgeOutput = nil
+	}
 	evidence, err := validateDecisionEvidence(input)
 	if err != nil {
 		return SuggestionView{}, err
 	}
 
+	var authorizedFile uuid.UUID
+	if err = s.Pool.QueryRow(ctx, `SELECT source_file_id FROM source_tree_suggestions WHERE id=$1`, parsed).Scan(&authorizedFile); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SuggestionView{}, ErrSuggestionNotFound
+		}
+		return SuggestionView{}, err
+	}
+	authorized, err := s.canReview(ctx, authorizedFile, actorID)
+	if err != nil {
+		return SuggestionView{}, err
+	}
+	if !authorized {
+		return SuggestionView{}, ErrForbidden
+	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return SuggestionView{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	var sourceFileID uuid.UUID
-	var status string
-	var suggested string
-	err = tx.QueryRow(ctx, `
-		SELECT source_file_id::text, status, suggested_text_ar
-		FROM source_tree_suggestions
-		WHERE id = $1
-	`, parsed).Scan(&sourceFileID, &status, &suggested)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SuggestionView{}, ErrSuggestionNotFound
-	}
+	sourceFileID, status, reviewRevision, superseded, err := s.lockReviewRow(ctx, tx, suggestionID)
 	if err != nil {
 		return SuggestionView{}, err
 	}
+	if superseded {
+		return SuggestionView{}, ErrSuggestionSuperseded
+	}
 	if status != "suggested" {
 		return SuggestionView{}, ErrSuggestionAlreadyDecided
+	}
+	if input.ExpectedRevision == nil {
+		// Preserve the original first-decision contract for old clients. A
+		// reopened occurrence has a positive revision and must say which one.
+		if reviewRevision != 0 {
+			return SuggestionView{}, ErrConflict
+		}
+	} else if *input.ExpectedRevision != reviewRevision {
+		return SuggestionView{}, ErrConflict
+	}
+	var suggested string
+	var geometryRevision int
+	if err = tx.QueryRow(ctx, `SELECT suggested_text_ar,geometry_revision FROM source_tree_suggestions WHERE id=$1`, parsed).Scan(&suggested, &geometryRevision); err != nil {
+		return SuggestionView{}, err
+	}
+	if input.ExpectedGeometryRevision == nil {
+		if geometryRevision != 0 {
+			return SuggestionView{}, ErrConflict
+		}
+	} else if *input.ExpectedGeometryRevision != geometryRevision {
+		return SuggestionView{}, ErrConflict
 	}
 	allowed, err := s.canReview(ctx, sourceFileID, actorID)
 	if err != nil {
@@ -404,6 +485,13 @@ func (s *Service) DecideSuggestion(ctx context.Context, suggestionID string, act
 	}
 	if !allowed {
 		return SuggestionView{}, ErrForbidden
+	}
+	if input.EvidenceSchemaVersion == NameEvidenceVersion && input.PreparationID != "" {
+		var frozen, signature string
+		if err = tx.QueryRow(ctx, `SELECT e.context->>'reading',p.signature FROM source_name_candidate_preparations p JOIN source_name_review_exposures e ON e.id=p.exposure_id WHERE p.id=$1 AND p.suggestion_id=$2`, input.PreparationID, suggestionID).Scan(&frozen, &signature); err != nil || signature != input.PreparationSignature {
+			return SuggestionView{}, ErrValidation
+		}
+		suggested = frozen
 	}
 	if input.Decision == SuggestionAccepted {
 		// Accepting the machine reading is a human decision. Record that
@@ -413,39 +501,69 @@ func (s *Service) DecideSuggestion(ctx context.Context, suggestionID string, act
 			return SuggestionView{}, ErrValidation
 		}
 	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO source_tree_suggestion_decisions (
-			suggestion_id, reviewer_id, decision, suggested_text_ar, decided_text_ar, note_ar,
-			candidate_snapshot, selected_candidate, input_method, judge_output,
-			normalizer_version, candidate_pool_version, duration_ms
-		)
-		VALUES (
-			$1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
-			$7::jsonb, NULLIF($8, ''), $9, $10::jsonb, $11, $12, $13
-		)
-	`, parsed, actorID, input.Decision, suggested, text, strings.TrimSpace(input.NoteAR),
-		evidence.candidateSnapshot, evidence.selectedCandidate, evidence.inputMethod,
-		evidence.judgeOutput, evidence.normalizerVersion, evidence.candidatePoolVersion,
-		evidence.durationMS); err != nil {
+	previousDecisionID := ""
+	err = tx.QueryRow(ctx, `SELECT id::text FROM source_tree_suggestion_decisions WHERE suggestion_id=$1 AND review_revision=$2`, suggestionID, reviewRevision).Scan(&previousDecisionID)
+	if errors.Is(err, pgx.ErrNoRows) && reviewRevision == 1 {
+		// A legacy reopen promotes the operational token to one. Its original
+		// decision remains revision zero, explicitly referenced by that reopen.
+		err = tx.QueryRow(ctx, `SELECT d.id::text FROM source_tree_suggestion_decisions d WHERE d.suggestion_id=$1 AND d.review_revision=0 AND EXISTS (SELECT 1 FROM source_name_review_events e WHERE e.suggestion_id=$1 AND e.event_type='reopened' AND e.revision IN (0,1) AND e.previous_decision_id=d.id)`, suggestionID).Scan(&previousDecisionID)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		if reviewRevision > 0 {
+			// A revision exists without its decision only when a previous writer
+			// failed between the two rows. Refuse rather than invent history.
+			return SuggestionView{}, ErrConflict
+		}
+	} else if err != nil {
 		return SuggestionView{}, err
 	}
 
+	var decisionID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO source_tree_suggestion_decisions (
+			suggestion_id, reviewer_id, decision, suggested_text_ar, decided_text_ar, note_ar,
+			candidate_snapshot, selected_candidate, input_method, judge_output,
+			normalizer_version, candidate_pool_version, duration_ms, created_at,
+			review_revision, supersedes_decision_id, geometry_revision
+		)
+		VALUES (
+			$1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''),
+			$7::jsonb, NULLIF($8, ''), $9, $10::jsonb, $11, $12, $13, clock_timestamp(),
+			$14, NULLIF($15, '')::uuid, $16
+		) RETURNING id::text
+	`, parsed, actorID, input.Decision, suggested, text, strings.TrimSpace(input.NoteAR),
+		evidence.candidateSnapshot, evidence.selectedCandidate, evidence.inputMethod,
+		evidence.judgeOutput, evidence.normalizerVersion, evidence.candidatePoolVersion,
+		evidence.durationMS, reviewRevision+1, previousDecisionID, geometryRevision).Scan(&decisionID); err != nil {
+		return SuggestionView{}, err
+	}
+
+	if err = s.attachNameDecisionEvidence(ctx, tx, decisionID, suggestionID, input); err != nil {
+		return SuggestionView{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO source_name_review_events(suggestion_id,actor_id,event_type,revision,previous_decision_id,decision_id,geometry_revision_id) VALUES($1,$2,'decision',$3,NULLIF($4,'')::uuid,$5,(SELECT id FROM source_name_region_revisions WHERE suggestion_id=$1 AND revision=$6))`, parsed, actorID, reviewRevision+1, previousDecisionID, decisionID, geometryRevision); err != nil {
+		return SuggestionView{}, err
+	}
 	decidedText := any(nil)
 	if input.Decision == SuggestionAccepted || input.Decision == SuggestionCorrected {
 		decidedText = text
 	}
-	if _, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE source_tree_suggestions
 		SET status = $2,
 		    decided_text_ar = $3,
 		    decided_by = $4,
 		    decided_at = now(),
 		    decision_note_ar = NULLIF($5, ''),
+		    review_revision = $6,
 		    updated_at = now()
-		WHERE id = $1 AND status = 'suggested'
-	`, parsed, input.Decision, decidedText, actorID, strings.TrimSpace(input.NoteAR)); err != nil {
+		WHERE id = $1 AND status = 'suggested' AND review_revision = $7 AND superseded_at IS NULL
+	`, parsed, input.Decision, decidedText, actorID, strings.TrimSpace(input.NoteAR), reviewRevision+1, reviewRevision)
+	if err != nil {
 		return SuggestionView{}, err
+	}
+	if tag.RowsAffected() != 1 {
+		return SuggestionView{}, ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SuggestionView{}, err
@@ -748,128 +866,12 @@ func summarizeNameHeights(heights []int) (median int, tooSmall bool) {
 // Without a reader configured it still records what it found, as detected
 // occurrences with no transcription. That is the localiser's recall measured
 // against nothing, and it is worth having.
-func (s *Service) ReadSuggestions(ctx context.Context, fileID string, actorID string) (SuggestionReadResult, error) {
-	if s == nil || s.Pool == nil {
-		return SuggestionReadResult{}, ErrDatabaseUnavailable
-	}
-	parsedFileID, err := uuid.Parse(fileID)
-	if err != nil {
-		return SuggestionReadResult{}, ErrNotFound
-	}
-	allowed, err := s.canReview(ctx, parsedFileID, actorID)
-	if err != nil {
-		return SuggestionReadResult{}, err
-	}
-	if !allowed {
-		return SuggestionReadResult{}, ErrForbidden
-	}
-
-	var sourceID uuid.UUID
-	var storageKey, mimeType string
-	err = s.Pool.QueryRow(ctx, `
-		SELECT source_id, storage_key, mime_type FROM source_files WHERE id = $1
-	`, parsedFileID).Scan(&sourceID, &storageKey, &mimeType)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SuggestionReadResult{}, ErrNotFound
-	}
-	if err != nil {
-		return SuggestionReadResult{}, err
-	}
-	if !isImageContentType(mimeType) && normalizeContentType(mimeType) != "application/pdf" {
-		return SuggestionReadResult{}, ErrUnsupportedDocument
-	}
-	if s.Store == nil {
-		return SuggestionReadResult{}, ErrStorageUnavailable
-	}
-	reader, object, err := s.Store.Get(ctx, storageKey)
-	if err != nil {
-		return SuggestionReadResult{}, ErrStorageUnavailable
-	}
-	content, readErr := io.ReadAll(io.LimitReader(reader, MaxUploadBytes+1))
-	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil || len(content) > MaxUploadBytes || object.Size != int64(len(content)) {
-		return SuggestionReadResult{}, ErrStorageUnavailable
-	}
-
-	extractor, ok := s.Extractor.(*PDFExtractor)
-	if !ok || extractor == nil {
-		extractor = NewPDFExtractor()
-	}
-	pageCount := extractor.PageCount(ctx, content)
-	if pageCount == 0 {
-		return SuggestionReadResult{}, ErrPDFToolsUnavailable
-	}
-
-	localiser := DefaultCarrierLocaliserConfig()
-	readerConfig := DefaultCarrierReaderConfig()
-	result := SuggestionReadResult{Read: s.ChartVision != nil}
-	nameHeights := make([]int, 0, 128)
-
-	for pageNumber := 1; pageNumber <= pageCount; pageNumber++ {
-		// Read from the original page at analysis resolution, not from a
-		// UI-sized preview. On a wall chart the preview is tens of DPI and a
-		// name is a handful of pixels; the source has the detail and the tiles
-		// keep it.
-		chartPage, err := extractor.OpenChartPageForAnalysis(ctx, content, pageNumber)
-		if err != nil {
-			// A page that cannot be rendered is not a reason to lose the pages
-			// that can be.
-			continue
-		}
-		names, readErr := ReadNamesOnPage(ctx, chartPage, s.ChartVision, localiser, readerConfig)
-		closeErr := chartPage.Close()
-		if readErr != nil {
-			return result, readErr
-		}
-		if closeErr != nil {
-			return result, closeErr
-		}
-		if len(names) == 0 {
-			continue
-		}
-		result.Pages++
-		result.Detected += len(names)
-		for _, name := range names {
-			nameHeights = append(nameHeights, int(name.Region.Height*float64(chartPage.Height)+0.5))
-		}
-
-		suggestions := make([]SuggestionInput, 0, len(names))
-		for index, name := range names {
-			// The occurrence id carries the page: the table is unique on
-			// (source_file_id, occurrence_id), and two pages both starting at
-			// carrier-000000 would overwrite one another.
-			suggestion := SuggestionInput{
-				OccurrenceID:    fmt.Sprintf("carrier-p%03d-%06d", pageNumber, index),
-				PageNumber:      pageNumber,
-				SuggestedTextAR: "",
-				Region:          Region{X: name.Region.X, Y: name.Region.Y, Width: name.Region.Width, Height: name.Region.Height},
-				Confidence:      0,
-				ViewCount:       1,
-				ReadingMethod:   carrierReadingMethod,
-				ReadingModel:    nameReadingModel,
-				Alternatives:    name.Reading.Alternatives,
-			}
-			if name.Read {
-				suggestion.SuggestedTextAR = name.Reading.TextAR
-				suggestion.Confidence = name.Reading.Confidence
-				suggestion.ViewCount = readerConfig.Views
-				if name.Reading.TextAR != "" {
-					result.Named++
-				} else {
-					result.Unreadable++
-				}
-			}
-			suggestions = append(suggestions, suggestion)
-		}
-		if err := s.CreateSuggestions(ctx, sourceID, parsedFileID, nil, suggestions); err != nil {
-			return result, err
-		}
-	}
-	result.MedianNameHeightPx, result.SourceTooSmall = summarizeNameHeights(nameHeights)
-	return result, nil
+// ReadSuggestions is the durable entry point. It never renders or transcribes
+// within the request, and never calls a hosted reader.
+func (s *Service) ReadSuggestions(ctx context.Context, fileID, actorID string) (NameReadingRun, error) {
+	return s.PrepareNameReading(ctx, fileID, actorID)
 }
 
-// canReview reports whether an actor may decide suggestions on a file.
 func (s *Service) canReview(ctx context.Context, fileID uuid.UUID, actorID string) (bool, error) {
 	var sourceID uuid.UUID
 	err := s.Pool.QueryRow(ctx, `SELECT source_id FROM source_files WHERE id = $1`, fileID).Scan(&sourceID)
@@ -898,13 +900,14 @@ func (s *Service) getSuggestion(ctx context.Context, suggestionID uuid.UUID) (Su
 		       COALESCE(sg.decided_by::text, ''),
 		       COALESCE(sg.decided_at::text, ''),
 		       COALESCE(sg.decision_note_ar, ''),
-		       COALESCE(sg.source_page_evidence_id::text, '')
+		       COALESCE(sg.source_page_evidence_id::text, ''),
+		       sg.review_revision, sg.geometry_revision, sg.superseded_at IS NOT NULL
 		FROM source_tree_suggestions sg
 		WHERE sg.id = $1
 	`, suggestionID).Scan(&view.ID, &view.OccurrenceID, &view.PageNumber, &view.Kind,
 		&view.SuggestedTextAR, &view.DecidedTextAR, &regionBytes, &alternativesBytes, &view.Confidence, &view.ViewCount,
 		&view.ReadingMethod, &view.ReadingModel, &view.Status, &view.DecidedBy, &view.DecidedAt,
-		&view.DecisionNoteAR, &view.SourcePageEvidenceID)
+		&view.DecisionNoteAR, &view.SourcePageEvidenceID, &view.ReviewRevision, &view.GeometryRevision, &view.Superseded)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SuggestionView{}, ErrSuggestionNotFound
 	}

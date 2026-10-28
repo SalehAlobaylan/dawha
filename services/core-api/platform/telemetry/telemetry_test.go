@@ -238,8 +238,8 @@ func TestTheLabelSetIsBoundedAndEveryEnumerationIsTotal(t *testing.T) {
 	}{
 		{"dawha_http_requests_total", 7 * 20 * 4},
 		{"dawha_db_queries_total", 5},
-		{"dawha_queue_depth", 5},
-		{"dawha_queue_jobs_total", 5 * 5},
+		{"dawha_queue_depth", 7},
+		{"dawha_queue_jobs_total", 7 * 5},
 		{"dawha_ai_calls_total", 11 * 3},
 		{"dawha_ai_cost_units", 11 * 4 * 4},
 		{"dawha_research_runs_total", 4},
@@ -272,7 +272,7 @@ func TestTheLabelSetIsBoundedAndEveryEnumerationIsTotal(t *testing.T) {
 			t.Fatalf("the route %q is not in its enumeration", route)
 		}
 	}
-	for _, jobType := range []JobType{JobSourceProcess, JobEntityResolution, JobResearchAgent, JobContradictionScan, JobOther} {
+	for _, jobType := range []JobType{JobSourceProcess, JobNameReading, JobFrozenNameJudge, JobEntityResolution, JobResearchAgent, JobContradictionScan, JobOther} {
 		if !validJobTypes[jobType] {
 			t.Fatalf("the job type %q is not in its enumeration", jobType)
 		}

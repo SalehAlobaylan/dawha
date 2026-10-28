@@ -132,6 +132,14 @@ app.include_router(
 
 @app.middleware("http")
 async def bound_ai_request_body(request: Request, call_next):
+    if request.method == "GET" and request.url.path == "/v1/vision/chart/capabilities":
+        # Metadata probes carry no body and never reach a model. Preserve the
+        # existing inference bounds rather than requiring a fake image payload.
+        if request.headers.get("transfer-encoding") or request.headers.get(
+            "content-length"
+        ) not in {None, "0"}:
+            return JSONResponse(status_code=400, content={"detail": "metadata needs no body"})
+        return await call_next(request)
     is_chart_vision = request.url.path.startswith("/v1/vision/chart/")
     is_name_judge = request.url.path.startswith("/v1/names/")
     if is_chart_vision or is_name_judge:

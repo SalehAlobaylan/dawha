@@ -105,6 +105,8 @@ func main() {
 			ChartVision:       sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
 			NameJudge:         sourceprocessing.NewHTTPNameJudgeProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
 			NameJudgeSettings: nameJudgeSettings,
+			ReaderSettings:    sourceprocessing.ReadingSettingsFromEnvironment(os.Getenv),
+			ReaderStatus:      sourceprocessing.NewReadingStatusProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000")),
 			SourceStorage:     sourceStore,
 			RateLimits:        rateLimits,
 			Metrics:           metrics,

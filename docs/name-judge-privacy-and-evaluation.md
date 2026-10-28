@@ -12,7 +12,7 @@ lift, or adoption claim is supported.
 | Gate | Status | Consequence |
 |---|---|---|
 | Privacy/provider approval | **approved for local Liquid** | Inference stays on this machine by default. Do not send source, family, account, or reviewer ids. Keep `NAME_JUDGE_IMAGES=false` unless a separate image decision is recorded. |
-| 300-decision shadow evaluation | **no result; human review pending** | The 2026-10-27 pilot has eight truth-labelled shadow decisions in one class and `ready=false`. No judge quality, lift, or adoption claim is supported. |
+| 300-decision shadow evaluation | **no result; human review pending** | The pilot retains 111 actions, 80 truths and 79 complete historical shadow labels in one class. Plan 025 declares these development data; the new held-out batch has zero labels and `ready=false`. No judge quality, lift, or adoption claim is supported. |
 | Active recommendation row | **enabled for local Liquid by operator decision** | The separate `رأي النموذج` row may appear. It never accepts a name, prefills the editor, reorders chips, or shows a percentage. No judge output changes a decision by itself. |
 
 The posture in `.env.example` is:
@@ -57,6 +57,45 @@ qualifying decisions. The gate is not ready, the sample is too small for rates,
 and the registered evaluation, paired comparison, and reviewer-time criterion
 remain unmeasured. The latter requires a baseline period or an A/B design even
 after the shadow sample is collected. Until then the outcome is **no result**.
+
+### Plan 023 reader capabilities and cohort boundary
+
+The later 2026-10-27 pilot contains 111 genuine human actions (9 accepted,
+71 corrected, 14 deferred, 17 rejected), 80 truth labels and 79 complete,
+unseen shadow records, all in `calligraphic_dense`. The saved top-eight pool
+contains the truth in 18 of 80 cases. These remain diagnostic counts below the
+100-label rate floor; no quality or adoption claim follows. Plan 023 preserves
+all original rows and the frozen class-map bytes.
+
+Reader availability is independent of judge configuration. The API and AI
+service default to `NAME_READER_MODE=local` and `CHART_VISION_ENABLED=false`.
+Disabled hosted reading does not discover credentials or make hosted calls.
+The authenticated per-file capability endpoint reports policy, configuration,
+and cached metadata health separately. Source-side hosted approval defaults
+false; no private source was approved during implementation. The bench disables
+unavailable hosted image actions before click. Plan 024 now enables local
+rereading when its installed tools and Arabic data are ready. Manual correction stays available. Shadow adds no visible
+state, ordering, prefill, or percentage.
+
+`cmd/name-pipeline doctor --json` reports aggregate tool/service/evidence status
+without source or reviewer IDs, names, keys, paths, or images. With Plan 024, local reader
+readiness reflects the working crop adapter; exit 0 means its prerequisites and
+required service are available, while exit 2 reports missing setup.
+No inference or download is used for a health probe.
+
+`name-eval` now reads the saved candidate-pool version, protected decided-row
+`reading_model`, judge model and prompt version. Decided suggestions are excluded
+from reread upserts, so that reader version is historical evidence. Missing
+metadata is reported as `legacy`, never filled with current settings. Version
+selectors (`--pool-version`, `--reader-version`, `--judge-model`,
+`--prompt-version`) restrict rows before measurement. Each cohort is reported
+separately; mixed versions cannot jointly satisfy the combined gate. Selecting
+a cohort does not relax class coverage or sample floors.
+
+Private baseline fingerprints, reports, cutoff, and class-map hash are retained
+under `~/.dawha/name-eval/`. Synthetic integration fixtures run only through
+`make name-pipeline-db-verify` against an explicitly named local
+`*_pipeline_test` database and separate temporary storage.
 
 ## What the judge is allowed to do
 
@@ -193,6 +232,20 @@ The rule below must be recorded before looking at the shadow result. The
 - rates only when the denominator is at least 100; otherwise the report prints
   counts and says no rate. The UI shows no percentage at all before calibration.
 
+### Truth policy and revisions
+
+The original cohort keeps first-decision semantics by default. Pass
+`--truth-policy first` explicitly to make that choice auditable. A separate
+evaluation may pass `--truth-policy latest --cutoff <RFC3339>` to select the
+latest valid human revision inside a pinned window. The cutoff is required and
+is applied to the decision query before selection.
+
+Both policies count one physical occurrence, not every decision revision. The
+report exposes `collapsedRevisions`, `supersededDecisions` and
+`duplicateObservations` separately. A split/merge parent marked superseded is
+reported but never counted beside its descendants, and reopening never creates a
+new blind observation or resets the original cohort's eligibility.
+
 ### Go/no-go rule
 
 Use judge output to change ranking, show a percentage, or make a product claim
@@ -240,6 +293,53 @@ an opinion, but it must not be described as better.
   shadow gate.
 
 The AI service and core tests use a fake HTTP transport. No test calls a live
-provider. The local environment has the approved `d1:3b` model and no private
-evaluation sample; a manual smoke request may call the local endpoint, but no
-test or report may claim quality from it.
+provider. The local environment has the approved `d1:3b` model and the private pilot
+described above. Automated fixtures remain isolated from those human decisions;
+a local development benchmark cannot establish reader or judge quality.
+
+
+### Plan 024 local reading boundary — 2026-10-28
+
+The bounded local crop reader now uses the installed Arabic Tesseract engine.
+Durable runs preserve geometry before optional transcription, and private crop
+artifacts are authorized on every fetch. Reader identities include the engine,
+Arabic data, preprocessing and budget configuration, so later processing cannot
+silently merge with the pilot's evidence cohort. New readings are machine
+hypotheses; existing decisions and snapshots are never backfilled or rewritten.
+See [local pipeline operation and limits](local-name-reading-pipeline.md).
+
+The private development benchmark uses a frozen selection of six pending crops,
+two per registered class, to measure completion, time, bytes and OCR operations.
+All six durable rereads completed: four text hypotheses, two manual-review
+outcomes and fourteen local OCR operations. The 111 original decisions and
+snapshots remained unchanged. It uses no labels as truth and supports no accuracy
+claim. The review environment
+continues to use shadow mode, sample 1, images false, with hosted image reading
+disabled. The human evaluation floors, class coverage and go/no-go rule above
+remain unchanged.
+
+
+### Plan 025 evidence boundary — 2026-10-28
+
+New review clients use `ar-name-pool-v2` / `local-evidence-v1` and
+`name-review-v2`. The initial pool and full bounded context freeze before editor
+input; the final visible snapshot remains separate. A server-owned, text-only
+local request can complete after a human decision without rebuilding context
+from its answer. Browser-written results do not replace this relation. Neither
+shadow status nor its result appears in the review UI.
+
+The original 111 actions and their snapshots/judge evidence retain their exact
+stored values. The eighty existing truths are explicitly development examples;
+all eleven current files and related renderings are excluded from new unseen
+validation. A private chronological replay found the answer in the new top eight
+in 23 of 80 cases versus 18 of 80 in the original snapshots. This counterfactual
+comparison is below the rate floor and supports no quality or adoption claim.
+No old missing judge output was backfilled. The held-out batch has no files or
+labels yet; future source/class/group and version registration must precede
+review. History, deferral, repair lineage, active posture and legacy exposures
+cannot create another blind observation. See
+[the preparation and evaluation protocol](name-review-preparation.md).
+
+The human-confirmed class-map bytes and the 100/300 floors, paired comparison,
+privacy rule and reviewer-time baseline requirement remain unchanged. Keep
+shadow mode, sample 1, images false and hosted image reading disabled.

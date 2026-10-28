@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { rankArabicNames } from "./arabicNames";
-import { buildCandidateSnapshot, buildShadowCandidateSnapshot, matchSnapshotCandidate } from "./nameReviewEvidence";
+import { buildCandidateSnapshot, buildPreparedCandidateSnapshot, buildShadowCandidateSnapshot, matchSnapshotCandidate } from "./nameReviewEvidence";
 
 describe("buildCandidateSnapshot", () => {
   it("keeps the sources, ranks, keys, and shown order of the ranked candidates", () => {
@@ -63,4 +63,24 @@ describe("buildShadowCandidateSnapshot", () => {
     expect(snapshot.map((candidate) => candidate.value)).not.toContain("خالد");
     expect(interactiveAfterCorrection.map((candidate) => candidate.value)).toContain("خالد");
   });
+});
+
+it("prepares only from frozen local and file evidence with eight chips and twelve total options", () => {
+ const context = { reading: "محمد", readers: [
+  { value: "محمد", variant: "raw-psm7", readerVersion: "local-v2" },
+  { value: "خالد", variant: "raw-psm6", readerVersion: "local-v2" },
+  { value: "خالد", variant: "adaptive-psm7", readerVersion: "local-v2" },
+ ], lexicon: { entries: [{ value: "محمود", count: 250, variants: ["محمود"] }] } } as unknown as import("../types").NamePreparationContext;
+ const initial = buildPreparedCandidateSnapshot(context);
+ expect(initial.length).toBeLessThanOrEqual(12);
+ expect(initial.filter((candidate) => candidate.shown).length).toBeLessThanOrEqual(8);
+ expect(initial.filter((candidate) => candidate.value === "خالد")).toHaveLength(1);
+ expect(initial.find((candidate) => candidate.value === "خالد")?.sources).toEqual(["reader"]);
+ const afterTyping = buildCandidateSnapshot(rankArabicNames("نايف", { reader: ["محمد"] }));
+ expect(afterTyping.some((candidate) => candidate.value === "نايف")).toBe(true);
+ expect(initial.some((candidate) => candidate.value === "نايف")).toBe(false);
+});
+
+it("keeps empty readings as an honest no-candidate pool", () => {
+ expect(buildPreparedCandidateSnapshot({ reading: "", readers: [], lexicon: { entries: [] } } as unknown as import("../types").NamePreparationContext)).toEqual([]);
 });

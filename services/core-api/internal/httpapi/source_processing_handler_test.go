@@ -59,6 +59,28 @@ func TestSourceProcessingRoutesRequireAuthentication(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/name-judge/config"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/name-lexicon"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/review-queue"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/review-summary"},
+		{http.MethodGet, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/history"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/reopen"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/region-preview"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/region"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/split"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/merge"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/review-context"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/candidate-preparation"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/review-context/seal"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/name-evidence-status"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/name-evaluation-contract"},
+		{http.MethodPost, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/name-evaluation-registration"},
+		{http.MethodGet, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/reading-capabilities"},
+		{http.MethodPost, "/api/v1/source-files/00000000-0000-0000-0000-000000000001/suggestions/read"},
+		{http.MethodGet, "/api/v1/name-reading-runs/00000000-0000-0000-0000-000000000001"},
+		{http.MethodPost, "/api/v1/name-reading-runs/00000000-0000-0000-0000-000000000001/cancel"},
+		{http.MethodPost, "/api/v1/name-reading-runs/00000000-0000-0000-0000-000000000001/resume"},
+		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/local-reread"},
+		{http.MethodGet, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/local-readings"},
 		{http.MethodPost, "/api/v1/source-tree-suggestions/00000000-0000-0000-0000-000000000001/judge"},
 	} {
 		recorder = httptest.NewRecorder()
@@ -255,6 +277,11 @@ func TestSourceProcessingErrorMapping(t *testing.T) {
 		{name: "format refusal", err: sourceprocessing.ErrUnsupportedContent, status: http.StatusUnsupportedMediaType, code: "unsupported_source_format"},
 		{name: "declared refusal", err: sourceprocessing.ErrUnsupportedDocument, status: http.StatusUnsupportedMediaType, code: "unsupported_source_format"},
 		{name: "invalid input", err: sourceprocessing.ErrValidation, status: http.StatusBadRequest},
+		{name: "already decided", err: sourceprocessing.ErrSuggestionAlreadyDecided, status: http.StatusConflict},
+		{name: "superseded geometry", err: sourceprocessing.ErrSuggestionSuperseded, status: http.StatusConflict},
+		{name: "stale revision", err: sourceprocessing.ErrConflict, status: http.StatusConflict},
+		{name: "no review access", err: sourceprocessing.ErrForbidden, status: http.StatusForbidden},
+		{name: "missing occurrence", err: sourceprocessing.ErrSuggestionNotFound, status: http.StatusNotFound},
 		{name: "worker mistake", err: errors.New("extractor is unavailable"), status: http.StatusInternalServerError},
 		{name: "database down", err: sourceprocessing.ErrDatabaseUnavailable, status: http.StatusServiceUnavailable},
 	}
@@ -484,4 +511,106 @@ func testSourceImage(t *testing.T, format string) []byte {
 		t.Fatalf("could not encode a %s fixture: %v", format, err)
 	}
 	return buffer.Bytes()
+}
+
+func TestReaderErrorsExposeStableCodesWithoutProviderText(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{sourceprocessing.ErrChartVisionPolicy, 403, "disabled_by_policy"},
+		{sourceprocessing.ErrChartVisionSetup, 503, "not_configured"},
+		{sourceprocessing.ErrChartVisionUnavailable, 503, "temporarily_unavailable"},
+		{sourceprocessing.ErrChartVisionOutputInvalid, 422, "unreadable_crop"},
+	} {
+		recorder := httptest.NewRecorder()
+		writeSourceProcessingError(recorder, test.err)
+		var body map[string]string
+		if json.Unmarshal(recorder.Body.Bytes(), &body) != nil || recorder.Code != test.status || body["code"] != test.code {
+			t.Fatalf("error response=%d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestNamePreparationHTTPReturnsAcceptedAndPersistedRun(t *testing.T) {
+	fixture := newSourceUploadFixture(t)
+	upload := fixture.upload(t, "tree.png", "image/png", testSourceImage(t, "png"))
+	if upload.Code != http.StatusCreated {
+		t.Fatalf("upload=%d %s", upload.Code, upload.Body.String())
+	}
+	var uploaded sourceprocessing.FileView
+	if err := json.Unmarshal(upload.Body.Bytes(), &uploaded); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/source-files/"+uploaded.ID+"/suggestions/read", nil)
+	request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	response := httptest.NewRecorder()
+	fixture.router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("prepare=%d %s", response.Code, response.Body.String())
+	}
+	var run sourceprocessing.NameReadingRun
+	if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "queued" || run.ID == "" {
+		t.Fatalf("run=%+v", run)
+	}
+	get := httptest.NewRequest(http.MethodGet, "/api/v1/name-reading-runs/"+run.ID, nil)
+	get.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fixture.token})
+	response = httptest.NewRecorder()
+	fixture.router.ServeHTTP(response, get)
+	if response.Code != http.StatusOK {
+		t.Fatalf("persisted status=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNameReviewHTTPFreezesPreparationSeparatelyFromFinalEvidence(t *testing.T) {
+	f := newSourceUploadFixture(t)
+	upload := f.upload(t, "names.png", "image/png", testSourceImage(t, "png"))
+	if upload.Code != 201 {
+		t.Fatal("upload failed")
+	}
+	var file sourceprocessing.FileView
+	if json.Unmarshal(upload.Body.Bytes(), &file) != nil {
+		t.Fatal("invalid upload")
+	}
+	id := uuid.NewString()
+	_, err := f.pool.Exec(context.Background(), `INSERT INTO source_tree_suggestions(id,source_id,source_file_id,occurrence_id,page_number,region,suggested_text_ar,reading_method,reading_model) VALUES($1,$2,$3,'initial-http',1,'{"x":0.1,"y":0.1,"width":0.1,"height":0.1}','محمد','fixture','fixture')`, id, f.source, file.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: f.token})
+		w := httptest.NewRecorder()
+		f.router.ServeHTTP(w, r)
+		return w
+	}
+	begin := call(http.MethodPost, "/api/v1/source-tree-suggestions/"+id+"/review-context", nil)
+	if begin.Code != 200 {
+		t.Fatalf("context %d %s", begin.Code, begin.Body.String())
+	}
+	var c sourceprocessing.NamePreparationContext
+	if json.Unmarshal(begin.Body.Bytes(), &c) != nil {
+		t.Fatal("invalid context")
+	}
+	snapshot := []sourceprocessing.SuggestionCandidateSnapshot{{Value: "محمد", Key: "محمد", CompactKey: "محمد", ParticleKey: "محمد", Sources: []string{"reader"}, Score: 100, Shown: true, Position: 1}}
+	prepared := call(http.MethodPost, "/api/v1/source-tree-suggestions/"+id+"/candidate-preparation", sourceprocessing.PrepareNameCandidatesInput{ExposureID: c.ExposureID, PoolVersion: sourceprocessing.NamePoolVersion, Snapshot: snapshot})
+	if prepared.Code != 202 {
+		t.Fatalf("prepare %d %s", prepared.Code, prepared.Body.String())
+	}
+	var p sourceprocessing.NameCandidatePreparation
+	_ = json.Unmarshal(prepared.Body.Bytes(), &p)
+	saved := call(http.MethodPost, "/api/v1/source-tree-suggestions/"+id+"/decision", sourceprocessing.SuggestionDecision{Decision: "corrected", TextAR: "خالد", EvidenceSchemaVersion: sourceprocessing.NameEvidenceVersion, PreparationID: p.ID, PreparationSignature: p.Signature, InputMethod: "typed"})
+	if saved.Code != http.StatusCreated {
+		t.Fatalf("save %d %s", saved.Code, saved.Body.String())
+	}
+	late := call(http.MethodPost, "/api/v1/source-tree-suggestions/"+id+"/review-context", nil)
+	if late.Code != 409 {
+		t.Fatalf("late context status %d", late.Code)
+	}
 }

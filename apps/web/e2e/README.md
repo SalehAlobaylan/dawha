@@ -1,8 +1,8 @@
 # The browser acceptance suite
 
 Playwright drives the ten V1 journeys declared in `IMPLEMENTATION_PLAN.md` against
-the deterministic local stack, plus one that accepts a suggestion with a typed change
-set. Nothing here needs a public deployment or an AI
+the deterministic local stack, plus journeys for a typed change set and the
+name-review bench. Nothing here needs a public deployment or an AI
 credential: the `ai-research` service is a deterministic provider, and the map
 canvas draws from an inline style with no tile server.
 
@@ -29,6 +29,22 @@ COMPOSE_PROJECT_NAME=dawha POSTGRES_DB=dawha_e2e make e2e
 `npx playwright test`. To run the suite without the Makefile, set the variables
 below and build first.
 
+For the name-review bench, use the guarded target instead of `make e2e`. It
+refuses a database whose name does not end in `_pipeline_test`, refuses the
+review database's URL, and requires a fresh temporary `PIPELINE_TEST_STORAGE_DIR`.
+It then runs the Go/web gates and this browser suite against that isolated data:
+
+```sh
+export PIPELINE_TEST_DB_NAME=dawha_plan026_pipeline_test
+export PIPELINE_TEST_DATABASE_URL=postgres://dawha:dawha_local@localhost:55432/$PIPELINE_TEST_DB_NAME
+export PIPELINE_TEST_STORAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dawha-pipeline-test.XXXXXX")
+make name-pipeline-verify
+```
+
+The guard runs before migrations, seeding, fixtures, or cleanup, so a
+misconfigured command fails without writing to the review database or
+`.data/source-storage`.
+
 ## Demo mode is on here, explicitly
 
 `DEMO_MODE=true` is exported to the stack by `make e2e` and defaulted to `"true"`
@@ -49,7 +65,7 @@ mode is in `services/core-api/internal/httpapi/demo_mode_test.go` and in
 ## Rate limits are off here, explicitly
 
 `RATE_LIMIT_ENABLED=false` is exported to the stack by `make e2e` and defaulted to
-`false` in `e2e/stack.mjs`. The thirty specs share one API and one client
+`false` in `e2e/stack.mjs`. The thirty-two specs share one API and one client
 address, and the register journey alone would spend the whole sign-in budget of 30
 requests a minute, so the browser suite is not a place where a rate limit can be
 on.
@@ -97,6 +113,7 @@ somebody else's process.
 | `journeys/08-browse-map.spec.ts` | browse the map |
 | `journeys/09-research-query.spec.ts` | run a research query |
 | `journeys/10-change-set.spec.ts` | accept a suggestion with a typed change set; refuse one to a reviewer without a global write role |
+| `journeys/11-name-bench.spec.ts` | defer a name, reload, reopen it, correct it, retain both answers in history, refuse a reviewer without source access, and repair a region while keeping the original crop and reading |
 
 ## Isolation
 

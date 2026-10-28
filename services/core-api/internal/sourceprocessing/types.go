@@ -293,10 +293,17 @@ type Service struct {
 	// Jobs enqueues work and fences the writes that finish it. A processor
 	// without it can accept uploads but cannot process them, which is the safe
 	// way round: an upload is recoverable, a duplicate extraction is not.
-	Jobs        LeaseQueue
-	AI          ai.Provider
-	Extractor   Extractor
-	ChartVision ChartVisionProvider
+	Jobs              LeaseQueue
+	AI                ai.Provider
+	Extractor         Extractor
+	ChartVision       ChartVisionProvider
+	LocalCropReader   LocalCropReader
+	DetectNameTile    func([]byte, CarrierLocaliserConfig) ([]PageRegion, error)
+	OpenNamePage      func(context.Context, []byte, int) (*ChartPDFPage, error)
+	ReaderSettings    ReadingSettings
+	ReaderStatus      ReadingStatusProvider
+	LocalReadingProbe func(context.Context) LocalReaderStatus
+	readingCache      readingCapabilityCache
 	// NameJudge is optional. It judges a bounded candidate set; it is not a
 	// reader and never writes a suggestion or a person.
 	NameJudge             NameJudge

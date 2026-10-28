@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"math"
 	"strings"
 
@@ -54,9 +53,15 @@ type suggestionSource struct {
 	region        Region
 	content       []byte
 	extractor     *PDFExtractor
+	storageKey    string
+	checksum      string
+	mimeType      string
 }
 
 func (s *Service) loadSuggestionSource(ctx context.Context, suggestionID string, actorID string) (suggestionSource, error) {
+	return s.loadSuggestionContext(ctx, suggestionID, actorID, true)
+}
+func (s *Service) loadSuggestionContext(ctx context.Context, suggestionID string, actorID string, withContent bool) (suggestionSource, error) {
 	if s == nil || s.Pool == nil {
 		return suggestionSource{}, ErrDatabaseUnavailable
 	}
@@ -73,16 +78,16 @@ func (s *Service) loadSuggestionSource(ctx context.Context, suggestionID string,
 	var suggestedText string
 	var alternativesBytes, regionBytes []byte
 	var sourceID uuid.UUID
-	var storageKey, mimeType string
+	var storageKey, mimeType, checksum string
 	err = s.Pool.QueryRow(ctx, `
 		SELECT sg.source_file_id, sg.page_number, sg.suggested_text_ar, sg.alternatives,
-		       sg.region, sf.source_id, sf.storage_key, sf.mime_type
+		       sg.region, sf.source_id, sf.storage_key, sf.mime_type, sf.checksum_sha256
 		FROM source_tree_suggestions sg
 		JOIN source_files sf ON sf.id = sg.source_file_id
 		WHERE sg.id = $1
 	`, parsedSuggestionID).Scan(
 		&sourceFileID, &pageNumber, &suggestedText, &alternativesBytes,
-		&regionBytes, &sourceID, &storageKey, &mimeType,
+		&regionBytes, &sourceID, &storageKey, &mimeType, &checksum,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return suggestionSource{}, ErrNotFound
@@ -110,22 +115,19 @@ func (s *Service) loadSuggestionSource(ctx context.Context, suggestionID string,
 	if !isImageContentType(mimeType) && normalizeContentType(mimeType) != "application/pdf" {
 		return suggestionSource{}, ErrUnsupportedDocument
 	}
-	if s.Store == nil {
-		return suggestionSource{}, ErrStorageUnavailable
-	}
-	reader, object, err := s.Store.Get(ctx, storageKey)
-	if err != nil {
-		return suggestionSource{}, ErrStorageUnavailable
-	}
-	content, readErr := io.ReadAll(io.LimitReader(reader, MaxUploadBytes+1))
-	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil || len(content) > MaxUploadBytes || object.Size != int64(len(content)) {
-		return suggestionSource{}, ErrStorageUnavailable
-	}
 	extractor, ok := s.Extractor.(*PDFExtractor)
 	if !ok || extractor == nil {
 		extractor = NewPDFExtractor()
 	}
+	source := suggestionSource{sourceFileID: sourceFileID, pageNumber: pageNumber, suggestedText: suggestedText, alternatives: alternatives, region: region, extractor: extractor, storageKey: storageKey, checksum: checksum, mimeType: mimeType}
+	if !withContent {
+		return source, nil
+	}
+	content, err := s.readNameOriginal(ctx, source)
+	if err != nil {
+		return suggestionSource{}, err
+	}
+
 	return suggestionSource{
 		sourceFileID:  sourceFileID,
 		pageNumber:    pageNumber,
@@ -134,6 +136,7 @@ func (s *Service) loadSuggestionSource(ctx context.Context, suggestionID string,
 		region:        region,
 		content:       content,
 		extractor:     extractor,
+		storageKey:    storageKey, checksum: checksum, mimeType: mimeType,
 	}, nil
 }
 
@@ -141,33 +144,12 @@ func (s *Service) loadSuggestionSource(ctx context.Context, suggestionID string,
 // the original source. It is a read-only operation and requires review
 // permission on the suggestion's source.
 func (s *Service) GetSuggestionCrop(ctx context.Context, suggestionID string, actorID string) (SuggestionCrop, error) {
-	source, err := s.loadSuggestionSource(ctx, suggestionID, actorID)
+	source, err := s.loadSuggestionContext(ctx, suggestionID, actorID, false)
 	if err != nil {
 		return SuggestionCrop{}, err
 	}
-	chartPage, err := source.extractor.OpenChartPageForAnalysis(ctx, source.content, source.pageNumber)
-	if err != nil {
-		return SuggestionCrop{}, err
-	}
-	defer chartPage.Close()
-
-	tightBounds, err := suggestionCropBounds(source.region, chartPage.Width, chartPage.Height, "tight")
-	if err != nil {
-		return SuggestionCrop{}, err
-	}
-	contextBounds, err := suggestionCropBounds(source.region, chartPage.Width, chartPage.Height, "context")
-	if err != nil {
-		return SuggestionCrop{}, err
-	}
-	tight, err := chartPage.RenderRegion(ctx, tightBounds)
-	if err != nil {
-		return SuggestionCrop{}, err
-	}
-	contextPNG, err := chartPage.RenderRegion(ctx, contextBounds)
-	if err != nil {
-		return SuggestionCrop{}, err
-	}
-	return SuggestionCrop{TightPNG: tight, ContextPNG: contextPNG}, nil
+	artifact, err := s.prepareNameCrop(ctx, source, nil, nil)
+	return artifact.Crop, err
 }
 
 // SuggestionCandidates asks the configured vision model to suggest spellings for
@@ -175,27 +157,21 @@ func (s *Service) GetSuggestionCrop(ctx context.Context, suggestionID string, ac
 // crop and no family context, returns hypotheses only, and nothing is persisted.
 // The reviewer still has to choose or type the name.
 func (s *Service) SuggestionCandidates(ctx context.Context, suggestionID string, actorID string) ([]string, error) {
-	source, err := s.loadSuggestionSource(ctx, suggestionID, actorID)
+	if err := s.requireHostedSuggestionReader(ctx, suggestionID, actorID); err != nil {
+		return nil, err
+	}
+	source, err := s.loadSuggestionContext(ctx, suggestionID, actorID, false)
 	if err != nil {
 		return nil, err
 	}
 	if s.ChartVision == nil {
 		return nil, ErrChartVisionUnavailable
 	}
-	chartPage, err := source.extractor.OpenChartPageForAnalysis(ctx, source.content, source.pageNumber)
+	artifact, err := s.prepareNameCrop(ctx, source, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer chartPage.Close()
-	bounds, err := suggestionCropBounds(source.region, chartPage.Width, chartPage.Height, "tight")
-	if err != nil {
-		return nil, err
-	}
-	tight, err := chartPage.RenderRegion(ctx, bounds)
-	if err != nil {
-		return nil, err
-	}
-	candidates, err := s.ChartVision.SuggestNames(ctx, tight)
+	candidates, err := s.ChartVision.SuggestNames(ctx, artifact.Crop.TightPNG)
 	if err != nil {
 		return nil, err
 	}

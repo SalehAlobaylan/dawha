@@ -1,0 +1,1 @@
+CREATE INDEX source_name_artifact_expiry ON source_name_crop_artifacts(expires_at);

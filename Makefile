@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test ocr-benchmark-test ocr-corpus-check ocr-benchmark db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval name-eval docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
+.PHONY: install dev build lint typecheck test ocr-benchmark-test ocr-corpus-check ocr-benchmark db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval name-eval name-pipeline-doctor name-pipeline-db-verify name-pipeline-verify name-pipeline-guard-test name-pipeline-prepare name-pipeline-status name-pipeline-resume name-pipeline-cancel name-pipeline-local-reread docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
 
 install:
 	npm install
@@ -49,7 +49,11 @@ test:
 	cd services/ai-research && .venv/bin/pytest
 
 db-up:
-	docker compose up -d db
+	@if [ -n "$${PIPELINE_TEST_DB_NAME:-}" ] && [ "$${POSTGRES_DB:-}" = "$$PIPELINE_TEST_DB_NAME" ]; then \
+		docker compose exec -T db pg_isready -U "$${POSTGRES_USER:-dawha}" -d "$$PIPELINE_TEST_DB_NAME"; \
+	else \
+		docker compose up -d db; \
+	fi
 
 db-down:
 	docker compose down
@@ -232,7 +236,7 @@ ocr-benchmark:
 # It is the gate, and the gate is only worth something if it is the one everybody
 # runs. `verify-full` and `make e2e` both build on what it checks, and neither
 # replaces it.
-verify: lint typecheck test build docs-check ocr-benchmark-test ocr-corpus-check
+verify: lint typecheck test build docs-check ocr-benchmark-test ocr-corpus-check name-pipeline-guard-test
 
 # generated-check fails when the committed sqlc output no longer matches what the
 # current db/migrations produce.
@@ -387,6 +391,35 @@ ai-eval:
 #   make name-eval NAME_EVAL_ARGS="--since 2026-10-01T00:00:00Z"
 #   make name-eval NAME_EVAL_ARGS="--class-map path/to/source-classes.json"
 NAME_EVAL_ARGS ?=
+NAME_PIPELINE_TEST_GATE ?= packages
+NAME_PIPELINE_TEST_PACKAGES ?= ./...
+export NAME_PIPELINE_TEST_GATE NAME_PIPELINE_TEST_PACKAGES
+name-pipeline-guard-test:
+	@python3 -m unittest discover -s infra/local -p 'test_name_pipeline_test_env.py'
+
+# One command for the whole name-review bench on isolated data. The guard runs
+# first, and each gate revalidates the environment in its own process, so a
+# missing dedicated database, a review-database URL, or the real source-storage
+# directory is refused before migrations, fixtures, or cleanup can touch it.
+# `verify-full` covers the Go/web gates; `e2e` builds the browser stack and runs
+# the deferred -> reload -> reopen -> correction -> history journey against the
+# same isolated database.
+name-pipeline-verify:
+	@NAME_PIPELINE_TEST_GATE=verify-full python3 infra/local/check-name-pipeline-test-env.py
+	@NAME_PIPELINE_TEST_GATE=e2e python3 infra/local/check-name-pipeline-test-env.py
+
+name-pipeline-db-verify:
+	@python3 infra/local/check-name-pipeline-test-env.py
+
+NAME_PIPELINE_ARGS ?=
+name-pipeline-prepare name-pipeline-status name-pipeline-resume name-pipeline-cancel name-pipeline-local-reread:
+	@cd services/core-api && go run ./cmd/name-pipeline $(patsubst name-pipeline-%,%,$@) --json $(NAME_PIPELINE_ARGS)
+
+name-pipeline-doctor:
+	cd services/core-api && \
+		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
+		go run ./cmd/name-pipeline doctor --json
+
 name-eval:
 	cd services/core-api && \
 		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
@@ -715,3 +748,14 @@ db-sweep:
 		DATABASE_URL="$${DATABASE_URL:-postgres://$${POSTGRES_USER:-dawha}:$${POSTGRES_PASSWORD:-dawha_local}@localhost:55432/$${POSTGRES_DB:-dawha}}" \
 		DBSWEEP_REPORT="$(DBSWEEP_REPORT)" \
 		go run ./tools/dbsweep $(ARGS)
+
+
+.PHONY: name-pipeline-lexicon name-pipeline-evidence-status name-pipeline-evaluation-contract name-pipeline-evaluation-register
+name-pipeline-lexicon:
+	@cd services/core-api && go run ./cmd/name-pipeline lexicon $(NAME_PIPELINE_ARGS)
+name-pipeline-evidence-status:
+	@cd services/core-api && go run ./cmd/name-pipeline evidence-status $(NAME_PIPELINE_ARGS)
+name-pipeline-evaluation-contract:
+	@cd services/core-api && go run ./cmd/name-pipeline evaluation-contract $(NAME_PIPELINE_ARGS)
+name-pipeline-evaluation-register:
+	@cd services/core-api && go run ./cmd/name-pipeline evaluation-register $(NAME_PIPELINE_ARGS)

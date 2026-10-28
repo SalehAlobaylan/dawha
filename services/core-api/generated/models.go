@@ -1055,6 +1055,220 @@ type SourceFile struct {
 	DocumentKind       string
 }
 
+type SourceNameCandidatePreparation struct {
+	ID                pgtype.UUID
+	ExposureID        pgtype.UUID
+	SuggestionID      pgtype.UUID
+	Signature         string
+	Snapshot          []byte
+	Provenance        []byte
+	Versions          []byte
+	Eligible          bool
+	EligibilityReason string
+	CreatedAt         pgtype.Timestamptz
+}
+
+type SourceNameCropArtifact struct {
+	Fingerprint  string
+	SourceFileID pgtype.UUID
+	FrameID      pgtype.UUID
+	Descriptor   []byte
+	TightKey     string
+	ContextKey   string
+	ByteSize     int64
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	ID           pgtype.UUID
+}
+
+type SourceNameDecisionEvidence struct {
+	ID            pgtype.UUID
+	DecisionID    pgtype.UUID
+	ExposureID    pgtype.UUID
+	PreparationID pgtype.UUID
+	SchemaVersion string
+	GapReason     string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type SourceNameEvaluationGroup struct {
+	ID        pgtype.UUID
+	CreatedBy pgtype.UUID
+	GroupKey  string
+	Partition string
+	Contract  []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type SourceNameEvaluationMember struct {
+	ID           pgtype.UUID
+	SourceFileID pgtype.UUID
+	GroupID      pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+type SourceNameJudgeRequest struct {
+	ID            pgtype.UUID
+	PreparationID pgtype.UUID
+	Signature     string
+	Payload       []byte
+	Identity      []byte
+	JobID         pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type SourceNameJudgeResult struct {
+	ID        pgtype.UUID
+	RequestID pgtype.UUID
+	Signature string
+	Result    []byte
+	LatencyMs int32
+	CreatedAt pgtype.Timestamptz
+}
+
+type SourceNameLexiconRevision struct {
+	ID           pgtype.UUID
+	SourceFileID pgtype.UUID
+	Revision     string
+	Context      []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type SourceNameOccurrenceLineage struct {
+	ID        pgtype.UUID
+	ParentID  pgtype.UUID
+	ChildID   pgtype.UUID
+	Kind      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type SourceNamePageFrame struct {
+	ID              pgtype.UUID
+	SourceFileID    pgtype.UUID
+	SourceChecksum  string
+	PageNumber      int32
+	CoordinateSpace string
+	AnalysisDpi     int32
+	WidthPx         int32
+	HeightPx        int32
+	PageCount       int32
+	RendererVersion string
+	CreatedAt       pgtype.Timestamptz
+}
+
+type SourceNameReading struct {
+	ID                   pgtype.UUID
+	RunID                pgtype.UUID
+	UnitID               pgtype.UUID
+	SuggestionID         pgtype.UUID
+	ArtifactFingerprint  string
+	Attempt              int32
+	ReaderVersion        string
+	PreprocessingVersion string
+	Outcome              string
+	TextAr               string
+	Alternatives         []byte
+	Variants             []byte
+	Quality              []byte
+	MeasuredAgreement    float64
+	CreatedAt            pgtype.Timestamptz
+}
+
+type SourceNameReadingRun struct {
+	ID              pgtype.UUID
+	SourceFileID    pgtype.UUID
+	SourceID        pgtype.UUID
+	RequestedBy     pgtype.UUID
+	SourceChecksum  string
+	ConfigHash      string
+	Config          []byte
+	SuggestionID    pgtype.UUID
+	Status          string
+	Stage           string
+	JobID           pgtype.UUID
+	Generation      int32
+	CancelRequested bool
+	PageCount       int32
+	Detected        int32
+	Named           int32
+	Unreadable      int32
+	Unavailable     int32
+	CacheHits       int32
+	ErrorCode       string
+	Timings         []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	TargetGeometry  []byte
+}
+
+type SourceNameReadingUnit struct {
+	ID           pgtype.UUID
+	RunID        pgtype.UUID
+	UnitKey      string
+	Stage        string
+	FrameID      pgtype.UUID
+	SuggestionID pgtype.UUID
+	Payload      []byte
+	Status       string
+	ErrorCode    string
+	Attempts     int32
+	DurationMs   int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type SourceNameRegionRevision struct {
+	ID              pgtype.UUID
+	SuggestionID    pgtype.UUID
+	Revision        int32
+	PreviousRegion  []byte
+	Region          []byte
+	CoordinateSpace string
+	AnalysisDpi     int32
+	SourceChecksum  string
+	FrameWidth      int32
+	FrameHeight     int32
+	CreatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
+type SourceNameReviewBoundary struct {
+	ID          pgtype.UUID
+	InstalledAt pgtype.Timestamptz
+	Version     string
+}
+
+type SourceNameReviewEvent struct {
+	ID                 pgtype.UUID
+	SuggestionID       pgtype.UUID
+	ActorID            pgtype.UUID
+	EventType          string
+	Revision           int32
+	PreviousDecisionID pgtype.UUID
+	DecisionID         pgtype.UUID
+	GeometryRevisionID pgtype.UUID
+	Metadata           []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
+type SourceNameReviewExposure struct {
+	ID                pgtype.UUID
+	SuggestionID      pgtype.UUID
+	LexiconID         pgtype.UUID
+	Context           []byte
+	Eligible          bool
+	EligibilityReason string
+	CreatedAt         pgtype.Timestamptz
+	Deadline          pgtype.Timestamptz
+	SealedAt          pgtype.Timestamptz
+}
+
+type SourceNameUntrackedExposure struct {
+	ID           pgtype.UUID
+	SuggestionID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type SourcePageEvidence struct {
 	ID               pgtype.UUID
 	RunID            pgtype.UUID
@@ -1227,6 +1441,11 @@ type SourceTreeSuggestion struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	Alternatives         []byte
+	NameReadingRunID     pgtype.UUID
+	ReviewRevision       int32
+	GeometryRevision     int32
+	SupersededAt         pgtype.Timestamptz
+	SupersededByEventID  pgtype.UUID
 }
 
 type SourceTreeSuggestionDecision struct {
@@ -1245,6 +1464,9 @@ type SourceTreeSuggestionDecision struct {
 	NormalizerVersion    string
 	CandidatePoolVersion string
 	DurationMs           pgtype.Int4
+	ReviewRevision       int32
+	SupersedesDecisionID pgtype.UUID
+	GeometryRevision     pgtype.Int4
 }
 
 type SpatialEvidence struct {

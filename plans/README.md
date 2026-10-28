@@ -28,10 +28,10 @@ Generated from the read-only review of `IMPLEMENTATION_PLAN.md` at commit `a6397
 | 020 | Make an import resolve identity, and make it reach the research graph | P1 | L | 018 | IN PROGRESS (uncommitted: linking, candidates, graph rows, aliases, dry run, retraction — 9 acceptances) |
 | 021 | Put the machine's suggestions in the normal review screen | P1 | L | 019, 020 | IN PROGRESS (uncommitted: record, queue, source-crop workbench, stored alternatives, on-demand vision candidates, decision measurement; remaining: identity choices, relationship review, normal-draft fold-in, single-file gate) |
 | 022 | Make name candidates measurable, and use the local judge only where it earns its place | P2 | L | 019, 021 | IMPLEMENTED, measurement pending (uncommitted: multi-key normalizer, evidence-aware bounded ranking, candidate snapshot, transactional validation, one-retry evidence fallback, source/class/date/judge `make name-eval`, local Liquid `d1:3b` adapter/endpoint/flags, shadow/active paths and tests; local privacy approval recorded and separate active row enabled; remaining human measurement: shadow sample ≥300 across three classes, go/no-go, any model ordering or accuracy claim) |
-| 023 | Make reader availability explicit and keep evaluation versions separate | P1 | M | 019, 021, 022 implementation | TODO — local/hosted capability policy, truthful action states, diagnostics, bounded failure handling, version cohorts |
-| 024 | Prepare local name readings once and resume them as durable jobs | P1 | L | 023 | TODO — detection checkpoints, private crop reuse, source metadata, local crop reader/variants, prepare/resume/cancel tools |
-| 025 | Build complete file context and prepare shadow evidence before human input | P1 | L | 023, 024 | TODO — counted file lexicon, versioned candidate pools, separate initial/final evidence, frozen durable judge requests |
-| 026 | Give reviewers history, deferred work, and region-repair tools | P1/P2 | L | 023, 024; evaluation joins from 025 | TODO — reopen/revisions, deferred/history views, crop repair/local reread, split/merge lineage, isolated bench verification |
+| 023 | Make reader availability explicit and keep evaluation versions separate | P1 | M | 019, 021, 022 implementation | DONE — explicit reader policy/capabilities, disabled action states, bounded retries, doctor, version cohorts and guarded isolated verification; 111 original actions preserved |
+| 024 | Prepare local name readings once and resume them as durable jobs | P1 | L | 023 | DONE — fenced durable runs, private crop reuse, bounded local OCR variants, browser/operator controls; six-crop development benchmark and isolated acceptance passed; 111 human actions preserved |
+| 025 | Build complete file context and prepare shadow evidence before human input | P1 | L | 023, 024 | DONE — counted lexicon, frozen initial/visible evidence, durable local shadow judging, versioned cohorts and development/held-out registration; 111 original actions preserved |
+| 026 | Give reviewers history, deferred work, and region-repair tools | P1/P2 | L | 023, 024; evaluation joins from 025 | DONE — append-only reopen/revisions, deferred/history queue views, immutable region repair with local reread, split/merge lineage and superseded exclusion, first/latest truth policy, guarded browser verification |
 
 Status values: `TODO | IN PROGRESS | DONE | BLOCKED | REJECTED`.
 
@@ -66,8 +66,8 @@ reopening and rectangle adjustment before split/merge. Existing Plan 019 owns th
 reader intent and Plan 021 owns human review; these stages finish their missing
 operational paths rather than replacing their provenance rules.
 
-The implementation is still TODO. This audit covered the name-reading, candidate,
-shadow-evidence, and review-tool paths. It did not audit unrelated application
+Plans 023–026 are complete. This audit covered the name-reading, candidate,
+shadow-evidence, review-tool, and repair paths. It did not audit unrelated application
 features, database query plans, dependency advisories, or external model quality.
 
 ### Vetted pipeline findings

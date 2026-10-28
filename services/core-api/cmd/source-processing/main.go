@@ -57,10 +57,15 @@ func main() {
 	jobService.HeartbeatInterval = durationEnvironment("SOURCE_WORKER_HEARTBEAT_INTERVAL", jobs.DefaultHeartbeatInterval)
 	jobService.LeaseDuration = durationEnvironment("SOURCE_WORKER_LEASE_DURATION", jobs.DefaultLeaseDuration)
 	processor := sourceprocessing.NewService(pool, store, jobService, provider, sourceprocessing.NewPDFExtractor())
+	processor.ReaderSettings = sourceprocessing.ReadingSettingsFromEnvironment(os.Getenv)
+	processor.LocalCropReader = sourceprocessing.NewLocalCropReader()
+	processor.NameJudge = sourceprocessing.NewHTTPNameJudgeProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 	processor.ChartVision = sourceprocessing.NewHTTPChartVisionProvider(environmentValue("AI_RESEARCH_URL", "http://localhost:8000"))
 	workerID := environmentValue("SOURCE_WORKER_ID", "source-worker-"+uuid.NewString())
 	pollInterval := durationEnvironment("SOURCE_WORKER_POLL_INTERVAL", 2*time.Second)
 	go chartAnalysisWorker(ctx, jobService, processor, workerID+"-chart", pollInterval, metrics)
+	go nameReadingWorker(ctx, jobService, processor, workerID+"-names", pollInterval, metrics)
+	go frozenNameJudgeWorker(ctx, jobService, processor, workerID+"-judge", pollInterval, metrics)
 	log.Printf("source processing worker started: %s (lease %s, heartbeat %s)", workerID, jobService.LeaseDuration, jobService.HeartbeatInterval)
 	lastRecovery := time.Now()
 	for {
@@ -239,5 +244,101 @@ func sleepContext(ctx context.Context, duration time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+// Name preparation owns its own recovery scope and checkpoints. A browser
+// disconnect is unrelated to this worker's durable lease.
+func nameReadingWorker(ctx context.Context, queue *jobs.Service, processor *sourceprocessing.Service, workerID string, pollInterval time.Duration, metrics *telemetry.Metrics) {
+	lastRecovery := time.Time{}
+	lastPrune := time.Time{}
+	for ctx.Err() == nil {
+		if time.Since(lastPrune) > time.Minute {
+			maintenance, stop := context.WithTimeout(ctx, 2*time.Second)
+			_, _ = processor.PruneNameArtifacts(maintenance)
+			stop()
+			lastPrune = time.Now()
+		}
+		if time.Since(lastRecovery) > 15*time.Second {
+			expiry := queue.LeaseDuration
+			if expiry <= 0 {
+				expiry = jobs.DefaultLeaseDuration
+			}
+			recovered, err := queue.RecoverStaleOfType(ctx, expiry, sourceprocessing.SourceNameReadingJobType)
+			if err == nil {
+				err = processor.RequeueNameReadingJobs(ctx, recovered.Jobs)
+			}
+			if err != nil {
+				log.Print("name preparation recovery unavailable")
+			}
+			lastRecovery = time.Now()
+		}
+		job, err := queue.Claim(ctx, jobs.ClaimInput{WorkerID: workerID, Type: sourceprocessing.SourceNameReadingJobType})
+		if errors.Is(err, jobs.ErrNotFound) {
+			if !sleepContext(ctx, pollInterval) {
+				return
+			}
+			continue
+		}
+		if err != nil {
+			if !sleepContext(ctx, pollInterval) {
+				return
+			}
+			continue
+		}
+		started := time.Now()
+		claim := sourceprocessing.Claim{Job: job, Lease: job.Lease(workerID)}
+		err = processor.ProcessNameReading(ctx, claim)
+		if errors.Is(err, jobs.ErrLeaseLost) || errors.Is(err, jobs.ErrForbidden) {
+			metrics.QueueJob(telemetry.JobNameReading, telemetry.JobAbandoned, time.Since(started))
+			continue
+		}
+		finishCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		if err != nil {
+			_, _ = queue.Fail(finishCtx, job.ID, jobs.FailInput{WorkerID: workerID, LeaseToken: claim.Lease.Token, Error: "local name preparation failed"})
+			metrics.QueueJob(telemetry.JobNameReading, telemetry.JobFailed, time.Since(started))
+		} else {
+			_, _ = queue.Complete(finishCtx, job.ID, jobs.CompleteInput{WorkerID: workerID, LeaseToken: claim.Lease.Token})
+			metrics.QueueJob(telemetry.JobNameReading, telemetry.JobCompleted, time.Since(started))
+		}
+		stop()
+	}
+}
+
+// One local judge worker bounds concurrent inference independently of browser
+// navigation. Recovery uses only this job type; payloads never appear in logs.
+func frozenNameJudgeWorker(ctx context.Context, queue *jobs.Service, processor *sourceprocessing.Service, workerID string, poll time.Duration, metrics *telemetry.Metrics) {
+	recoveredAt := time.Time{}
+	for ctx.Err() == nil {
+		if time.Since(recoveredAt) > 15*time.Second {
+			expiry := queue.LeaseDuration
+			if expiry <= 0 {
+				expiry = jobs.DefaultLeaseDuration
+			}
+			_, _ = queue.RecoverStaleOfType(ctx, expiry, sourceprocessing.SourceFrozenNameJudgeJobType)
+			recoveredAt = time.Now()
+		}
+		job, err := queue.Claim(ctx, jobs.ClaimInput{WorkerID: workerID, Type: sourceprocessing.SourceFrozenNameJudgeJobType})
+		if err != nil {
+			if !sleepContext(ctx, poll) {
+				return
+			}
+			continue
+		}
+		started := time.Now()
+		claim := sourceprocessing.Claim{Job: job, Lease: job.Lease(workerID)}
+		err = processor.ProcessFrozenNameJudge(ctx, claim)
+		if errors.Is(err, jobs.ErrLeaseLost) || errors.Is(err, jobs.ErrForbidden) {
+			continue
+		}
+		finish, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		if err != nil {
+			_, _ = queue.Fail(finish, job.ID, jobs.FailInput{WorkerID: workerID, LeaseToken: claim.Lease.Token, Error: "frozen local judge unavailable"})
+			metrics.QueueJob(telemetry.JobFrozenNameJudge, telemetry.JobFailed, time.Since(started))
+		} else {
+			_, _ = queue.Complete(finish, job.ID, jobs.CompleteInput{WorkerID: workerID, LeaseToken: claim.Lease.Token})
+			metrics.QueueJob(telemetry.JobFrozenNameJudge, telemetry.JobCompleted, time.Since(started))
+		}
+		stop()
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The carrier reader turns "where the names are" into "what the names are".
@@ -362,44 +363,68 @@ func ReadCarriers(ctx context.Context, provider ChartVisionProvider, page image.
 // response that does not validate - a name it read as "readable" with no text, for
 // instance. Without the fallback, one unreadable crop out of a page would lose every
 // other name on that page.
+// Only transport failures share a two-attempt budget. Permanent failures never
+// fan out, and a validation failure can isolate a crop without hiding an outage.
+func readBatchWithRetry(ctx context.Context, provider ChartVisionProvider, inputs []ChartCropInput) ([]ChartNameReading, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := provider.ReadBatch(ctx, inputs)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err == nil {
+			return batch, nil
+		}
+		if !errors.Is(err, ErrChartVisionUnavailable) || errors.Is(err, ErrChartVisionSetup) || attempt == 1 {
+			return nil, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, ErrChartVisionUnavailable
+}
+
+func cropValidationFailure(err error) bool {
+	return errors.Is(err, ErrChartVisionOutputInvalid) || errors.Is(err, ErrChartVisionTruncated)
+}
+
 func readInBatches(ctx context.Context, provider ChartVisionProvider, inputs []ChartCropInput) ([]ChartNameReading, error) {
 	readings := make([]ChartNameReading, 0, len(inputs))
 	for start := 0; start < len(inputs); start += chartMaxReadBatchImages {
-		end := start + chartMaxReadBatchImages
-		if end > len(inputs) {
-			end = len(inputs)
-		}
-		batch, err := provider.ReadBatch(ctx, inputs[start:end])
+		end := minInt(start+chartMaxReadBatchImages, len(inputs))
+		batch, err := readBatchWithRetry(ctx, provider, inputs[start:end])
 		if err == nil {
 			readings = append(readings, batch...)
 			continue
 		}
-		// The batch was refused. Read the crops one at a time, and keep the
-		// ones that work. A crop that cannot be read is reported as
-		// unreadable, not lost.
-		//
-		// If NOT ONE of them can be read, the provider is the problem rather
-		// than the crops, and the failure is returned: a provider that is
-		// unreachable must not look like a page of unreadable names.
+		if !cropValidationFailure(err) || end-start == 1 {
+			return nil, err
+		}
 		succeeded := 0
-		var lastErr error
+		lastErr := err
 		for _, input := range inputs[start:end] {
-			single, singleErr := provider.ReadBatch(ctx, []ChartCropInput{input})
+			single, singleErr := readBatchWithRetry(ctx, provider, []ChartCropInput{input})
+			if singleErr != nil && !cropValidationFailure(singleErr) {
+				return nil, singleErr
+			}
 			if singleErr != nil || len(single) == 0 {
 				if singleErr != nil {
 					lastErr = singleErr
 				}
-				readings = append(readings, ChartNameReading{
-					OccurrenceID: input.OccurrenceID,
-					Status:       "unreadable",
-					TextAR:       "",
-				})
+				readings = append(readings, ChartNameReading{OccurrenceID: input.OccurrenceID, Status: "unreadable"})
 				continue
 			}
 			succeeded++
 			readings = append(readings, single...)
 		}
-		if succeeded == 0 && lastErr != nil {
+		if succeeded == 0 {
 			return nil, lastErr
 		}
 	}

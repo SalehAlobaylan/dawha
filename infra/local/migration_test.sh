@@ -124,7 +124,11 @@ migrate_status() {
 migration_count="$(ls "$migrations"/*.sql | wc -l | tr -d ' ')"
 first_checksum="$(checksum_of "$migrations/0001_extensions.sql")"
 
-docker compose up -d db >/dev/null
+# The name-pipeline guard validates an already-running shared service. A test
+# database name must not reconfigure/restart its container during verification.
+if [ -z "${PIPELINE_TEST_DB_NAME:-}" ] || [ "${POSTGRES_DB:-}" != "$PIPELINE_TEST_DB_NAME" ]; then
+  docker compose up -d db >/dev/null
+fi
 attempt=0
 # `up -d` returns before PostgreSQL accepts connections, and this script's very
 # next statement is a connection. The runner waits for readiness for its own

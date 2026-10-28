@@ -15,6 +15,7 @@ from app.name_judge import (
     JevNameJudge,
     JudgeCandidate,
     JudgeCrop,
+    JudgeIdentity,
     JudgeRequest,
     JudgeResponse,
     JudgeState,
@@ -598,6 +599,88 @@ def test_the_route_rejects_an_image_when_image_mode_is_off() -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "name_judge_image_mode_disabled"
+
+
+@pytest.mark.parametrize("provider", ["liquid", "jev"])
+def test_frozen_identity_is_checked_before_provider_io_or_cache(provider: str) -> None:
+    observed: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(request.content))
+        return liquid_response() if provider == "liquid" else provider_response()
+
+    adapter = (
+        LiquidNameJudge(
+            base_url="http://127.0.0.1:11434/v1/systemone",
+            model="d1:3b",
+            transport=httpx.MockTransport(handler),
+        )
+        if provider == "liquid"
+        else JevNameJudge(
+            api_key="fixture-key",
+            base_url="https://fixture.invalid/chat/completions",
+            model="jev-pinned",
+            transport=httpx.MockTransport(handler),
+        )
+    )
+    app = FastAPI()
+    app.include_router(create_name_judge_router(adapter))
+    client = TestClient(app)
+    payload = judge_request().model_dump(mode="json")
+    payload["expected_identity"] = adapter.identity.model_dump()
+
+    for field, replacement in (
+        ("provider", "jev" if provider == "liquid" else "liquid"),
+        ("model", "different-model"),
+        ("prompt", "different-prompt"),
+    ):
+        mismatched = {
+            **payload,
+            "expected_identity": {**payload["expected_identity"], field: replacement},
+        }
+        assert client.post("/v1/names/judge", json=mismatched).status_code == 409
+        assert observed == []
+
+    response = client.post("/v1/names/judge", json=payload)
+    assert response.status_code == 200
+    assert response.json()["provider"] == provider
+    assert len(observed) == 1
+    assert "expected_identity" not in json.dumps(observed)
+
+    # A cached response cannot bypass a mismatched precondition either.
+    payload["expected_identity"]["model"] = "different-model"
+    assert client.post("/v1/names/judge", json=payload).status_code == 409
+    assert len(observed) == 1
+
+
+def test_frozen_request_rejects_unknown_adapter_identity_without_calling_it() -> None:
+    class UnknownJudge:
+        async def judge(self, request: JudgeRequest) -> JudgeResponse:
+            raise AssertionError("unknown adapter must not receive frozen input")
+
+    app = FastAPI()
+    app.include_router(create_name_judge_router(UnknownJudge()))
+    payload = judge_request().model_dump(mode="json")
+    payload["expected_identity"] = JudgeIdentity(
+        provider="liquid", model="d1:3b", prompt=LIQUID_PROMPT_VERSION,
+    ).model_dump()
+    assert TestClient(app).post("/v1/names/judge", json=payload).status_code == 409
+
+
+@pytest.mark.parametrize("identity", [
+    {"provider": "liquid", "model": "d1:3b"},
+    {"provider": "other", "model": "d1:3b", "prompt": LIQUID_PROMPT_VERSION},
+    {"provider": "liquid", "model": "", "prompt": LIQUID_PROMPT_VERSION},
+    {
+        "provider": "liquid", "model": "d1:3b", "prompt": LIQUID_PROMPT_VERSION,
+        "source_id": "forbidden",
+    },
+])
+def test_frozen_identity_must_be_complete_and_bounded(identity: dict[str, str]) -> None:
+    payload = judge_request().model_dump(mode="json")
+    payload["expected_identity"] = identity
+    with pytest.raises(ValidationError):
+        JudgeRequest.model_validate(payload)
 
 
 def test_the_route_validates_a_provider_choice_independently() -> None:

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { Client } from "pg";
 
@@ -15,6 +16,61 @@ import { Client } from "pg";
 
 export const API_URL = process.env.VITE_API_URL ?? `http://localhost:${process.env.CORE_API_PORT ?? 8181}`;
 export const WEB_ORIGIN = `http://localhost:${process.env.WEB_E2E_PORT ?? 4173}`;
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function crc32(data: Buffer): number {
+  let value = 0xffffffff;
+  for (const byte of data) value = CRC_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const name = Buffer.from(type, "ascii");
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([name, data])));
+  return Buffer.concat([length, name, data, checksum]);
+}
+
+/**
+ * A large enough synthetic chart for the real source-space crop/repair path.
+ * It contains one dark rectangle so the renderer and local quality checks have
+ * pixels to measure; it is not a claim about any name and never becomes truth.
+ */
+export function syntheticSourcePNG(width = 600, height = 400): Buffer {
+  const stride = width * 3 + 1;
+  const raw = Buffer.alloc(stride * height, 245);
+  for (let y = 0; y < height; y += 1) raw[y * stride] = 0;
+  for (let y = 150; y < 190; y += 1) {
+    for (let x = 200; x < 300; x += 1) {
+      const offset = y * stride + 1 + x * 3;
+      raw[offset] = 30;
+      raw[offset + 1] = 25;
+      raw[offset + 2] = 20;
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 export interface Account {
   email: string;
@@ -148,6 +204,27 @@ export async function readRows<T = Record<string, unknown>>(sql: string, values:
   try {
     const result = await client.query(sql, values);
     return result.rows as T[];
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Writes fixture rows that the browser suite owns. It is the same narrow seam as
+ * readRows: the name bench has no public "create a machine reading" route, and
+ * inventing one for a test would add a production surface. Callers must scope
+ * every statement to the synthetic account/source they just created.
+ */
+export async function executeSql(sql: string, values: unknown[] = []): Promise<number> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("executeSql needs DATABASE_URL, which playwright.config.ts already requires");
+  }
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const result = await client.query(sql, values);
+    return result.rowCount ?? 0;
   } finally {
     await client.end();
   }

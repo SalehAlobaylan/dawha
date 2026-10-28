@@ -105,10 +105,11 @@ type JudgeState struct {
 // NameJudgeRequest is the internal request to a judge adapter. ImagePNG is
 // never serialized into an error or log by this package.
 type NameJudgeRequest struct {
-	State      JudgeState
-	Candidates []JudgeCandidate
-	Mode       string
-	ImagePNG   []byte
+	State            JudgeState
+	Candidates       []JudgeCandidate
+	Mode             string
+	ImagePNG         []byte
+	ExpectedIdentity *FrozenJudgeIdentity
 }
 
 // NameJudgeResult is the mapped response the core API returns to the browser.
@@ -130,10 +131,11 @@ type NameJudge interface {
 }
 
 type nameJudgeAIRequest struct {
-	State       JudgeState       `json:"state"`
-	Candidates  []JudgeCandidate `json:"candidates"`
-	Mode        string           `json:"mode"`
-	ImageBase64 string           `json:"image_base64,omitempty"`
+	State            JudgeState           `json:"state"`
+	Candidates       []JudgeCandidate     `json:"candidates"`
+	Mode             string               `json:"mode"`
+	ImageBase64      string               `json:"image_base64,omitempty"`
+	ExpectedIdentity *FrozenJudgeIdentity `json:"expected_identity,omitempty"`
 }
 
 type nameJudgeAIResponse struct {
@@ -182,9 +184,10 @@ func (c *nameJudgeHTTPClient) Judge(ctx context.Context, request NameJudgeReques
 		request.State.FileContext = []string{}
 	}
 	payload := nameJudgeAIRequest{
-		State:      request.State,
-		Candidates: request.Candidates,
-		Mode:       request.Mode,
+		State:            request.State,
+		Candidates:       request.Candidates,
+		Mode:             request.Mode,
+		ExpectedIdentity: request.ExpectedIdentity,
 	}
 	if len(request.ImagePNG) > 0 {
 		payload.ImageBase64 = base64.StdEncoding.EncodeToString(request.ImagePNG)
@@ -373,16 +376,15 @@ func (s *Service) JudgeSuggestion(ctx context.Context, suggestionID, actorID str
 	if err := validateJudgeCandidates(candidates); err != nil {
 		return NameJudgeResult{}, err
 	}
-	source, err := s.loadSuggestionSource(ctx, suggestionID, actorID)
+	source, err := s.loadSuggestionContext(ctx, suggestionID, actorID, false)
 	if err != nil {
 		return NameJudgeResult{}, err
 	}
-	chartPage, err := source.extractor.OpenChartPageForAnalysis(ctx, source.content, source.pageNumber)
+	frame, err := s.ensureNameFrame(ctx, source, nil)
 	if err != nil {
 		return NameJudgeResult{}, err
 	}
-	defer chartPage.Close()
-	tightBounds, err := suggestionCropBounds(source.region, chartPage.Width, chartPage.Height, "tight")
+	tightBounds, err := suggestionCropBounds(source.region, frame.Width, frame.Height, "tight")
 	if err != nil {
 		return NameJudgeResult{}, err
 	}
@@ -398,21 +400,21 @@ func (s *Service) JudgeSuggestion(ctx context.Context, suggestionID, actorID str
 			Crop: JudgeCrop{
 				WidthPx:        tightBounds.Width,
 				HeightPx:       tightBounds.Height,
-				SourceWidthPx:  chartPage.Width,
-				SourceHeightPx: chartPage.Height,
-				NameHeightPx:   int(math.Round(source.region.Height * float64(chartPage.Height))),
+				SourceWidthPx:  frame.Width,
+				SourceHeightPx: frame.Height,
+				NameHeightPx:   int(math.Round(source.region.Height * float64(frame.Height))),
 			},
 		},
 		Candidates: candidates,
 		Mode:       settings.Mode,
 	}
 	if settings.ImageEnabled {
-		// Image mode is experimental. A crop that cannot be rendered falls back
-		// to text-only instead of turning the judge into a hard dependency.
-		if tight, renderErr := chartPage.RenderRegion(ctx, tightBounds); renderErr == nil && len(tight) <= maxJudgeImageBytes {
-			request.ImagePNG = tight
+		// Source authorization happened before cache lookup. Images remain opt-in.
+		if artifact, cropErr := s.prepareNameCrop(ctx, source, nil, nil); cropErr == nil && len(artifact.Crop.TightPNG) <= maxJudgeImageBytes {
+			request.ImagePNG = artifact.Crop.TightPNG
 		}
 	}
+
 	result, err := s.NameJudge.Judge(ctx, request)
 	if err != nil {
 		return NameJudgeResult{}, err

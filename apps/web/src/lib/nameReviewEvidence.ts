@@ -1,5 +1,5 @@
-import type { SourceTreeSuggestionCandidateSnapshot } from "../types";
-import { arabicNameKeys, rankArabicNames, type RankedNameCandidate } from "./arabicNames";
+import type { NamePreparationContext, SourceTreeSuggestionCandidateSnapshot } from "../types";
+import { arabicNameKeys, rankArabicNames, type RankedNameCandidate, type NameCandidateGroups } from "./arabicNames";
 
 // The decision snapshot is what the reviewer actually saw, not the full internal
 // candidate pool. Twelve entries is enough for the ranked chips plus the
@@ -12,7 +12,7 @@ export const MAX_CANDIDATE_SNAPSHOT = 12;
 export function buildShadowCandidateSnapshot(
   reading: string,
   alternatives: string[],
-  fileNames: string[],
+  fileNames: NameCandidateGroups["file"],
 ): SourceTreeSuggestionCandidateSnapshot[] {
   return buildCandidateSnapshot(rankArabicNames(reading, {
     reader: [reading, ...alternatives].filter((name) => name.trim() !== ""),
@@ -99,4 +99,22 @@ export function buildCandidateSnapshot(
   }
 
   return out;
+}
+
+
+// This function receives only the immutable server context. It cannot consume
+// the editor draft. The ranker remains the same implementation used by chips.
+export function buildPreparedCandidateSnapshot(context: NamePreparationContext): SourceTreeSuggestionCandidateSnapshot[] {
+  const reader = context.readers.map((entry) => entry.value);
+  const snapshot = buildCandidateSnapshot(rankArabicNames(context.reading, { reader, file: context.lexicon.entries }, 8));
+  const seen = new Set(snapshot.map((item) => item.compactKey));
+  for (let index = 0; index < reader.length && snapshot.length < MAX_CANDIDATE_SNAPSHOT; index++) {
+    const keys = arabicNameKeys(reader[index]);
+    if (!keys.canonical || seen.has(keys.compact)) continue;
+    seen.add(keys.compact);
+    snapshot.push({ value: keys.display, key: keys.canonical, compactKey: keys.compact, particleKey: keys.particle,
+      skeletonKey: keys.skeleton, sources: ["reader"], ranks: { reader: index + 1 }, score: 0,
+      fileCount: 0, shown: false, position: 0 });
+  }
+  return snapshot;
 }

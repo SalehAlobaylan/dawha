@@ -74,7 +74,8 @@ func TestNameJudgeClientSendsTheBoundedStateAndMapsTheResult(t *testing.T) {
 			{Value: "محمد", Source: "reader", Rank: 1},
 			{Value: "أحمد", Source: "common", Rank: 2},
 		},
-		Mode: "shadow",
+		Mode:             "shadow",
+		ExpectedIdentity: &FrozenJudgeIdentity{Provider: "jev", Model: "jev-pinned", Prompt: "name-judge-v1"},
 	})
 	if err != nil {
 		t.Fatalf("judge: %v", err)
@@ -91,6 +92,10 @@ func TestNameJudgeClientSendsTheBoundedStateAndMapsTheResult(t *testing.T) {
 	}
 	if _, ok := received["image_base64"]; ok {
 		t.Fatal("a text-only judge request included an image")
+	}
+	identity, ok := received["expected_identity"].(map[string]any)
+	if !ok || identity["provider"] != "jev" || identity["model"] != "jev-pinned" || identity["prompt"] != "name-judge-v1" {
+		t.Fatalf("adapter precondition missing from internal request: %#v", received["expected_identity"])
 	}
 	encoded, _ := json.Marshal(received)
 	for _, forbidden := range []string{"source_id", "sourceId", "family_id", "familyId", "account_id", "reviewer_id", "page_image"} {

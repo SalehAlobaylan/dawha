@@ -294,6 +294,7 @@ the file to copy to `.env`.
 | `NAME_JUDGE_PROVIDER`, `NAME_JUDGE_MODE`, `NAME_JUDGE_SAMPLE`, `NAME_JUDGE_IMAGES` | the API and AI service | the optional name-judge posture. The code default is off; `.env.example` sets the local Liquid provider and active mode. Shadow sampling is deterministic; image mode sends only the opt-in tight crop. The active row is an opinion, not an acceptance or ranking change |
 | `LIQUID_BASE_URL`, `LIQUID_MODEL`, `LIQUID_PROMPT_VERSION`, `LIQUID_API_KEY` | the AI service | the local System One endpoint, pinned model, pinned prompt, and optional key for a protected proxy. `LIQUID_API_KEY` is never required for local inference and no key belongs in this repository |
 | `JEV_API_KEY`, `JEV_BASE_URL`, `JEV_MODEL`, `JEV_PROMPT_VERSION` | the AI service | the optional hosted provider, selected only with `NAME_JUDGE_PROVIDER=jev`: credential, exact OpenAI-compatible chat-completions URL, pinned model, and pinned prompt. Unset means the judge answers 503 and the bench still works |
+| `NAME_READER_MODE`, `CHART_VISION_ENABLED` | the API and AI service | `local` (default), `off`, or `hosted`; hosted requires the separate explicit enable flag (default false) and source approval. Local crop reading uses installed Arabic Tesseract data; PDF work also needs Poppler. |
 | `SOURCE_STORAGE_DIR` | the API, the workers | the local storage driver's directory |
 | `PDFINFO_BINARY`, `PDFTOTEXT_BINARY`, `PDFTOPPM_BINARY`, `TESSERACT_BINARY`, `TESSDATA_PREFIX` | the source-processing worker | optional local PDF/OCR executable paths and Tesseract data directory; defaults use `PATH` and the system data location |
 | `SOURCE_WORKER_POLL_INTERVAL`, `ANALYSIS_WORKER_POLL_INTERVAL` | the workers | how often a worker looks for a job |
@@ -366,3 +367,66 @@ plans/                    the remediation plans and their status
   [docs/storage-backends.md](docs/storage-backends.md) is the record, and it says in
   its own words which R2 behaviours that run says nothing about - no R2 bucket has
   ever been contacted. "The storage tests are green" is a sentence about MinIO.
+
+### Name pipeline diagnostics and isolated verification
+
+`make name-pipeline-doctor` runs bounded metadata probes and reports tool versions,
+Arabic OCR data, reader policy, algorithm versions, and aggregate review-evidence
+gaps. It does not open charts or call model inference. The command exits 0 when local prerequisites are ready, 2 for missing tools or
+Arabic data, or 3 if a required AI service is unreachable. A configured text judge is separate from image-reading readiness.
+
+Hosted reading is disabled by default. Both services require
+`NAME_READER_MODE=hosted` and `CHART_VISION_ENABLED=true`; the on-demand image
+endpoint also requires the source-side boolean metadata fact
+`hostedChartVisionApproved=true`. This stage does not approve any private source
+or provide an approval UI. Disabled hosted reading never discovers Keychain or
+environment credentials. Reader status is source-authorized at
+`GET /api/v1/source-files/{fileID}/reading-capabilities`.
+
+With the local database service already running, explicitly create a dedicated local
+database ending in `_pipeline_test` and export `PIPELINE_TEST_DB_NAME` plus a
+matching `PIPELINE_TEST_DATABASE_URL` without query/fragment overrides. Set
+`PIPELINE_TEST_STORAGE_DIR` to a fresh `mktemp -d` directory whose name starts
+with `dawha-pipeline-test.`. Then run:
+
+```sh
+make name-pipeline-db-verify NAME_PIPELINE_TEST_GATE=verify-full
+# Or: NAME_PIPELINE_TEST_GATE=e2e; default packages uses tools/dbtestguard.
+# Or run both the full gate and the browser bench in one command:
+make name-pipeline-verify
+```
+
+The guard derives connection/storage variables, clears inherited connection
+and provider settings, verifies the URL matches the running Compose port, and refuses the review database and normal source storage.
+It never creates/drops the operator-named database or restarts the shared database service. The full gate migrates/seeds the approved
+scratch database before testing; marked test storage can be reused for another
+gate. Go packages run sequentially because some existing contracts compare
+whole-table counts across separate statements. `NAME_PIPELINE_TEST_PACKAGES` accepts local Go package paths only.
+`make name-pipeline-verify` revalidates the same environment for both gates, so
+it refuses the review database and normal source storage before migrations,
+fixtures, or browser cleanup can write.
+
+`make name-eval NAME_EVAL_ARGS="--json --pool-version ar-name-pool-v1"` selects
+saved evidence. Additional selectors are `--reader-version`, `--judge-model`,
+and `--prompt-version`; `legacy` explicitly selects missing metadata. Reports
+show each version cohort separately, and a combined mixed-version report cannot
+pass the adoption gate. The class-map requirement and 100/300 sample floors remain.
+Reopened occurrences are counted once: `--truth-policy first` keeps the original
+first-human-decision cohort, while `--truth-policy latest --cutoff <RFC3339>`
+selects the latest revision inside a pinned window. Superseded split/merge
+parents are reported separately and never counted beside their descendants.
+
+The complete local reading path is documented in
+[Local name preparation](docs/local-name-reading-pipeline.md). The source panel
+queues work promptly, displays saved-stage counts, and provides resume/cancel.
+The name bench can request a local reread and compare saved variant texts without
+changing the draft. Crops are private cached artifacts; text-only judging uses
+saved source-space measurements without reopening the original.
+
+
+The name workbench now uses complete counted file context and a frozen initial
+candidate preparation before editing. Shadow judging runs durably in the
+background and does not delay a human save. Operator registration and evaluation
+cohort rules are documented in
+[Name review preparation](docs/name-review-preparation.md). The original pilot
+is development data; held-out measurement is still pending.

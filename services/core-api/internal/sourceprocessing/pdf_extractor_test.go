@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChartPDFPageRendersDirectSourceRegionsWithoutScaleTo(t *testing.T) {
@@ -48,6 +49,62 @@ cp '`+pngPath+`' "${18}.png"`)
 	}
 	if strings.Contains(string(arguments), "-scale-to") || !strings.Contains(string(arguments), "-x 0 -y 0 -W 1 -H 1") {
 		t.Fatalf("Poppler did not render an exact source-space tile: %s", arguments)
+	}
+}
+
+func TestChartPDFPageRemovesTemporaryRendersBeforePageClose(t *testing.T) {
+	for _, outcome := range []string{"success", "invalid PNG", "command failure", "cancellation"} {
+		t.Run(outcome, func(t *testing.T) {
+			dir := t.TempDir()
+			var encoded bytes.Buffer
+			if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+				t.Fatal(err)
+			}
+			fixture := filepath.Join(dir, "fixture.png")
+			if err := os.WriteFile(fixture, encoded.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := `cp '` + fixture + `' "${18}.png"`
+			switch outcome {
+			case "invalid PNG":
+				script = `printf broken > "${18}.png"`
+			case "command failure":
+				script += "\nexit 1"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if outcome == "cancellation" {
+				script = `cp '` + fixture + `' "${18}.png"` + "\nwhile :; do :; done"
+			}
+			tool := writeTool(t, dir, "pdftoppm", script)
+			page := &ChartPDFPage{TempDir: dir, PDFPath: "fixture.pdf", PDFToPPM: tool, Width: 2, Height: 1, PageNumber: 1, DPI: 240}
+			defer page.Close()
+			if outcome == "cancellation" {
+				go func() {
+					for ctx.Err() == nil {
+						files, _ := filepath.Glob(filepath.Join(dir, "region-*.png"))
+						if len(files) != 0 {
+							cancel()
+							return
+						}
+						time.Sleep(time.Millisecond)
+					}
+				}()
+			}
+			for x := 0; x < 2; x++ {
+				data, err := page.RenderRegion(ctx, ChartTileBounds{X: x, Width: 1, Height: 1})
+				if outcome == "success" && (err != nil || !bytes.Equal(data, encoded.Bytes())) {
+					t.Fatalf("render lost bytes: %v", err)
+				}
+				if outcome != "success" && err == nil {
+					t.Fatal("invalid render succeeded")
+				}
+				files, _ := filepath.Glob(filepath.Join(dir, "region-*.png"))
+				if len(files) != 0 {
+					t.Fatalf("temporary crop retained before page close: %v", files)
+				}
+			}
+		})
 	}
 }
 

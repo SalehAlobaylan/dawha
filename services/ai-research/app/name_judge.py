@@ -135,6 +135,14 @@ class JudgeCandidate(BaseModel):
         return _bound_name(value, require_arabic=True)
 
 
+class JudgeIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: JudgeProvider
+    model: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=100)
+
+
 class JudgeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -145,6 +153,7 @@ class JudgeRequest(BaseModel):
     )
     mode: Literal["shadow", "active"]
     image_base64: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    expected_identity: JudgeIdentity | None = None
 
     @field_validator("image_base64")
     @classmethod
@@ -202,6 +211,10 @@ class _ProviderJudgement(BaseModel):
 
 
 class NameJudge(Protocol):
+    @property
+    def identity(self) -> JudgeIdentity:
+        ...
+
     async def judge(self, request: JudgeRequest) -> JudgeResponse:
         ...
 
@@ -415,6 +428,10 @@ class JevNameJudge(_CacheMixin):
         self.timeout = timeout
         self._init_cache(cache_ttl, cache_size)
 
+    @property
+    def identity(self) -> JudgeIdentity:
+        return JudgeIdentity(provider="jev", model=self.model, prompt=self.prompt_version)
+
     def _configuration_error(self) -> HTTPException | None:
         if not self.api_key:
             return HTTPException(
@@ -596,6 +613,10 @@ class LiquidNameJudge(_CacheMixin):
         self.transport = transport
         self.timeout = timeout
         self._init_cache(cache_ttl, cache_size)
+
+    @property
+    def identity(self) -> JudgeIdentity:
+        return JudgeIdentity(provider="liquid", model=self.model, prompt=self.prompt_version)
 
     def _configuration_error(self) -> HTTPException | None:
         if not self.base_url:
@@ -798,6 +819,12 @@ def create_name_judge_router(
         if request.image_base64 and not images_enabled:
             raise HTTPException(status_code=422, detail="name_judge_image_mode_disabled")
         try:
+            # Compare the captured adapter, not environment/probe metadata. The
+            # precondition is internal and never enters either provider payload.
+            if request.expected_identity is not None and (
+                getattr(model, "identity", None) != request.expected_identity
+            ):
+                raise HTTPException(status_code=409, detail="name_judge_identity_mismatch")
             result = await model.judge(request)
         except HTTPException:
             raise

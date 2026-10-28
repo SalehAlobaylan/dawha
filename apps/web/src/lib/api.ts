@@ -1,3 +1,4 @@
+import type { SourceTreeSuggestionCandidateSnapshot, NameLexicon, NamePreparationContext, NameCandidatePreparation } from "../types";
 import { demoDashboard, treeNodes } from "../data/demo";
 import type {
   AddEvidenceInput,
@@ -122,7 +123,18 @@ import type {
   SourceTreeSuggestionDecisionEvidence,
   NameJudgeCandidateInput,
   NameJudgeConfig,
+  ReadingCapabilities,
+  NameReadingRun,
+  LocalNameReading,
   NameJudgeResult,
+  NameReviewSummary,
+  SourceSuggestionHistory,
+  SourceSuggestionMergeInput,
+  SourceSuggestionMergeResult,
+  SourceSuggestionRegionInput,
+  SourceSuggestionRegionPreview,
+  SourceSuggestionSplitInput,
+  SourceSuggestionSplitResult,
 } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
@@ -208,12 +220,14 @@ export class ApiError extends Error {
    * what to do with it.
    */
   field?: string;
+  code?: string;
 
-  constructor(message: string, status: number, field?: string) {
+  constructor(message: string, status: number, field?: string, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.field = field;
+    this.code = code;
   }
 }
 
@@ -2068,7 +2082,7 @@ export async function fetchSourceTreeSuggestions(fileId: string, status = "sugge
     throw new ApiError("شغّل Core API لجلب اقتراحات القراءة.", 503);
   }
   const query = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
-  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions?${query.toString()}`, {
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/review-queue?${query.toString()}`, {
     credentials: "include",
     cache: "no-store",
     signal: AbortSignal.timeout(30000),
@@ -2079,17 +2093,140 @@ export async function fetchSourceTreeSuggestions(fileId: string, status = "sugge
   return (await response.json()) as SourceTreeSuggestion[];
 }
 
+// The review bench asks for counts, not evidence. A summary is permission-
+// scoped on the server and carries no name, image, or judge result.
+export async function fetchNameReviewSummary(fileId: string): Promise<NameReviewSummary> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض ملخص المراجعة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/review-summary`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const value = (await response.json()) as NameReviewSummary;
+  if (typeof value.total !== "number" || typeof value.pending !== "number" || typeof value.deferred !== "number") {
+    throw new ApiError("أعادت الخدمة ملخص مراجعة غير صالح.", 502);
+  }
+  return value;
+}
+
+// History is read from the append-only ledger. It is not reconstructed from the
+// current queue row, so an earlier answer remains visible after a reopen.
+export async function fetchSourceSuggestionHistory(suggestionId: string, signal?: AbortSignal): Promise<SourceSuggestionHistory> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض سجل المراجعة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/history`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: nameReadingSignal(signal, 10000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const value = (await response.json()) as SourceSuggestionHistory;
+  if (!value.suggestion || !Array.isArray(value.decisions) || !Array.isArray(value.events) || !Array.isArray(value.regionRevisions)) {
+    throw new ApiError("أعادت الخدمة سجلاً غير صالح.", 502);
+  }
+  return value;
+}
+
+// Reopening appends an event and returns the occurrence to pending work. It
+// never deletes the decision it supersedes, so expectedRevision is mandatory.
+export async function reopenSourceSuggestion(suggestionId: string, expectedRevision: number, noteAr = ""): Promise<SourceTreeSuggestion> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعادة فتح المراجعة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/reopen`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedRevision, noteAr }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as SourceTreeSuggestion;
+}
+
+export async function previewSourceSuggestionRegion(
+  suggestionId: string,
+  input: SourceSuggestionRegionInput,
+  signal?: AbortSignal,
+): Promise<SourceSuggestionRegionPreview> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لمعاينة حدود القراءة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/region-preview`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: nameReadingSignal(signal, 30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const value = (await response.json()) as SourceSuggestionRegionPreview;
+  if (!value.tightPng || !value.contextPng || typeof value.sourceChecksum !== "string") {
+    throw new ApiError("أعادت الخدمة معاينة حدود غير صالحة.", 502);
+  }
+  return value;
+}
+
+export async function reviseSourceSuggestionRegion(
+  suggestionId: string,
+  input: SourceSuggestionRegionInput,
+): Promise<SourceTreeSuggestion> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لحفظ حدود القراءة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/region`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as SourceTreeSuggestion;
+}
+
+export async function splitSourceTreeSuggestion(
+  suggestionId: string,
+  input: SourceSuggestionSplitInput,
+): Promise<SourceSuggestionSplitResult> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتقسيم الموضع.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/split`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as SourceSuggestionSplitResult;
+}
+
+export async function mergeSourceTreeSuggestions(
+  suggestionId: string,
+  input: SourceSuggestionMergeInput,
+): Promise<SourceSuggestionMergeResult> {
+  if (!apiBaseUrl) throw new ApiError("شغّل Core API لدمج المواضع.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/merge`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as SourceSuggestionMergeResult;
+}
+
 // The source-resolution crops for one suggestion. The endpoint returns two
 // base64 PNGs in one response so the page is opened once; the browser gets an
 // object URL for each and revokes them when the active name changes.
-export async function fetchSourceSuggestionCrop(suggestionId: string): Promise<{ tight: Blob; context: Blob }> {
+export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: AbortSignal): Promise<{ tight: Blob; context: Blob }> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API لعرض صورة الاسم.", 503);
   }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/crop`, {
     credentials: "include",
     cache: "no-store",
-    signal: AbortSignal.timeout(60000),
+    signal: nameReadingSignal(signal, 60000),
   });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -2115,7 +2252,8 @@ export async function fetchSourceSuggestionCandidates(suggestionId: string): Pro
     signal: AbortSignal.timeout(120000),
   });
   if (!response.ok) {
-    throw new ApiError(await readErrorMessage(response), response.status);
+    const error = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new ApiError(error.error || "تعذّر طلب القراءة.", response.status, undefined, error.code);
   }
   const payload = (await response.json()) as { candidates?: unknown };
   if (!Array.isArray(payload.candidates)) {
@@ -2126,6 +2264,23 @@ export async function fetchSourceSuggestionCandidates(suggestionId: string): Pro
     .map((candidate) => candidate.trim())
     .filter(Boolean)
     .slice(0, 8);
+}
+
+export async function fetchReadingCapabilities(fileId: string): Promise<ReadingCapabilities> {
+  if (!apiBaseUrl) throw new ApiError("خدمة القراءة غير متاحة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/reading-capabilities`, {
+    credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const value = await response.json() as ReadingCapabilities;
+  if (!["off", "local", "hosted"].includes(value.mode) || !value.localReader || !value.hostedReader ||
+      typeof value.localReader.ready !== "boolean" || typeof value.hostedReader.ready !== "boolean") {
+    throw new ApiError("أعادت الخدمة حالة قراءة غير صالحة.", 502);
+  }
+  // A malformed or contradictory capability must never enable image transport.
+  value.hostedReader.ready = value.mode === "hosted" && value.hostedReader.enabled === true &&
+    value.hostedReader.configured === true && value.hostedReader.allowedForSource === true && value.hostedReader.ready;
+  return value;
 }
 
 // The review bench asks once for the judge posture. Off and unavailable are
@@ -2258,7 +2413,14 @@ export async function decideSourceTreeSuggestion(
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(includeEvidence ? { decision, textAr, noteAr, ...evidence } : { decision, textAr, noteAr }),
+    body: JSON.stringify(includeEvidence ? { decision, textAr, noteAr, ...evidence } : {
+      decision,
+      textAr,
+      noteAr,
+      ...(evidence.evidenceSchemaVersion ? { evidenceSchemaVersion: evidence.evidenceSchemaVersion } : {}),
+      ...(evidence.expectedRevision !== undefined ? { expectedRevision: evidence.expectedRevision } : {}),
+      ...(evidence.expectedGeometryRevision !== undefined ? { expectedGeometryRevision: evidence.expectedGeometryRevision } : {}),
+    }),
     signal: AbortSignal.timeout(30000),
   });
 
@@ -2298,17 +2460,58 @@ export async function fetchSourceSuggestionAccuracy(fileId: string): Promise<Sou
 }
 
 // Run the reading pipeline over a file and record the suggestions it finds.
-export async function readSourceTreeSuggestions(fileId: string): Promise<{ pages: number; detected: number; named: number; unreadable: number; read: boolean; medianNameHeightPx?: number; sourceTooSmall?: boolean }> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لقراءة الملف.", 503);
-  }
-  const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions/read`, {
-    method: "POST",
-    credentials: "include",
-    signal: AbortSignal.timeout(300000),
-  });
-  if (!response.ok) {
-    throw new ApiError(await readErrorMessage(response), response.status);
-  }
-  return (await response.json()) as { pages: number; detected: number; named: number; unreadable: number; read: boolean; medianNameHeightPx?: number; sourceTooSmall?: boolean };
+export function nameReadingSignal(signal?: AbortSignal, deadlineMs = 10000): AbortSignal {
+ return signal ? AbortSignal.any([signal, AbortSignal.timeout(deadlineMs)]) : AbortSignal.timeout(deadlineMs);
 }
+
+async function nameRunRequest(path: string, method = "GET", signal?: AbortSignal): Promise<NameReadingRun> {
+ if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعداد القراءة المحلية.", 503);
+ const response = await fetch(`${apiBaseUrl}/api/v1/${path}`, { method, credentials: "include", cache: "no-store", signal: nameReadingSignal(signal) });
+ if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+ const result = await response.json() as NameReadingRun;
+ if (typeof result.id !== "string" || !["queued", "running", "partial", "succeeded", "failed", "cancelled"].includes(result.status)) throw new ApiError("أعادت الخدمة حالة إعداد غير صالحة.", 502);
+ return result;
+}
+export function readSourceTreeSuggestions(fileId: string, signal?: AbortSignal): Promise<NameReadingRun> {
+ return nameRunRequest(`source-files/${encodeURIComponent(fileId)}/suggestions/read`, "POST", signal);
+}
+export async function fetchLatestNameReadingRun(fileId: string, signal?: AbortSignal): Promise<NameReadingRun | null> {
+ try { return await nameRunRequest(`source-files/${encodeURIComponent(fileId)}/name-reading-runs/latest`, "GET", signal); }
+ catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
+}
+export function fetchNameReadingRun(runId: string, signal?: AbortSignal): Promise<NameReadingRun> {
+ return nameRunRequest(`name-reading-runs/${encodeURIComponent(runId)}`, "GET", signal);
+}
+export function controlNameReadingRun(runId: string, action: "resume" | "cancel", signal?: AbortSignal): Promise<NameReadingRun> {
+ return nameRunRequest(`name-reading-runs/${encodeURIComponent(runId)}/${action}`, "POST", signal);
+}
+export function rereadSourceSuggestionLocally(suggestionId: string, signal?: AbortSignal): Promise<NameReadingRun> {
+ return nameRunRequest(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/local-reread`, "POST", signal);
+}
+export async function fetchLocalNameReadings(suggestionId: string, signal?: AbortSignal): Promise<LocalNameReading[]> {
+ if (!apiBaseUrl) return [];
+ const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/local-readings`, { credentials: "include", cache: "no-store", signal: nameReadingSignal(signal) });
+ if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+ return await response.json() as LocalNameReading[];
+}
+
+export async function fetchLatestLocalRereadRun(suggestionId: string, signal?: AbortSignal): Promise<NameReadingRun | null> {
+ try { return await nameRunRequest(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/local-reread/latest`, "GET", signal); }
+ catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
+}
+
+
+async function nameReviewRequest<T>(path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+ if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعداد المراجعة.", 503);
+ const response = await fetch(`${apiBaseUrl}/api/v1/${path}`, { method, credentials: "include", cache: "no-store",
+  headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+  body: body === undefined ? undefined : JSON.stringify(body), signal: nameReadingSignal(signal, 6000) });
+ if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+ return await response.json() as T;
+}
+export function fetchNameLexicon(fileId: string, signal?: AbortSignal) { return nameReviewRequest<NameLexicon>(`source-files/${encodeURIComponent(fileId)}/name-lexicon`, "GET", undefined, signal); }
+export function beginNameReview(suggestionId: string, signal?: AbortSignal) { return nameReviewRequest<NamePreparationContext>(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/review-context`, "POST", undefined, signal); }
+export function prepareNameCandidates(suggestionId: string, exposureId: string, snapshot: SourceTreeSuggestionCandidateSnapshot[], signal?: AbortSignal) {
+ return nameReviewRequest<NameCandidatePreparation>(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/candidate-preparation`, "POST", { exposureId, poolVersion: "ar-name-pool-v2", snapshot }, signal);
+}
+export function sealNameReview(suggestionId: string) { return nameReviewRequest<{ sealed: boolean }>(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/review-context/seal`, "POST"); }

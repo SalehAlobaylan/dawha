@@ -372,9 +372,13 @@ CANDIDATE_SCHEMA: dict[str, Any] = {
 
 
 class DeepSeekChartVision:
-    def __init__(self, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self, api_key: str, *, transport: httpx.AsyncBaseTransport | None = None,
+        enabled: bool = True,
+    ) -> None:
         self.api_key = api_key
         self.transport = transport
+        self.enabled = enabled
 
     async def _interact(
         self,
@@ -384,6 +388,8 @@ class DeepSeekChartVision:
         max_output_tokens: int,
         cache_scope: str,
     ) -> str:
+        if not self.enabled:
+            raise HTTPException(status_code=403, detail="reader_disabled_by_policy")
         if not self.api_key:
             raise HTTPException(status_code=503, detail="hosted chart vision is not configured")
         if schema is LOCATE_SCHEMA:
@@ -618,6 +624,19 @@ class DeepSeekChartVision:
 def create_chart_vision_router(model: ChartVisionModel) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/v1/vision/chart/capabilities")
+    async def capabilities() -> dict[str, bool | str]:
+        enabled = isinstance(model, DeepSeekChartVision) and model.enabled
+        configured = enabled and bool(model.api_key)
+        return {
+            "enabled": enabled,
+            "configured": configured,
+            "reason": "configured" if configured else (
+                "not_configured" if enabled else "disabled_by_policy"
+            ),
+            "version": MODEL,
+        }
+
     @router.post("/v1/vision/chart/locate", response_model=LocateResponse)
     async def locate(request: LocateRequest) -> LocateResponse:
         image = _decode_png(request.image_base64, MAX_TILE_BYTES)
@@ -684,4 +703,10 @@ def _load_chart_vision_key() -> str:
 
 
 def configured_chart_vision() -> DeepSeekChartVision:
-    return DeepSeekChartVision(api_key=_load_chart_vision_key())
+    mode = os.getenv("NAME_READER_MODE", "local").strip().lower()
+    enabled = mode == "hosted" and os.getenv("CHART_VISION_ENABLED", "").strip().lower() in {
+        "true", "1", "yes", "on",
+    }
+    # Do not discover a credential unless hosted image reading was explicitly
+    # enabled. A saved Keychain entry cannot override the local-only posture.
+    return DeepSeekChartVision(api_key=_load_chart_vision_key() if enabled else "", enabled=enabled)

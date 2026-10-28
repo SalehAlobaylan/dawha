@@ -18,7 +18,7 @@
   [024](024-durable-local-name-reading.md)
 - **Category:** candidate quality / evaluation / processing
 - **Planned at:** commit `f0fcb6e`, 2026-10-27
-- **Status:** TODO
+- **Status:** DONE
 
 ## Why this matters
 
@@ -313,14 +313,14 @@ remains missing. A held-out cohort cannot include examples declared development.
 | `make generated-check && make docs-check && git diff --check` | pass |
 | database/E2E verification against a guarded dedicated test database | no fixtures in the real review ledger |
 
-- [ ] File counts and complete intended context survive bench reload.
-- [ ] New candidate recipes have explicit versions and bounded, traceable sources.
-- [ ] Initial evaluation pools and final visible pools have explicit, separate roles.
-- [ ] A fast human decision does not require waiting for an invisible judge.
-- [ ] Deferred model completion uses only input frozen before the human answer.
-- [ ] Reopening/repair never turns known truth into a new blind observation;
+- [x] File counts and complete intended context survive bench reload.
+- [x] New candidate recipes have explicit versions and bounded, traceable sources.
+- [x] Initial evaluation pools and final visible pools have explicit, separate roles.
+- [x] A fast human decision does not require waiting for an invisible judge.
+- [x] Deferred model completion uses only input frozen before the human answer.
+- [x] Reopening/repair never turns known truth into a new blind observation;
   distinct occurrences remain distinct even when computation payloads match.
-- [ ] Existing data is unchanged; new cohorts cannot silently mix with it.
+- [x] Existing data is unchanged; new cohorts cannot silently mix with it.
 
 ## Stops and maintenance
 
@@ -332,3 +332,106 @@ no commit/push/PR or AI attribution is authorized.
 Changes to readers, preprocessing, lexicons, normalizers, prompts, or model
 versions create new evaluation cohorts. Preserve enough bounded provenance to
 reproduce the exact input without rereading live human context.
+
+
+## Implementation record — 2026-10-28
+
+Implemented against `3de1de1` with all prior uncommitted work preserved. Migration
+0057 adds new evidence relations beside the original ledger; it does not alter
+or backfill any original decision. Work remains uncommitted.
+
+- The authenticated file lexicon aggregates latest human decisions across the
+  complete intended file context, retains occurrence counts and display variants,
+  and persists a stable revision/as-of record. Limits are explicit: 2,048 keys,
+  eight variants, 10,000 scanned distinct spellings and a 1-MiB response budget.
+  Truncation/unusable spellings remain diagnostics and cannot silently qualify
+  blind context. The weighted TypeScript input retains string-array compatibility.
+- `ar-name-pool-v2` / `local-evidence-v1` combine the original machine reading,
+  independently stored local variants, counted file context and the shared common
+  dictionary. The scoring implementation remains TypeScript only. It uses eight
+  ranked chips, twelve bounded judge options and stable key ties. Server-side
+  validation records supported candidate/variant provenance without inventing
+  strings or using the typed correction as initial input.
+- The first-exposure handshake freezes context, validates/stores the initial
+  snapshot, then releases the editor/source display. Manual review continues on
+  failure with an honest gap. The `name-review-v2` relation separates initial
+  preparation from the existing final-visible snapshot/selected-chip ledger.
+  File/occurrence locking serializes saves and freeze; actual decision timestamps
+  use the write clock. Late preparation is refused. New records retain explicit
+  local-text-only privacy posture, judge mode and sampling metadata.
+- Server-owned frozen requests/results use the existing PostgreSQL queue,
+  heartbeat and lease fence. One worker bounds inference, retries are capped,
+  and an optional outbox savepoint preserves the initial pool if enqueue fails.
+  Results may finish after saving but cannot modify human text or rebuild live
+  context. Distinct occurrences retain distinct evidence even for identical
+  payloads; retries/revisions count once. Shadow has no visible subscription,
+  status, result, ordering, prefill or percentage.
+- Immutable source/rendering-group registration separates development and held-out
+  data. It pins eleven version fields before exposure. Known old checksums/source
+  identity, previous decisions, deferrals, lineage, active posture and legacy
+  exposure all fail closed for new blind observations. Old legacy evidence stays
+  readable; new legacy-client decisions cannot bypass the installed boundary.
+  Actual reopen/repair endpoints remain Plan 026 work, with their metadata rules
+  covered by isolated fixtures here.
+- Operator lexicon/evidence summaries and private contract/enrollment commands use
+  authenticated loopback Core API identity checks and redact selectors/names.
+  The evaluator reads the immutable initial pool and matching server result,
+  validates signatures/timing/versions, reports gaps/truncation/source groups,
+  and separates complete recipe hashes and evaluation partitions. It preserves
+  the original rate, class, paired-comparison and reviewer-time rules.
+
+The private protocol declares all eleven current files and the eighty existing
+truth labels development data; their related renderings cannot become unseen
+validation. Held-out files/labels remain empty rather than being invented. The
+human-confirmed class map is unchanged. A chronological counterfactual development
+replay used the original readings/alternatives and only earlier human file names:
+its top eight contained the truth in 23 of 80 cases versus 18 of 80 original
+snapshots. These below-floor diagnostic counts establish no held-out quality.
+No old request or missing judge result was reconstructed.
+
+The product-path smoke prepared six pending occurrences across the registered
+classes. Five had options and completed actual local shadow requests; one retained
+an empty initial pool and made no judge call. A final additional operational
+preparation verified explicit privacy metadata and completed its local request.
+Request bodies were checked for the exact bounded text-only shape: no internal
+IDs or images. All eleven development registrations used the normal authenticated
+operator path. These actions created zero human decisions.
+
+Initial validation exposed an HTTP fixture expecting 200 instead of the existing
+201 decision response, a missing 409 mapping for late preparation, and an older
+recovery fixture expecting immediate recovery despite `SKIP LOCKED`. The status
+mapping is fixed. The recovery fixture now revokes its forced-expired token and
+asserts bounded eventual recovery, matching the worker's retry contract. Failed
+isolated logs/databases were retained; no assertions or database audits were
+weakened. The final isolated database was reused only after confirming its
+synthetic actors had already been cleaned up; it was never dropped or reset.
+
+| Check | Result |
+|---|---|
+| Guarded `verify-full` | passed: 985 tests, 979 passed, 6 optional skips, 0 database skips; fixture audit passed |
+| Final sourceprocessing/HTTP/evaluator/operator database gate | passed: 426 tests, 425 passed, 1 optional skip, 0 database skips; includes final privacy-metadata assertion |
+| Web tests, ESLint, typecheck/build | 95 passed; all checks passed |
+| Python and Ruff | 86 passed; lint passed |
+| Guarded browser gate, separate test DB/storage | 30 journeys passed |
+| Migration runner / AI evaluation | all five cases and all configured baselines passed |
+| Test environment guard | 12 passed |
+| `env -u DATABASE_URL -u AI_RESEARCH_URL make verify` | passed with the final changes |
+| `generated-check`, `docs-check`, `git diff --check` | passed |
+| Review/corpus preservation | all 111 original row/snapshot/judge fingerprints, source checksums, class-map bytes and HEAD unchanged; 12 recorded originals verified |
+| Current read-only evaluation | 111 actions / 80 development truths; 0 current held-out truths; `ready=false`; original historical 79 complete shadow labels remain stored |
+
+The app is running with shadow mode, sample 1, images false, local OCR and hosted
+image reading disabled. See [the operating protocol](../docs/name-review-preparation.md).
+Plan 025 is complete; Plan 026 is next. Plan 022's human measurement remains pending.
+
+
+### Shared-workspace handoff
+
+During the final post-completion check, a separate Cursor process began Plan 026
+edits in the same checkout (migration 0058 and `name_review_history.go`, with
+changes to `tree_suggestions.go`). Those changes were preserved. The passing
+Plan 025 gates above cover migrations through 0057; the final combined-tree
+`generated-check` detects the new 0058 schema before its generated output is
+updated. Plan 026's owner must regenerate and verify that combined tree. No 0058
+migration was applied to the review database by this implementation; the running
+app and final 111-row preservation audit remain at the completed Plan 025 state.

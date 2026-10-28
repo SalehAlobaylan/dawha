@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Eye, FileText, GitBranch, Quote, Save, ScanSearch, Upload, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useRef, useState } from "react";
-import { createSourceFileDownloadLink, createSourceTreeDraft, fetchSourceChartAnalysis, fetchSourcePageEvidence, fetchSourcePageEvidenceIndex, fetchSourceProcessing, readSourceTreeSuggestions, reextractReviewedPage as reextractReviewedPageAPI, reprocessSourceFile, reviewSourceCandidate, reviewSourcePage, startSourceChartAnalysis, uploadSourceFile } from "../lib/api";
+import { createSourceFileDownloadLink, createSourceTreeDraft, fetchSourceChartAnalysis, fetchSourcePageEvidence, fetchSourcePageEvidenceIndex, fetchSourceProcessing, fetchLatestNameReadingRun, controlNameReadingRun, readSourceTreeSuggestions, reextractReviewedPage as reextractReviewedPageAPI, reprocessSourceFile, reviewSourceCandidate, reviewSourcePage, startSourceChartAnalysis, uploadSourceFile } from "../lib/api";
 import { ApiError } from "../lib/api";
 import { suggestBookQuoteSpans } from "../lib/book-quote-suggestions";
 import { StatusBadge } from "./StatusBadge";
-import type { ChartAnalysisView, SourceCandidate, SourcePageEvidence, SourcePageEvidenceIndex, SourcePageReviewInput, SourceProcessing, SourceProcessingRun, SourceTreeDraft } from "../types";
+import type { NameReadingRun, ChartAnalysisView, SourceCandidate, SourcePageEvidence, SourcePageEvidenceIndex, SourcePageReviewInput, SourceProcessing, SourceProcessingRun, SourceTreeDraft } from "../types";
 import { SourceSuggestionReview } from "./SourceSuggestionReview";
 import { SourceTreeDraftDialog } from "./SourceTreeDraftDialog";
 import { SourceBookAssertionDialog } from "./SourceBookAssertionDialog";
@@ -84,18 +84,11 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
   const suggestionReadMutation = useMutation({
     mutationFn: async (fileId: string) => {
       const result = await readSourceTreeSuggestions(fileId);
-      setSuggestionFileID(fileId);
       return result;
     },
-    onSuccess: (result) => {
-      const summary = result.read
-        ? `قُرئت ${result.pages} صفحة: ${result.detected} موضعاً، و${result.named} اسماً قُرئ.`
-        : `عُثر على ${result.detected} موضعاً للاسم؛ لا يوجد قارئ مهيّأ، فبقيت المواضع بلا قراءة.`;
-      setMessage(
-        result.sourceTooSmall
-          ? `${summary} أسماء هذا الملف صغيرة في الأصل (الوسيط ${result.medianNameHeightPx ?? 0} بكسل)؛ ارفع نسخة بدقة أعلى لقراءة أفضل.`
-          : summary,
-      );
+    onSuccess: async (result) => {
+      setMessage("أُضيف إعداد الأسماء إلى قائمة العمل المحلية. يمكنك مراجعة المواضع المحفوظة أثناء استمرار القراءة.");
+      await queryClient.invalidateQueries({ queryKey: ["name-reading-run", result.sourceFileId] });
     },
     onError: (error) => {
       setMessage(error instanceof ApiError ? error.message : "تعذّرت قراءة الملف.");
@@ -264,7 +257,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
         await queryClient.invalidateQueries({ queryKey: ["sources"] });
       }} reextractPending={pageReextractMutation.isPending} onReextractReviewedPage={(evidence) => pageReextractMutation.mutateAsync(evidence)} /> : null}
       {treeDraft ? <SourceTreeDraftDialog initialDraft={treeDraft} onClose={() => setTreeDraft(null)} onChanged={setTreeDraft} /> : null}
-      {suggestionFileID ? <SourceSuggestionReview fileId={suggestionFileID} sourceTitle={sourceTitle} onClose={() => setSuggestionFileID(null)} /> : null}
+      {suggestionFileID ? <SourceSuggestionReview key={suggestionFileID} fileId={suggestionFileID} sourceTitle={sourceTitle} onClose={() => setSuggestionFileID(null)} /> : null}
       {chartAnalysis ? <SourceChartAnalysisDialog fileId={chartAnalysis.fileId} titleAr={sourceTitle} initial={chartAnalysis.initial} onClose={() => setChartAnalysis(null)} onManualDraft={(fileId) => { setChartAnalysis(null); void startTreeDraft(fileId); }} /> : null}
     </section>
   );
@@ -295,7 +288,7 @@ function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, 
               <SourcePDFPagePicker fileId={file.id} onViewPage={onViewPage} />
               {sourceType === "family_document" && file.checksumSha256.toLowerCase() === JASSER_CHART_CHECKSUM ? <><button className="source-chart-analysis-start" type="button" disabled={chartAnalysisPending} onClick={() => onStartChartAnalysis(file.id)}><ScanSearch size={15} /> {chartAnalysisPending ? "جارٍ فتح تحليل الرؤية…" : "فتح التحليل البصري التجريبي"}</button><small className="source-chart-analysis-hint">متاح لهذا الملف الخاص فقط. اقتراحات الرؤية معزولة عن الاستيراد حتى تأهيلها معيارياً.</small></> : null}
             </> : <button className="source-pdf-page-index-toggle" type="button" onClick={() => onViewPage(file.id, 1)}><Eye size={14} /> عرض الصفحة الأصلية</button>}
-            {sourceType === "family_document" ? <><button className="source-tree-draft-start" type="button" disabled={treeDraftLoading || file.processingStatus !== "succeeded"} onClick={() => onStartTreeDraft(file.id)}><GitBranch size={15} /> إعداد مسودة شجرة من هذا الملف</button><button className="source-tree-draft-start" type="button" disabled={suggestionReadPending} onClick={() => onReadSuggestions(file.id)}><ScanSearch size={15} /> قراءة الملف واستخراج الأسماء</button><button className="source-tree-draft-start" type="button" onClick={() => onReviewSuggestions(file.id)}><Quote size={15} /> مراجعة اقتراحات القراءة</button><small className="source-tree-draft-start-hint">ستراجع الأسماء على صورة كل صفحة؛ تبقى الوصلات لمرحلة مسودة الشجرة.</small></> : null}
+            {sourceType === "family_document" ? <><button className="source-tree-draft-start" type="button" disabled={treeDraftLoading || file.processingStatus !== "succeeded"} onClick={() => onStartTreeDraft(file.id)}><GitBranch size={15} /> إعداد مسودة شجرة من هذا الملف</button><button className="source-tree-draft-start" type="button" disabled={suggestionReadPending} onClick={() => onReadSuggestions(file.id)}><ScanSearch size={15} /> قراءة الملف واستخراج الأسماء</button><button className="source-tree-draft-start" type="button" onClick={() => onReviewSuggestions(file.id)}><Quote size={15} /> مراجعة اقتراحات القراءة</button><small className="source-tree-draft-start-hint">ستراجع الأسماء على صورة كل صفحة؛ تبقى الوصلات لمرحلة مسودة الشجرة.</small><NameReadingRunStatus fileId={file.id} /></> : null}
           </> : null}
         </div>
         <StatusBadge tone={file.processingStatus === "failed" ? "disputed" : "source"}>{file.processingStatus === "succeeded" ? "اكتملت" : file.processingStatus === "failed" ? "فشلت" : "قيد المعالجة"}</StatusBadge>
@@ -525,4 +518,27 @@ function runKindLabel(run: SourceProcessingRun): string {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return error instanceof Error ? error.message : "تعذر إكمال عملية المعالجة.";
+}
+
+const NAME_RUN_LABELS: Record<NameReadingRun["status"], string> = { queued: "بانتظار العامل المحلي", running: "جارٍ الإعداد محلياً", partial: "إعداد جزئي؛ المواضع المحفوظة قابلة للمراجعة", succeeded: "اكتملت مراحل الإعداد؛ القراءات ما زالت تحتاج مراجعتك", failed: "تعذّر الإعداد", cancelled: "أُوقف الإعداد مع الاحتفاظ بالعمل المكتمل" };
+const NAME_STAGE_LABELS: Record<NameReadingRun["stage"], string> = { queued: "في قائمة العمل", preparing: "تجهيز المصدر", detecting: "تحديد مواضع الأسماء", reading: "قراءة القصاصات محلياً", complete: "انتهت المحاولة" };
+
+export function NameReadingRunStatus({ fileId }: { fileId: string }) {
+ const client = useQueryClient();
+ const query = useQuery({ queryKey: ["name-reading-run", fileId], queryFn: ({ signal }) => fetchLatestNameReadingRun(fileId, signal), refetchInterval: (query) => {
+  const run = query.state.data as NameReadingRun | null | undefined;
+  return run && (run.status === "queued" || run.status === "running") ? 1500 : false;
+ } });
+ const action = useMutation({ mutationFn: ({ id, action }: { id: string; action: "resume" | "cancel" }) => controlNameReadingRun(id, action), onSuccess: (run) => client.setQueryData(["name-reading-run", fileId], run) });
+ const run = query.data;
+ if (!run) return query.isError ? <p role="status">تعذّر تحميل حالة الإعداد المحلي. أعد المحاولة من المصدر.</p> : null;
+ const active = run.status === "queued" || run.status === "running";
+ return <div className="evidence-workspace-message" role="status">
+  <strong>{NAME_RUN_LABELS[run.status]}</strong>
+  <p>{NAME_STAGE_LABELS[run.stage]} · {run.detected} موضعاً محفوظاً · {run.named} قراءة نصية · {run.unreadable} بلا نص مقروء · {run.unavailable} قراءة غير متاحة</p>
+  <small>{run.completedUnits} مرحلة محفوظة من {run.totalUnits} · {run.cacheHits} استخداماً للعمل المحفوظ · {run.manualReview} موضعاً يحتاج مراجعة المصدر يدوياً · {run.sourcePixelWarnings} موضعاً بحروف صغيرة في الأصل</small>
+  {run.errorCode ? <p>توقفت مرحلة إعداد محلية. العمل المكتمل محفوظ ويمكن إعادة محاولة المراحل المتبقية.</p> : null}
+  {active ? <button type="button" className="secondary-button" disabled={action.isPending} onClick={() => action.mutate({ id: run.id, action: "cancel" })}>إيقاف الإعداد</button> : run.status !== "succeeded" ? <button type="button" className="secondary-button" disabled={action.isPending} onClick={() => action.mutate({ id: run.id, action: "resume" })}>استئناف المراحل المتبقية</button> : null}
+  {action.isError ? <p>تعذّر تنفيذ الطلب. إذا تغيرت أدوات القراءة فابدأ إعداداً جديداً.</p> : null}
+ </div>;
 }

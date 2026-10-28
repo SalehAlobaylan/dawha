@@ -389,3 +389,114 @@ func TestShownCandidatesMeasuresOnlyTheFirstEightForRecallAt8(t *testing.T) {
 		t.Fatalf("shown any = %d", got)
 	}
 }
+
+func TestMixedVersionsCannotJointlySatisfyShadowGate(t *testing.T) {
+	for _, dimension := range []string{"pool", "reader", "model", "prompt"} {
+		t.Run(dimension, func(t *testing.T) {
+			rows := make([]decisionRow, 300)
+			confidence := 0.8
+			for index := range rows {
+				rows[index] = decisionRow{FileID: expertSourceClasses[index%3], SourceClass: expertSourceClasses[index%3], Decision: "accepted", DecidedText: "محمد", Candidates: []candidateSnapshot{{Value: "محمد", Shown: true, Position: 1}}, NormalizerVersion: normalizerVersion, PoolVersion: "pool-v1", ReaderVersion: "reader-v1", Judge: judgeOutput{Mode: "shadow", Provider: "jev", Model: "judge-v1", PromptVersion: "prompt-v1", Choice: "محمد", Confidence: &confidence}}
+			}
+			if !summarizeWithClassMap(rows, "", true).ShadowGate.Ready {
+				t.Fatal("single coherent fixture must qualify")
+			}
+			for index := 150; index < len(rows); index++ {
+				switch dimension {
+				case "pool":
+					rows[index].PoolVersion = "pool-v2"
+				case "reader":
+					rows[index].ReaderVersion = "reader-v2"
+				case "model":
+					rows[index].Judge.Model = "judge-v2"
+				case "prompt":
+					rows[index].Judge.PromptVersion = "prompt-v2"
+				}
+			}
+			mixed := summarizeWithClassMap(rows, "", true)
+			if mixed.ShadowGate.Ready || !mixed.MixedVersions || len(mixed.Cohorts) != 2 {
+				t.Fatalf("mixed cohorts passed: %+v", mixed.ShadowGate)
+			}
+			for _, cohort := range mixed.Cohorts {
+				if cohort.Decisions != 150 || cohort.ShadowGate.Ready {
+					t.Fatalf("cohort incorrectly combined: %+v", cohort.ShadowGate)
+				}
+			}
+			selected := selectCohort(rows, cohortVersion{Pool: "pool-v1", Reader: "reader-v1", Model: "judge-v1", Prompt: "prompt-v1"})
+			if len(selected) != 150 || summarizeWithClassMap(selected, "", true).MixedVersions {
+				t.Fatal("explicit selection did not isolate saved evidence")
+			}
+		})
+	}
+}
+func TestMissingVersionRemainsLegacy(t *testing.T) {
+	rows := []decisionRow{{}, {PoolVersion: "new"}}
+	selected := selectCohort(rows, cohortVersion{Pool: "legacy"})
+	if len(selected) != 1 || selected[0].PoolVersion != "" {
+		t.Fatal("legacy row was silently versioned")
+	}
+}
+
+func TestTruthPolicyCountsOneOccurrenceAcrossReopenedRevisions(t *testing.T) {
+	base := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	rows := []decisionRow{
+		{
+			ID: "decision-1", SuggestionID: "occurrence-1", ReviewRevision: 1,
+			FileID: "file-1", Decision: "accepted", DecidedText: "محمد",
+			Candidates:        []candidateSnapshot{{Value: "محمد", Key: "محمد", Shown: true, Position: 1}},
+			NormalizerVersion: normalizerVersion, DecisionAt: base,
+		},
+		{
+			ID: "decision-2", SuggestionID: "occurrence-1", ReviewRevision: 2,
+			FileID: "file-1", Decision: "corrected", DecidedText: "أحمد",
+			Candidates:        []candidateSnapshot{{Value: "خالد", Key: "خالد", Shown: true, Position: 1}},
+			NormalizerVersion: normalizerVersion, DecisionAt: base.Add(time.Hour),
+		},
+		{
+			ID: "decision-3", SuggestionID: "occurrence-2", ReviewRevision: 1,
+			FileID: "file-1", Decision: "accepted", DecidedText: "علي",
+			Candidates:        []candidateSnapshot{{Value: "علي", Key: "علي", Shown: true, Position: 1}},
+			NormalizerVersion: normalizerVersion, DecisionAt: base.Add(2 * time.Hour),
+		},
+	}
+	first := summarizeWithTruth(rows, "", false, "first", "")
+	if first.Decisions != 2 || first.CollapsedRevisions != 1 || first.DuplicateObservations != 0 {
+		t.Fatalf("first policy invented observations: %+v", first)
+	}
+	if first.Top1.Matches != 2 {
+		t.Fatalf("first policy did not keep the original answers: %+v", first.Top1)
+	}
+	cutoff := base.Add(3 * time.Hour).Format(time.RFC3339)
+	latest := summarizeWithTruth(rows, "", false, "latest", cutoff)
+	if latest.Decisions != 2 || latest.CollapsedRevisions != 1 || latest.Cutoff != cutoff {
+		t.Fatalf("latest policy invented observations: %+v", latest)
+	}
+	// The reopened occurrence contributes its latest answer (أحمد, absent from
+	// the revision's candidates), not the superseded first answer. The second
+	// occurrence still matches once, so a match count of two would mean the
+	// first answer was counted.
+	if latest.Top1.Matches != 1 {
+		t.Fatalf("latest policy did not use the revision selected at the cutoff: %+v", latest.Top1)
+	}
+}
+
+func TestSupersededGeometryIsReportedButNeverCounted(t *testing.T) {
+	rows := []decisionRow{
+		{
+			ID: "decision-1", SuggestionID: "parent", ReviewRevision: 1, Superseded: true,
+			FileID: "file-1", Decision: "accepted", DecidedText: "محمد",
+			Candidates:        []candidateSnapshot{{Value: "محمد", Key: "محمد", Shown: true, Position: 1}},
+			NormalizerVersion: normalizerVersion,
+		},
+		{
+			ID: "decision-2", SuggestionID: "child", ReviewRevision: 1,
+			FileID: "file-1", Decision: "corrected", DecidedText: "أحمد",
+			Candidates:        []candidateSnapshot{{Value: "خالد", Key: "خالد", Shown: true, Position: 1}},
+			NormalizerVersion: normalizerVersion,
+		},
+	}
+	result := summarizeWithTruth(rows, "", false, "first", "")
+	if result.Decisions != 1 || result.SupersededDecisions != 1 {
+		t.Fatalf("superseded parent counted as an observation: %+v", result)
+	}
+}

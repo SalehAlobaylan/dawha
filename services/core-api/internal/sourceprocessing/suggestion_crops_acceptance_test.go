@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"testing"
+	"time"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
@@ -84,6 +85,24 @@ func TestASuggestionCropComesFromTheOriginalSource(t *testing.T) {
 	// nothing.
 	provider := &candidateNameProvider{}
 	service.ChartVision = provider
+	service.LocalReadingProbe = func(context.Context) LocalReaderStatus {
+		return LocalReaderStatus{Reason: "configured", Version: LocalCropReaderVersion}
+	}
+	capabilities, err := service.SourceReadingCapabilities(ctx, file.ID, owner.User.ID)
+	if err != nil || capabilities.HostedReader.Ready || !capabilities.LocalReader.Ready {
+		t.Fatalf("default capabilities=%+v error=%v", capabilities, err)
+	}
+	if _, err := service.SuggestionCandidates(ctx, queue[0].ID, owner.User.ID); !errors.Is(err, ErrChartVisionPolicy) || len(provider.tightPNG) > 0 {
+		t.Fatalf("disabled reader was invoked: %v", err)
+	}
+	// Only this isolated fixture explicitly approves hosted processing. The fake
+	// provider never leaves this process; private source metadata is untouched.
+	if _, err := fixture.Pool().Exec(ctx, `UPDATE sources SET metadata=metadata || '{"hostedChartVisionApproved":true}'::jsonb WHERE id=$1`, source.Source.ID); err != nil {
+		t.Fatal(err)
+	}
+	service.ReaderSettings = ReadingSettings{Mode: "hosted", HostedEnabled: true}
+	service.ReaderStatus = &stubReadingStatus{status: HostedReaderStatus{Enabled: true, Configured: true, Reason: "configured", Version: ChartVisionModel}}
+	service.readingCache.at = time.Time{}
 	candidates, err := service.SuggestionCandidates(ctx, queue[0].ID, owner.User.ID)
 	if err != nil {
 		t.Fatalf("suggest candidates: %v", err)
@@ -97,6 +116,9 @@ func TestASuggestionCropComesFromTheOriginalSource(t *testing.T) {
 
 	// Another reviewer must not be able to read the original through this route.
 	other := actor.RegisterAndLogin(t, fixture, "مراجع آخر")
+	if _, err := service.SourceReadingCapabilities(ctx, file.ID, other.User.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("source capability access leaked: %v", err)
+	}
 	if _, err := service.GetSuggestionCrop(ctx, queue[0].ID, other.User.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("a reviewer without source access got %v, want ErrForbidden", err)
 	}

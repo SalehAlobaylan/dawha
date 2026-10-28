@@ -89,6 +89,8 @@ const (
 // unbounded label, and a test asserts the real types are all present.
 const (
 	JobSourceProcess     JobType = "source_process"
+	JobNameReading       JobType = "source_name_reading"
+	JobFrozenNameJudge   JobType = "source_frozen_name_judge"
 	JobEntityResolution  JobType = "entity_resolution"
 	JobResearchAgent     JobType = "research_agent"
 	JobContradictionScan JobType = "contradiction_scan"
@@ -198,7 +200,7 @@ var (
 		RouteObjects: true, RouteOther: true,
 	}
 	validStatusClasses = map[StatusClass]bool{Status2xx: true, Status3xx: true, Status4xx: true, Status5xx: true}
-	validJobTypes      = map[JobType]bool{JobSourceProcess: true, JobEntityResolution: true, JobResearchAgent: true, JobContradictionScan: true, JobOther: true}
+	validJobTypes      = map[JobType]bool{JobFrozenNameJudge: true, JobNameReading: true, JobSourceProcess: true, JobEntityResolution: true, JobResearchAgent: true, JobContradictionScan: true, JobOther: true}
 	validJobOutcomes   = map[JobOutcome]bool{JobCompleted: true, JobFailed: true, JobRetried: true, JobRecovered: true, JobAbandoned: true}
 	validAIOperations  = map[AIOperation]bool{
 		AIOperationNormalizeName: true, AIOperationEmbed: true, AIOperationClassify: true,

@@ -19,7 +19,13 @@
   [025](025-name-context-and-shadow-preparation.md)
 - **Category:** reviewer tooling / correctness / verification
 - **Planned at:** commit `f0fcb6e`, 2026-10-27
-- **Status:** TODO
+- **Status:** DONE — append-only reopen/revision events, deferred/history queue
+  views with Arabic bench controls, immutable normalized region revisions with
+  preview/cancel/confirm, split/merge lineage and superseded exclusion,
+  first/latest evaluation truth policies with pinned cutoff, local reviewer
+  assistance, isolated browser journey, and the guarded
+  `name-pipeline-verify` gate. Existing 111 actions and the frozen class map were
+  not rewritten.
 
 ## Why this matters
 
@@ -269,13 +275,13 @@ their own test scope. Existing bench helper and privacy tests still pass.
 | `make generated-check && make docs-check && git diff --check` | pass |
 | `make name-pipeline-verify` with dedicated validated test configuration | all new bench journeys pass, no review-data writes |
 
-- [ ] Deferred items survive reload and can be reopened.
-- [ ] Historical answers remain intact; correction/reopen actions are attributable revisions.
-- [ ] A bad rectangle can be repaired and reread locally with original evidence retained.
-- [ ] Split/merge lineage prevents duplicated evaluation observations.
-- [ ] Manual review is usable when every optional provider is unavailable.
-- [ ] The actual bench is covered by delayed/failing-provider browser journeys.
-- [ ] No existing human decision, source original, or class-map byte was overwritten.
+- [x] Deferred items survive reload and can be reopened.
+- [x] Historical answers remain intact; correction/reopen actions are attributable revisions.
+- [x] A bad rectangle can be repaired and reread locally with original evidence retained.
+- [x] Split/merge lineage prevents duplicated evaluation observations.
+- [x] Manual review is usable when every optional provider is unavailable.
+- [x] The actual bench is covered by delayed/failing-provider browser journeys.
+- [x] No existing human decision, source original, or class-map byte was overwritten.
 
 ## Stops and maintenance
 
@@ -288,3 +294,49 @@ implementation uncommitted without AI attribution.
 Future identity/import work must consume a deliberate current human revision,
 not merely the latest machine reading. Every new crop/reading/decision revision
 must remain traceable through history and report cohort/cutoff selection.
+
+## Implementation notes — 2026-10-28
+
+- Migration `0058_name_review_history_and_region_repairs.sql` adds
+  `review_revision`, `geometry_revision`, `superseded_at`/`superseded_by_event_id`,
+  decision revision/supersession columns, `source_name_region_revisions`, and the
+  append-only `source_name_review_events` table. Applied migrations were not
+  edited and the existing 111 actions remain unchanged.
+- `tree_suggestions.go` keeps `source_tree_suggestions` as operational state and
+  appends `decision` events; `name_review_history.go` adds reopen/history/summary
+  and the shared row locks; `name_region_repairs.go` and
+  `name_occurrence_repairs.go` add preview/confirm and split/merge lineage.
+- The bench now has pending/deferred/history views, a session summary, retained
+  history with explicit reopening, bounded region editing, split/merge controls,
+  and reader-state assistance. A local reread still never fills or accepts the
+  editor, and no hosted fallback is used.
+- `name-eval` accepts `--truth-policy first|latest` and requires `--cutoff` for
+  latest. One physical occurrence is counted once; collapsed revisions and
+  superseded geometry are reported separately.
+- `make name-pipeline-verify` runs the full gate and the browser journey against
+  the validated `*_pipeline_test` database and temporary storage. The new
+  `journeys/11-name-bench.spec.ts` covers defer → reload → reopen → correction →
+  history and a wrong-role refusal.
+- Verification run: `make name-pipeline-verify` passed (Go packages, web tests,
+  migration checks, and 32 browser journeys); the review database still reports
+  111 decisions and 11 source files.
+
+## Review fixes — 2026-10-28
+
+- Cutoff reports evaluate supersession at the same cutoff as decisions; a later
+  split/merge cannot remove an earlier observation from its pinned report.
+- Saves validate the displayed geometry revision and persist it on the new
+  decision and event. The web evidence-fallback path retains both revision tokens.
+- Legacy reopening retires revision zero without editing its decision. Migration
+  0060 also promotes operational tokens for legacy items already reopened by
+  0058, preserving their existing decisions and events.
+- Migration 0059 adds nullable decision geometry and frozen reread targets.
+  New rereads retain their enqueue-time page/rectangle/revision; old runs without
+  that input fail explicitly instead of rebuilding it from live geometry.
+- Verification: full Go unit suite; guarded database packages (474 passed, one
+  existing live-AI test skipped, no database skips); focused legacy migration and
+  geometry/cutoff regressions; 101 web tests, typecheck/lint; 32 isolated browser
+  journeys; generated/docs checks and whitespace checks. All writes and browser
+  fixtures used dedicated test databases/storage. The human review database and
+  running services were left untouched; local rollout needs migrations 0059–0060
+  followed by an API/worker restart. Work remains uncommitted.

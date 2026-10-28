@@ -19,6 +19,7 @@ const ChartReadOutputTokenLimit = 4096
 
 var ErrChartVisionUnavailable = errors.New("chart vision provider is unavailable")
 var ErrChartVisionSetup = errors.New("hosted chart vision needs setup")
+var ErrChartVisionPolicy = errors.New("hosted chart reading is disabled by policy")
 var ErrChartVisionRejected = errors.New("chart vision request was rejected")
 var ErrChartVisionTruncated = errors.New("chart vision output reached its token limit")
 var ErrChartVisionOutputInvalid = errors.New("chart vision output failed local validation")
@@ -152,26 +153,26 @@ func (c *chartVisionHTTPClient) ReadBatch(ctx context.Context, items []ChartCrop
 		return nil, err
 	}
 	if len(response.Readings) != len(items) {
-		return nil, ErrValidation
+		return nil, ErrChartVisionOutputInvalid
 	}
 	seen = make(map[string]struct{}, len(items))
 	for _, reading := range response.Readings {
 		if _, ok := seen[reading.OccurrenceID]; ok || !validReadingStatus(reading.Status) || len([]rune(reading.TextAR)) > 200 || len(reading.Alternatives) > 5 || len(reading.UncertainSpans) > 20 {
-			return nil, ErrValidation
+			return nil, ErrChartVisionOutputInvalid
 		}
 		if (reading.Status == "readable" || reading.Status == "partial") && strings.TrimSpace(reading.TextAR) == "" || reading.Status == "unreadable" && strings.TrimSpace(reading.TextAR) != "" {
-			return nil, ErrValidation
+			return nil, ErrChartVisionOutputInvalid
 		}
 		for _, value := range append(append([]string(nil), reading.Alternatives...), reading.UncertainSpans...) {
 			if len([]rune(value)) > 200 {
-				return nil, ErrValidation
+				return nil, ErrChartVisionOutputInvalid
 			}
 		}
 		seen[reading.OccurrenceID] = struct{}{}
 	}
 	for _, item := range items {
 		if _, ok := seen[item.OccurrenceID]; !ok {
-			return nil, ErrValidation
+			return nil, ErrChartVisionOutputInvalid
 		}
 	}
 	return response.Readings, nil
@@ -226,6 +227,9 @@ func (c *chartVisionHTTPClient) post(ctx context.Context, path string, input, ou
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: %v", ErrChartVisionUnavailable, err)
 	}
 	defer response.Body.Close()
@@ -234,6 +238,12 @@ func (c *chartVisionHTTPClient) post(ctx context.Context, path string, input, ou
 		return ErrChartVisionUnavailable
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusForbidden && bytes.Contains(body, []byte("reader_disabled_by_policy")) {
+			return ErrChartVisionPolicy
+		}
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			return ErrChartVisionSetup
+		}
 		if response.StatusCode == http.StatusServiceUnavailable {
 			var providerError struct {
 				Detail string `json:"detail"`
@@ -261,7 +271,7 @@ func (c *chartVisionHTTPClient) post(ctx context.Context, path string, input, ou
 		return fmt.Errorf("%w: provider returned status %d", ErrChartVisionRejected, response.StatusCode)
 	}
 	if err := json.Unmarshal(body, output); err != nil {
-		return ErrValidation
+		return ErrChartVisionOutputInvalid
 	}
 	return nil
 }

@@ -34,13 +34,15 @@ import (
 )
 
 type Dependencies struct {
-	DB            *pgxpool.Pool
-	Logger        *slog.Logger
-	WebOrigin     string
-	SecureCookies bool
-	Jobs          *jobs.Service
-	AI            ai.Provider
-	ChartVision   sourceprocessing.ChartVisionProvider
+	DB             *pgxpool.Pool
+	Logger         *slog.Logger
+	WebOrigin      string
+	SecureCookies  bool
+	Jobs           *jobs.Service
+	AI             ai.Provider
+	ChartVision    sourceprocessing.ChartVisionProvider
+	ReaderSettings sourceprocessing.ReadingSettings
+	ReaderStatus   sourceprocessing.ReadingStatusProvider
 	// NameJudge is optional and default-off. It only ever sees a bounded
 	// candidate set; it is not a reader and it writes nothing.
 	NameJudge         sourceprocessing.NameJudge
@@ -117,6 +119,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	jobsHandler := jobHandler{Service: jobsService, Auth: authService}
 	sourceProcessingService := sourceprocessing.NewService(dependencies.DB, dependencies.SourceStorage, jobsService, dependencies.AI, sourceprocessing.NewPDFExtractor())
 	sourceProcessingService.ChartVision = dependencies.ChartVision
+	sourceProcessingService.LocalCropReader = sourceprocessing.NewLocalCropReader()
+	sourceProcessingService.ReaderSettings = dependencies.ReaderSettings
+	sourceProcessingService.ReaderStatus = dependencies.ReaderStatus
 	sourceProcessingService.NameJudge = dependencies.NameJudge
 	sourceProcessingService.NameJudgeMode = dependencies.NameJudgeSettings.Mode
 	sourceProcessingService.NameJudgeSample = dependencies.NameJudgeSettings.Sample
@@ -243,7 +248,35 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/decision", sourceProcessingHandler.decideSourceSuggestion)
 	mux.HandleFunc("GET /api/v1/source-tree-suggestions/{suggestionID}/crop", sourceProcessingHandler.sourceSuggestionCrop)
 	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/candidates", sourceProcessingHandler.sourceSuggestionCandidates)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/review-queue", sourceProcessingHandler.listSourceSuggestions)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/review-summary", sourceProcessingHandler.nameReviewSummary)
+	mux.HandleFunc("GET /api/v1/source-tree-suggestions/{suggestionID}/history", sourceProcessingHandler.sourceSuggestionHistory)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/reopen", sourceProcessingHandler.reopenSourceSuggestion)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/region-preview", sourceProcessingHandler.sourceSuggestionRegionPreview)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/region", sourceProcessingHandler.sourceSuggestionRegion)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/split", sourceProcessingHandler.splitSourceSuggestion)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/merge", sourceProcessingHandler.mergeSourceSuggestion)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/name-lexicon", sourceProcessingHandler.nameLexicon)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/review-context", sourceProcessingHandler.beginNameReview)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/review-context/seal", sourceProcessingHandler.sealNameReview)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/candidate-preparation", sourceProcessingHandler.prepareNameCandidates)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/name-evaluation-contract", sourceProcessingHandler.nameEvaluation)
+	mux.HandleFunc("POST /api/v1/source-files/{fileID}/name-evaluation-registration", sourceProcessingHandler.nameEvaluation)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/name-evidence-status", sourceProcessingHandler.nameEvidenceStatus)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/name-reading-runs/latest", sourceProcessingHandler.latestNameReading)
+	mux.HandleFunc("GET /api/v1/name-reading-runs/{runID}", sourceProcessingHandler.nameReadingRun)
+	mux.HandleFunc("POST /api/v1/name-reading-runs/{runID}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("action") != "cancel" && r.PathValue("action") != "resume" {
+			http.NotFound(w, r)
+			return
+		}
+		sourceProcessingHandler.nameReadingRun(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/source-tree-suggestions/{suggestionID}/local-reread/latest", sourceProcessingHandler.latestNameReading)
+	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/local-reread", sourceProcessingHandler.localNameReread)
+	mux.HandleFunc("GET /api/v1/source-tree-suggestions/{suggestionID}/local-readings", sourceProcessingHandler.localNameReadings)
 	mux.HandleFunc("GET /api/v1/name-judge/config", sourceProcessingHandler.nameJudgeConfig)
+	mux.HandleFunc("GET /api/v1/source-files/{fileID}/reading-capabilities", sourceProcessingHandler.readingCapabilities)
 	mux.HandleFunc("POST /api/v1/source-tree-suggestions/{suggestionID}/judge", sourceProcessingHandler.judgeSourceSuggestion)
 	mux.HandleFunc("PUT /api/v1/source-book-assertions/{assertionID}", sourceProcessingHandler.updateBookAssertion)
 	mux.HandleFunc("POST /api/v1/source-book-assertions/{assertionID}/review", sourceProcessingHandler.reviewBookAssertion)

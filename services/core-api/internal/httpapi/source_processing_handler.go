@@ -371,7 +371,16 @@ func (h sourceProcessingHandler) listSourceSuggestions(w http.ResponseWriter, r 
 		offset = parsed
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	result, err := h.Service.ListSuggestions(r.Context(), r.PathValue("fileID"), user.ID, status, limit, offset)
+	var result []sourceprocessing.SuggestionView
+	var err error
+	if strings.Contains(r.URL.Path, "/review-queue") {
+		result, err = h.Service.NameReviewQueue(r.Context(), r.PathValue("fileID"), user.ID, status, limit, offset)
+	} else {
+		result, err = h.Service.ListSuggestions(r.Context(), r.PathValue("fileID"), user.ID, status, limit, offset)
+		if err == nil {
+			err = h.Service.RecordLegacyNameExposure(r.Context(), result)
+		}
+	}
 	if err != nil {
 		writeSourceProcessingError(w, err)
 		return
@@ -397,6 +406,132 @@ func (h sourceProcessingHandler) decideSourceSuggestion(w http.ResponseWriter, r
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// sourceSuggestionHistory returns every human revision and review event. It is
+// a read of the ledger, not a reconstruction from the current queue row.
+func (h sourceProcessingHandler) sourceSuggestionHistory(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.SuggestionHistory(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+// reopenSourceSuggestion appends a reopen event and returns the occurrence to
+// the pending queue. The previous decision remains in history.
+func (h sourceProcessingHandler) reopenSourceSuggestion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionReopenInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReopenSuggestion(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+// sourceSuggestionRegionPreview renders a proposed rectangle without appending a
+// revision, so cancel is a no-op on review state.
+func (h sourceProcessingHandler) sourceSuggestionRegionPreview(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionRegionInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.PreviewSuggestionRegion(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) sourceSuggestionRegion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionRegionInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReviseSuggestionRegion(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) splitSourceSuggestion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionSplitInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.SplitSuggestion(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (h sourceProcessingHandler) mergeSourceSuggestion(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.SuggestionMergeInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.MergeSuggestions(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// nameReviewSummary reports counts only. It never exposes a reading or a judge
+// result, and it is scoped by the same source permission as the queue.
+func (h sourceProcessingHandler) nameReviewSummary(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.NameReviewSummary(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
 }
 
 // sourceSuggestionCrop renders the suggestion's name and its surrounding context
@@ -440,13 +575,13 @@ func (h sourceProcessingHandler) readSourceSuggestions(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	result, err := h.Service.ReadSuggestions(r.Context(), r.PathValue("fileID"), user.ID)
+	result, err := h.Service.PrepareNameReading(r.Context(), r.PathValue("fileID"), user.ID)
 	if err != nil {
 		writeSourceProcessingError(w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusCreated, result)
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 // sourceSuggestionAccuracy reports how often the reader was right without
@@ -457,6 +592,20 @@ func (h sourceProcessingHandler) sourceSuggestionAccuracy(w http.ResponseWriter,
 		return
 	}
 	result, err := h.Service.SuggestionAccuracy(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) readingCapabilities(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.SourceReadingCapabilities(r.Context(), r.PathValue("fileID"), user.ID)
 	if err != nil {
 		writeSourceProcessingError(w, err)
 		return
@@ -742,19 +891,38 @@ func writeSourceProcessingError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	// Reader errors carry stable, privacy-safe codes; provider text never escapes.
+	readerCode := ""
+	readerStatus := http.StatusServiceUnavailable
+	switch {
+	case errors.Is(err, sourceprocessing.ErrChartVisionPolicy):
+		readerCode = "disabled_by_policy"
+		readerStatus = http.StatusForbidden
+	case errors.Is(err, sourceprocessing.ErrChartVisionSetup):
+		readerCode = "not_configured"
+	case errors.Is(err, sourceprocessing.ErrChartVisionUnavailable):
+		readerCode = "temporarily_unavailable"
+	case errors.Is(err, sourceprocessing.ErrChartVisionOutputInvalid), errors.Is(err, sourceprocessing.ErrChartVisionTruncated), errors.Is(err, sourceprocessing.ErrChartVisionRejected):
+		readerCode = "unreadable_crop"
+		readerStatus = http.StatusUnprocessableEntity
+	}
+	if readerCode != "" {
+		writeJSON(w, readerStatus, map[string]string{"error": "chart reading is unavailable", "code": readerCode})
+		return
+	}
 	status := http.StatusInternalServerError
 	message := "source processing operation failed"
 	switch {
 	case errors.Is(err, sourceprocessing.ErrValidation):
 		status = http.StatusBadRequest
 		message = err.Error()
-	case errors.Is(err, sourceprocessing.ErrNotFound):
+	case errors.Is(err, sourceprocessing.ErrNotFound), errors.Is(err, sourceprocessing.ErrSuggestionNotFound):
 		status = http.StatusNotFound
 		message = err.Error()
 	case errors.Is(err, sourceprocessing.ErrForbidden):
 		status = http.StatusForbidden
 		message = err.Error()
-	case errors.Is(err, sourceprocessing.ErrConflict):
+	case errors.Is(err, sourceprocessing.ErrConflict), errors.Is(err, sourceprocessing.ErrSuggestionAlreadyDecided), errors.Is(err, sourceprocessing.ErrSuggestionSuperseded):
 		status = http.StatusConflict
 		message = err.Error()
 	case errors.Is(err, sourceprocessing.ErrLinkNotAuthorized):
@@ -773,4 +941,164 @@ func writeSourceProcessingError(w http.ResponseWriter, err error) {
 		message = "the name judge could not answer for this candidate set"
 	}
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (h sourceProcessingHandler) nameReadingRun(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var result sourceprocessing.NameReadingRun
+	var err error
+	switch r.PathValue("action") {
+	case "cancel":
+		result, err = h.Service.CancelNameReading(r.Context(), r.PathValue("runID"), user.ID)
+	case "resume":
+		result, err = h.Service.ResumeNameReading(r.Context(), r.PathValue("runID"), user.ID)
+	default:
+		result, err = h.Service.NameReadingRun(r.Context(), r.PathValue("runID"), user.ID)
+	}
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+func (h sourceProcessingHandler) latestNameReading(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var result sourceprocessing.NameReadingRun
+	var err error
+	if r.PathValue("suggestionID") != "" {
+		result, err = h.Service.LatestSuggestionNameReadingRun(r.Context(), r.PathValue("suggestionID"), user.ID)
+	} else {
+		result, err = h.Service.LatestNameReadingRun(r.Context(), r.PathValue("fileID"), user.ID)
+	}
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+func (h sourceProcessingHandler) localNameReread(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.RereadSuggestionLocally(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+func (h sourceProcessingHandler) localNameReadings(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.SuggestionLocalReadings(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h sourceProcessingHandler) nameLexicon(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.NameLexicon(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+func (h sourceProcessingHandler) beginNameReview(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.BeginNameReview(r.Context(), r.PathValue("suggestionID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+func (h sourceProcessingHandler) sealNameReview(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Service.SealNameReview(r.Context(), r.PathValue("suggestionID"), user.ID); err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"sealed": true})
+}
+func (h sourceProcessingHandler) prepareNameCandidates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input sourceprocessing.PrepareNameCandidatesInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.PrepareNameCandidates(r.Context(), r.PathValue("suggestionID"), user.ID, input)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusAccepted, result)
+}
+func (h sourceProcessingHandler) nameEvaluation(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	// The lexicon method performs normal source-review authorization. The
+	// operator contract/registration never returns its private entries.
+	if _, err := h.Service.NameLexicon(r.Context(), r.PathValue("fileID"), user.ID); err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, h.Service.NameEvaluationContract(r.Context()))
+		return
+	}
+	var input sourceprocessing.NameEvaluationRegistration
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	if err := h.Service.RegisterNameEvaluation(r.Context(), r.PathValue("fileID"), user.ID, input); err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"registered": true})
+}
+func (h sourceProcessingHandler) nameEvidenceStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.Service.NameEvidenceStatus(r.Context(), r.PathValue("fileID"), user.ID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

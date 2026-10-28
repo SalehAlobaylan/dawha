@@ -125,3 +125,13 @@ describe("suggestArabicNames", () => {
     expect(candidates[0].keys.compact).toBe("عبدالله");
   });
 });
+
+it("uses explicit file counts and retains a human display spelling without duplicating variants", () => {
+ const result = rankArabicNames("زيد", { common: [], file: [
+  { value: "زيدان", count: 3, variants: ["زيدان"] },
+  { value: "زيدون", count: 40, variants: ["زيدون", "زِيدون"] },
+ ] });
+ expect(result[0].value).toBe("زيدون");
+ expect(result[0].fileCount).toBe(40);
+ expect(result.find((entry) => entry.value === "زيدان")?.fileCount).toBe(3);
+});

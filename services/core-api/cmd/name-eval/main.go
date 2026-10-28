@@ -85,24 +85,78 @@ type judgeOutput struct {
 	LatencyMS     int                `json:"latencyMs"`
 }
 
+type cohortVersion struct {
+	Recipe     string `json:"recipeVersion"`
+	Evidence   string `json:"evidenceVersion"`
+	Generation string `json:"generationVersion"`
+	Renderer   string `json:"rendererVersion"`
+	Lexicon    string `json:"lexiconVersion"`
+	Partition  string `json:"partition"`
+	Pool       string `json:"poolVersion"`
+	Reader     string `json:"readerVersion"`
+	Model      string `json:"judgeModel"`
+	Prompt     string `json:"promptVersion"`
+}
+
+func rowVersion(row decisionRow) cohortVersion {
+	legacy := func(value string) string {
+		if value == "" {
+			return "legacy"
+		}
+		return value
+	}
+	model, prompt := row.Judge.Model, row.Judge.PromptVersion
+	if row.FrozenModel != "" {
+		model = row.FrozenModel
+	}
+	if row.FrozenPrompt != "" {
+		prompt = row.FrozenPrompt
+	}
+	return cohortVersion{Pool: legacy(row.PoolVersion), Reader: legacy(row.ReaderVersion), Model: legacy(model), Prompt: legacy(prompt), Evidence: legacy(row.EvidenceVersion), Generation: legacy(row.GenerationVersion), Renderer: legacy(row.RendererVersion), Lexicon: legacy(row.LexiconVersion), Partition: legacy(row.Partition), Recipe: legacy(row.RecipeVersion)}
+}
+
+func selectCohort(rows []decisionRow, selected cohortVersion) []decisionRow {
+	result := make([]decisionRow, 0, len(rows))
+	for _, row := range rows {
+		version := rowVersion(row)
+		if (selected.Recipe == "" || selected.Recipe == version.Recipe) && (selected.Evidence == "" || selected.Evidence == version.Evidence) && (selected.Generation == "" || selected.Generation == version.Generation) && (selected.Renderer == "" || selected.Renderer == version.Renderer) && (selected.Partition == "" || selected.Partition == version.Partition) &&
+			(selected.Pool == "" || selected.Pool == version.Pool) && (selected.Reader == "" || selected.Reader == version.Reader) &&
+			(selected.Model == "" || selected.Model == version.Model) && (selected.Prompt == "" || selected.Prompt == version.Prompt) {
+			result = append(result, row)
+		}
+	}
+	return result
+}
+
 type decisionRow struct {
-	ID                string
-	FileID            string
-	FileName          string
-	Decision          string
-	DecidedText       string
-	Candidates        []candidateSnapshot
-	InputMethod       string
-	NormalizerVersion string
-	DurationMS        int
-	Judge             judgeOutput
-	PageNumber        int
-	ReaderConfidence  float64
-	DecisionAt        time.Time
-	MimeType          string
-	PageWidth         float64
-	PageHeight        float64
-	SourceClass       string
+	RecipeVersion                                                                  string
+	SourceGroup                                                                    string
+	ReadingDiagnostics                                                             []string
+	EvidenceVersion, GenerationVersion, RendererVersion, LexiconVersion, Partition string
+	ExposureID, FrozenModel, FrozenPrompt, InitialGap, JudgeGap                    string
+	InitialValid, BlindEligible, ContextTruncated                                  bool
+	SuggestionID                                                                   string
+	ReviewRevision                                                                 int
+	Superseded                                                                     bool
+	PoolVersion                                                                    string
+	ReaderVersion                                                                  string
+	ID                                                                             string
+	FileID                                                                         string
+	FileName                                                                       string
+	Decision                                                                       string
+	DecidedText                                                                    string
+	Candidates                                                                     []candidateSnapshot
+	InputMethod                                                                    string
+	NormalizerVersion                                                              string
+	DurationMS                                                                     int
+	Judge                                                                          judgeOutput
+	PageNumber                                                                     int
+	ReaderConfidence                                                               float64
+	DecisionAt                                                                     time.Time
+	MimeType                                                                       string
+	PageWidth                                                                      float64
+	PageHeight                                                                     float64
+	SourceClass                                                                    string
 }
 
 type rate struct {
@@ -210,36 +264,47 @@ type shadowGate struct {
 }
 
 type report struct {
-	GeneratedAt      string                 `json:"generatedAt"`
-	Since            string                 `json:"since,omitempty"`
-	Normalizer       string                 `json:"normalizerVersion"`
-	Decisions        int                    `json:"decisions"`
-	WithSnapshot     int                    `json:"withSnapshot"`
-	MissingSnapshot  int                    `json:"missingSnapshot"`
-	StaleNormalizer  int                    `json:"staleNormalizer"`
-	Recall           rate                   `json:"recallAt8"`
-	RecallAny        rate                   `json:"recallAnyShown"`
-	NoCandidates     rate                   `json:"noCandidates"`
-	AllWrong         rate                   `json:"allWrongCandidates"`
-	Top1             rate                   `json:"top1"`
-	Top3             rate                   `json:"top3"`
-	MRR              float64                `json:"mrr"`
-	Typed            rate                   `json:"typed"`
-	MedianMS         *int                   `json:"medianDurationMs,omitempty"`
-	JudgeTotal       int                    `json:"judgeTotal"`
-	JudgeTop1        rate                   `json:"judgeTop1"`
-	JudgeTop3        rate                   `json:"judgeTop3"`
-	JudgeAbstain     rate                   `json:"judgeAbstain"`
-	JudgeUsed        int                    `json:"judgeUsed"`
-	JudgeActiveShown int                    `json:"judgeActiveShown"`
-	JudgeUseRate     rate                   `json:"judgeUseRate"`
-	SourceCoverage   []sourceCoverageReport `json:"candidateSourceCoverage"`
-	Breakdowns       []breakdownReport      `json:"breakdowns"`
-	JudgeAbstention  judgeAbstentionReport  `json:"judgeAbstention"`
-	JudgeComparison  judgeComparisonReport  `json:"judgeComparison"`
-	Calibration      []calibrationBucket    `json:"judgeCalibration"`
-	ShadowGate       shadowGate             `json:"shadowGate"`
-	Files            []fileReport           `json:"files"`
+	DistinctSourceGroups   int                    `json:"distinctSourceGroups"`
+	PreparationDiagnostics map[string]int         `json:"preparationDiagnostics"`
+	DistinctSources        int                    `json:"distinctSources"`
+	DuplicateObservations  int                    `json:"duplicateObservations"`
+	TruthPolicy            string                 `json:"truthPolicy"`
+	Cutoff                 string                 `json:"cutoff,omitempty"`
+	SupersededDecisions    int                    `json:"supersededDecisions"`
+	CollapsedRevisions     int                    `json:"collapsedRevisions"`
+	Cohort                 *cohortVersion         `json:"cohort,omitempty"`
+	Cohorts                []report               `json:"cohorts,omitempty"`
+	MixedVersions          bool                   `json:"mixedVersions"`
+	GeneratedAt            string                 `json:"generatedAt"`
+	Since                  string                 `json:"since,omitempty"`
+	Normalizer             string                 `json:"normalizerVersion"`
+	Decisions              int                    `json:"decisions"`
+	WithSnapshot           int                    `json:"withSnapshot"`
+	MissingSnapshot        int                    `json:"missingSnapshot"`
+	StaleNormalizer        int                    `json:"staleNormalizer"`
+	Recall                 rate                   `json:"recallAt8"`
+	RecallAny              rate                   `json:"recallAnyShown"`
+	NoCandidates           rate                   `json:"noCandidates"`
+	AllWrong               rate                   `json:"allWrongCandidates"`
+	Top1                   rate                   `json:"top1"`
+	Top3                   rate                   `json:"top3"`
+	MRR                    float64                `json:"mrr"`
+	Typed                  rate                   `json:"typed"`
+	MedianMS               *int                   `json:"medianDurationMs,omitempty"`
+	JudgeTotal             int                    `json:"judgeTotal"`
+	JudgeTop1              rate                   `json:"judgeTop1"`
+	JudgeTop3              rate                   `json:"judgeTop3"`
+	JudgeAbstain           rate                   `json:"judgeAbstain"`
+	JudgeUsed              int                    `json:"judgeUsed"`
+	JudgeActiveShown       int                    `json:"judgeActiveShown"`
+	JudgeUseRate           rate                   `json:"judgeUseRate"`
+	SourceCoverage         []sourceCoverageReport `json:"candidateSourceCoverage"`
+	Breakdowns             []breakdownReport      `json:"breakdowns"`
+	JudgeAbstention        judgeAbstentionReport  `json:"judgeAbstention"`
+	JudgeComparison        judgeComparisonReport  `json:"judgeComparison"`
+	Calibration            []calibrationBucket    `json:"judgeCalibration"`
+	ShadowGate             shadowGate             `json:"shadowGate"`
+	Files                  []fileReport           `json:"files"`
 }
 
 type pair struct {
@@ -269,9 +334,39 @@ type decisionAnalysis struct {
 func main() {
 	databaseURL := flag.String("database-url", os.Getenv("DATABASE_URL"), "PostgreSQL connection string")
 	sinceText := flag.String("since", "", "only decisions at or after this RFC3339 timestamp")
+	cutoffText := flag.String("cutoff", "", "only decisions at or before this RFC3339 timestamp")
+	truthPolicy := flag.String("truth-policy", "first", "evaluation truth per occurrence: first or latest")
 	asJSON := flag.Bool("json", false, "write the report as JSON")
 	classMapPath := flag.String("class-map", "", "JSON object mapping source file IDs to clean_print, calligraphic_dense, or low_resolution_screenshot")
+	selected := cohortVersion{}
+	flag.StringVar(&selected.Pool, "pool-version", "", "select a saved candidate pool version, or legacy")
+	flag.StringVar(&selected.Reader, "reader-version", "", "select the saved immutable reading model version, or legacy")
+	flag.StringVar(&selected.Model, "judge-model", "", "select a saved judge model, or legacy")
+	flag.StringVar(&selected.Prompt, "prompt-version", "", "select a saved judge prompt version, or legacy")
+	flag.StringVar(&selected.Recipe, "recipe-version", "", "select the complete frozen version contract hash")
+	flag.StringVar(&selected.Evidence, "evidence-version", "", "select the initial evidence schema")
+	flag.StringVar(&selected.Generation, "generation-version", "", "select the generation recipe")
+	flag.StringVar(&selected.Renderer, "renderer-version", "", "select the source renderer")
+	flag.StringVar(&selected.Partition, "partition", "", "select development or held_out; default reports partitions separately")
 	flag.Parse()
+	if selected.Partition != "" && selected.Partition != "development" && selected.Partition != "held_out" {
+		fmt.Fprintln(os.Stderr, "name-eval: partition must be development or held_out")
+		os.Exit(2)
+	}
+	if *truthPolicy != "first" && *truthPolicy != "latest" {
+		fmt.Fprintln(os.Stderr, "name-eval: --truth-policy must be first or latest")
+		os.Exit(2)
+	}
+	if *truthPolicy == "latest" && strings.TrimSpace(*cutoffText) == "" {
+		fmt.Fprintln(os.Stderr, "name-eval: --truth-policy latest requires a pinned --cutoff")
+		os.Exit(2)
+	}
+	if strings.TrimSpace(*cutoffText) != "" {
+		if _, err := time.Parse(time.RFC3339, *cutoffText); err != nil {
+			fmt.Fprintln(os.Stderr, "name-eval: --cutoff is not RFC3339")
+			os.Exit(2)
+		}
+	}
 
 	if strings.TrimSpace(*databaseURL) == "" {
 		fmt.Fprintln(os.Stderr, "name-eval: --database-url or DATABASE_URL is required")
@@ -297,13 +392,14 @@ func main() {
 	}
 	defer pool.Close()
 
-	rows, err := loadDecisions(ctx, pool, *sinceText)
+	rows, err := loadDecisions(ctx, pool, *sinceText, *cutoffText)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "name-eval: %v\n", err)
 		os.Exit(2)
 	}
+	rows = selectCohort(rows, selected)
 	applyClassMap(rows, classMap)
-	result := summarizeWithClassMap(rows, *sinceText, len(classMap) > 0)
+	result := summarizeWithTruth(rows, *sinceText, len(classMap) > 0, *truthPolicy, *cutoffText)
 	result.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 	if *asJSON {
 		encoded, err := json.MarshalIndent(result, "", "  ")
@@ -349,7 +445,16 @@ func applyClassMap(rows []decisionRow, mapping map[string]string) {
 	}
 }
 
-func loadDecisions(ctx context.Context, pool *pgxpool.Pool, since string) ([]decisionRow, error) {
+func loadDecisions(ctx context.Context, pool *pgxpool.Pool, since, cutoff string) ([]decisionRow, error) {
+	// Both decisions and geometry retirement must use the same temporal boundary.
+	var cutoffAt any
+	if strings.TrimSpace(cutoff) != "" {
+		parsed, err := time.Parse(time.RFC3339, cutoff)
+		if err != nil {
+			return nil, fmt.Errorf("--cutoff is not RFC3339: %w", err)
+		}
+		cutoffAt = parsed
+	}
 	query := `
 		SELECT d.id::text,
 		       sg.source_file_id::text,
@@ -359,6 +464,8 @@ func loadDecisions(ctx context.Context, pool *pgxpool.Pool, since string) ([]dec
 		       d.candidate_snapshot,
 		       d.input_method,
 		       d.normalizer_version,
+               d.candidate_pool_version,
+               COALESCE(NULLIF(sg.reading_model,''),'legacy'),
 		       COALESCE(d.duration_ms, -1),
 		       d.judge_output,
 		       sg.page_number,
@@ -366,20 +473,43 @@ func loadDecisions(ctx context.Context, pool *pgxpool.Pool, since string) ([]dec
 		       d.created_at,
 		       COALESCE(sf.mime_type, ''),
 		       COALESCE(spe.page_width, 0),
-		       COALESCE(spe.page_height, 0)
+		       COALESCE(spe.page_height, 0),
+		       sg.id::text,
+		       d.review_revision,
+		       sg.superseded_at IS NOT NULL AND ($1::timestamptz IS NULL OR sg.superseded_at <= $1),
+ jsonb_build_object('boundaryAt',(SELECT installed_at FROM source_name_review_boundary WHERE version='name-review-v2'),'groupKey',COALESCE(eg.group_key,''),'decisionGap',COALESCE(de.gap_reason,''),'schema',COALESCE(de.schema_version,''),'preparationId',COALESCE(p.id::text,''),'exposureId',COALESCE(p.exposure_id::text,''),
+ 'suggestionId',COALESCE(p.suggestion_id::text,''),'actualSuggestionId',sg.id::text,'signature',COALESCE(p.signature,''),'snapshot',p.snapshot,'versions',p.versions,
+ 'context',ex.context,'lexiconRevision',lex.revision,'exposureAt',ex.created_at,'preparationAt',p.created_at,'requestAt',q.created_at,'resultAt',res.created_at,
+ 'requestPayload',q.payload,'requestSignature',COALESCE(q.signature,''),'requestIdentity',q.identity,'resultSignature',COALESCE(res.signature,''),'result',res.result,
+ 'latencyMs',COALESCE(res.latency_ms,0),'eligible',COALESCE(p.eligible,false),'partition',COALESCE(eg.partition,''),'registrationAt',em.created_at,'registrationContract',eg.contract)
 		FROM source_tree_suggestion_decisions d
 		JOIN source_tree_suggestions sg ON sg.id = d.suggestion_id
 		JOIN source_files sf ON sf.id = sg.source_file_id
 		LEFT JOIN source_page_evidence spe ON spe.id = sg.source_page_evidence_id
+ LEFT JOIN source_name_decision_evidence de ON de.decision_id=d.id
+ LEFT JOIN source_name_candidate_preparations p ON p.id=de.preparation_id
+ LEFT JOIN source_name_review_exposures ex ON ex.id=p.exposure_id
+ LEFT JOIN source_name_lexicon_revisions lex ON lex.id=ex.lexicon_id
+ LEFT JOIN source_name_judge_requests q ON q.preparation_id=p.id
+ LEFT JOIN source_name_judge_results res ON res.request_id=q.id
+ LEFT JOIN source_name_evaluation_members em ON em.source_file_id=sg.source_file_id
+ LEFT JOIN source_name_evaluation_groups eg ON eg.id=em.group_id
 	`
-	args := []any{}
+	args := []any{cutoffAt}
+	conditions := []string{}
 	if strings.TrimSpace(since) != "" {
 		parsed, err := time.Parse(time.RFC3339, since)
 		if err != nil {
 			return nil, fmt.Errorf("--since is not RFC3339: %w", err)
 		}
-		query += ` WHERE d.created_at >= $1`
 		args = append(args, parsed)
+		conditions = append(conditions, fmt.Sprintf("d.created_at >= $%d", len(args)))
+	}
+	if cutoffAt != nil {
+		conditions = append(conditions, "d.created_at <= $1")
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
 	}
 	query += ` ORDER BY d.created_at, d.id`
 
@@ -392,23 +522,28 @@ func loadDecisions(ctx context.Context, pool *pgxpool.Pool, since string) ([]dec
 	out := make([]decisionRow, 0, 256)
 	for rows.Next() {
 		var row decisionRow
-		var snapshotJSON, judgeJSON []byte
+		var snapshotJSON, judgeJSON, initialJSON []byte
 		if err := rows.Scan(
 			&row.ID, &row.FileID, &row.FileName, &row.Decision, &row.DecidedText,
-			&snapshotJSON, &row.InputMethod, &row.NormalizerVersion, &row.DurationMS, &judgeJSON,
+			&snapshotJSON, &row.InputMethod, &row.NormalizerVersion, &row.PoolVersion, &row.ReaderVersion, &row.DurationMS, &judgeJSON,
 			&row.PageNumber, &row.ReaderConfidence, &row.DecisionAt, &row.MimeType,
-			&row.PageWidth, &row.PageHeight,
+			&row.PageWidth, &row.PageHeight, &row.SuggestionID, &row.ReviewRevision, &row.Superseded, &initialJSON,
 		); err != nil {
 			return nil, err
 		}
 		if len(snapshotJSON) > 0 {
 			if err := json.Unmarshal(snapshotJSON, &row.Candidates); err != nil {
-				return nil, fmt.Errorf("decision %s candidate snapshot: %w", row.ID, err)
+				return nil, fmt.Errorf("invalid legacy candidate snapshot")
 			}
 		}
 		if len(judgeJSON) > 0 {
 			_ = json.Unmarshal(judgeJSON, &row.Judge)
 		}
+		var initial initialEvidence
+		if json.Unmarshal(initialJSON, &initial) != nil {
+			return nil, fmt.Errorf("invalid initial evidence metadata")
+		}
+		applyInitialEvidence(&row, initial)
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -422,7 +557,55 @@ func summarize(rows []decisionRow, since string) report {
 }
 
 func summarizeWithClassMap(rows []decisionRow, since string, classMapProvided bool) report {
-	result := report{Normalizer: normalizerVersion, Since: since}
+	return summarizeWithTruth(rows, since, classMapProvided, "first", "")
+}
+
+// summarizeWithTruth makes the evaluation truth policy explicit. The original
+// cohort keeps first-decision semantics; a new evaluation may select the latest
+// human revision as of a pinned cutoff. Neither policy counts retries or later
+// revisions as independent physical occurrences.
+func summarizeWithTruth(rows []decisionRow, since string, classMapProvided bool, truthPolicy, cutoff string) report {
+	uniqueRows, duplicateCount, supersededCount, collapsedCount := uniqueObservations(rows, truthPolicy)
+	rows = uniqueRows
+	result := summarizeCohort(rows, since, classMapProvided)
+	result.TruthPolicy = truthPolicy
+	result.Cutoff = cutoff
+	result.DuplicateObservations = duplicateCount
+	result.SupersededDecisions = supersededCount
+	result.CollapsedRevisions = collapsedCount
+	groups := make(map[cohortVersion][]decisionRow)
+	for _, row := range rows {
+		version := rowVersion(row)
+		groups[version] = append(groups[version], row)
+	}
+	versions := make([]cohortVersion, 0, len(groups))
+	for version := range groups {
+		versions = append(versions, version)
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		a, _ := json.Marshal(versions[i])
+		b, _ := json.Marshal(versions[j])
+		return string(a) < string(b)
+	})
+	for _, version := range versions {
+		cohort := summarizeCohort(groups[version], since, classMapProvided)
+		v := version
+		cohort.Cohort = &v
+		result.Cohorts = append(result.Cohorts, cohort)
+	}
+	result.MixedVersions = len(groups) > 1
+	if result.MixedVersions {
+		result.ShadowGate.Ready = false
+		result.ShadowGate.Reasons = append(result.ShadowGate.Reasons, "mixed pipeline versions; select one coherent cohort with the version flags")
+	}
+	if len(versions) == 1 {
+		result.Cohort = &versions[0]
+	}
+	return result
+}
+
+func summarizeCohort(rows []decisionRow, since string, classMapProvided bool) report {
+	result := report{Normalizer: normalizerVersion, Since: since, PreparationDiagnostics: map[string]int{}}
 	analyses := make([]decisionAnalysis, 0, len(rows))
 	byFile := make(map[string]*fileReport)
 	fileAnalyses := make(map[string][]decisionAnalysis)
@@ -436,7 +619,36 @@ func summarizeWithClassMap(rows []decisionRow, since string, classMapProvided bo
 			byFile[row.FileID] = file
 		}
 		file.Decisions++
-		if len(row.Candidates) == 0 {
+		if row.EvidenceVersion != "" {
+			seenDiagnostic := map[string]bool{}
+			for _, key := range row.ReadingDiagnostics {
+				switch key {
+				case "empty_machine_reading", "unsupported_reading", "local_reading_unavailable", "geometry_unavailable":
+					if !seenDiagnostic[key] {
+						result.PreparationDiagnostics[key]++
+						seenDiagnostic[key] = true
+					}
+				}
+			}
+
+			result.PreparationDiagnostics["newEvidence"]++
+			if row.InitialGap != "" {
+				result.PreparationDiagnostics[row.InitialGap]++
+			}
+			if row.JudgeGap != "" {
+				result.PreparationDiagnostics[row.JudgeGap]++
+			}
+			if !row.BlindEligible {
+				result.PreparationDiagnostics["operational_or_development"]++
+			}
+			if row.ContextTruncated {
+				result.PreparationDiagnostics["truncated_file_context"]++
+			}
+			if row.InitialValid && len(row.Candidates) == 0 {
+				result.PreparationDiagnostics["no_candidates"]++
+			}
+		}
+		if len(row.Candidates) == 0 && !row.InitialValid {
 			result.MissingSnapshot++
 			continue
 		}
@@ -458,6 +670,14 @@ func summarizeWithClassMap(rows []decisionRow, since string, classMapProvided bo
 		fileAnalyses[row.FileID] = append(fileAnalyses[row.FileID], analysis)
 	}
 
+	result.DistinctSources = len(byFile)
+	sourceGroups := map[string]bool{}
+	for _, row := range rows {
+		if row.SourceGroup != "" {
+			sourceGroups[row.SourceGroup] = true
+		}
+	}
+	result.DistinctSourceGroups = len(sourceGroups)
 	result.Recall, result.RecallAny, result.NoCandidates, result.AllWrong, result.Top1, result.Top3, result.Typed, result.MRR = overallMetrics(analyses)
 	result.MedianMS = median(allDurations)
 	result.SourceCoverage = sourceCoverage(analyses)
@@ -591,6 +811,13 @@ func summarizeWithClassMap(rows []decisionRow, since string, classMapProvided bo
 	}
 	result.Calibration = calibrationBuckets(calibration)
 	result.ShadowGate = shadowGateReport(analyses, classMapProvided)
+	for _, row := range rows {
+		if row.Partition == "held_out" && row.InitialGap != "" {
+			result.ShadowGate.Ready = false
+			result.ShadowGate.Reasons = append(result.ShadowGate.Reasons, "unresolved initial preparation gaps in held-out cohort")
+			break
+		}
+	}
 	if result.Recall.Measurable && result.Recall.Rate < minCandidateRecall {
 		result.ShadowGate.Ready = false
 		result.ShadowGate.Reasons = append(result.ShadowGate.Reasons,
@@ -1051,6 +1278,13 @@ func shadowGateReport(analyses []decisionAnalysis, classMapProvided bool) shadow
 	}
 	counts := make(map[string]*classCount)
 	for _, analysis := range analyses {
+		if analysis.Row.Partition == "development" {
+			continue
+		}
+		if analysis.Row.EvidenceVersion != "" && (!analysis.Row.InitialValid || !analysis.Row.BlindEligible || analysis.Row.Partition != "held_out") {
+			continue
+		}
+
 		// An active or displayed recommendation cannot contribute to the blind
 		// shadow sample, even when it has a valid judge output and human answer.
 		if !analysis.JudgePresent || analysis.Row.Judge.Mode != "shadow" || analysis.Row.Judge.Shown || analysis.Row.Judge.Used {
@@ -1335,6 +1569,25 @@ func candidateMatches(candidate candidateSnapshot, truth nameKeys) bool {
 }
 
 func printReport(result report) {
+	fmt.Printf("truth policy: %s", result.TruthPolicy)
+	if result.Cutoff != "" {
+		fmt.Printf(" (cutoff %s)", result.Cutoff)
+	}
+	fmt.Printf("; superseded decisions excluded: %d; revision collapses: %d\n", result.SupersededDecisions, result.CollapsedRevisions)
+	fmt.Printf("distinct sources: %d; duplicate revisions/retries excluded: %d\n", result.DistinctSources, result.DuplicateObservations)
+	diagnosticKeys := []string{}
+	for key := range result.PreparationDiagnostics {
+		diagnosticKeys = append(diagnosticKeys, key)
+	}
+	sort.Strings(diagnosticKeys)
+	for _, key := range diagnosticKeys {
+		fmt.Printf("initial evidence %s: %d\n", key, result.PreparationDiagnostics[key])
+	}
+	for _, cohort := range result.Cohorts {
+		v := cohort.Cohort
+		fmt.Printf("cohort pool=%s reader=%s judge=%s prompt=%s: decisions=%d gate-ready=%t\n", v.Pool, v.Reader, v.Model, v.Prompt, cohort.Decisions, cohort.ShadowGate.Ready)
+	}
+
 	measurable := "not measurable"
 	if result.Recall.Measurable {
 		measurable = "measurable"

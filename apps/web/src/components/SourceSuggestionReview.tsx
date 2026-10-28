@@ -6,14 +6,19 @@ import {
   ChevronRight,
   CircleHelp,
   CircleSlash,
+  Crop,
   FileText,
+  GitMerge,
+  History,
   Keyboard,
   Loader2,
   Minus,
   Plus,
   RefreshCw,
   ScanText,
+  Scissors,
   Sparkles,
+  Undo2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,12 +26,25 @@ import { ApiError } from "../lib/api";
 import {
   decideSourceTreeSuggestion,
   fetchNameJudgeConfig,
+ fetchNameLexicon, beginNameReview, prepareNameCandidates, sealNameReview,
+  fetchReadingCapabilities,
+  fetchLocalNameReadings,
+  fetchLatestLocalRereadRun,
+  fetchNameReadingRun,
+  rereadSourceSuggestionLocally,
   fetchSourcePagePreview,
   fetchSourceSuggestionAccuracy,
   fetchSourceSuggestionCandidates,
   fetchSourceSuggestionCrop,
   fetchSourceTreeSuggestions,
+  fetchNameReviewSummary,
+  fetchSourceSuggestionHistory,
   judgeSourceTreeSuggestion,
+  mergeSourceTreeSuggestions,
+  previewSourceSuggestionRegion,
+  reopenSourceSuggestion,
+  reviseSourceSuggestionRegion,
+  splitSourceTreeSuggestion,
 } from "../lib/api";
 import {
   ARABIC_NAME_NORMALIZER_VERSION,
@@ -34,20 +52,28 @@ import {
   normalizeArabicName,
   rankArabicNames,
   type NameCandidateSource,
+ type CountedFileName,
 } from "../lib/arabicNames";
-import { buildCandidateSnapshot, buildShadowCandidateSnapshot, matchSnapshotCandidate } from "../lib/nameReviewEvidence";
+import { buildCandidateSnapshot, buildPreparedCandidateSnapshot, matchSnapshotCandidate } from "../lib/nameReviewEvidence";
 import {
   buildJudgeEvidence,
   judgeCandidateSignature,
   judgeCandidatesFromSnapshot,
   judgeChoiceIsInSnapshot,
-  sampledForShadow,
   selectJudgeEvidenceCandidate,
   type JudgeResultSnapshot,
 } from "../lib/nameJudge";
 import type {
   NameJudgeConfig,
+ NamePreparationContext, NameCandidatePreparation,
+  ReadingCapabilities,
+  NameReadingRun,
+  LocalNameReading,
+  NameRegion,
+  NameReviewSummary,
   SourceSuggestionAccuracy,
+  SourceSuggestionHistory,
+  SourceSuggestionRegionPreview,
   SourceTreeSuggestion,
   SourceTreeSuggestionDecision,
   SourceTreeSuggestionDecisionEvidence,
@@ -61,7 +87,39 @@ interface SourceSuggestionReviewProps {
 }
 
 type QueueFilter = "all" | "unreadable" | "uncertain" | "page";
+type QueueMode = "pending" | "deferred" | "history";
 type CropState = "idle" | "loading" | "ready" | "error";
+type PercentRegion = { x: number; y: number; width: number; height: number };
+
+interface SessionCounts {
+  accepted: number;
+  corrected: number;
+  deferred: number;
+  rejected: number;
+}
+
+const EMPTY_SESSION: SessionCounts = { accepted: 0, corrected: 0, deferred: 0, rejected: 0 };
+
+const QUEUE_MODES: Array<{ value: QueueMode; label: string }> = [
+  { value: "pending", label: "بانتظار المراجعة" },
+  { value: "deferred", label: "مؤجلة" },
+  { value: "history", label: "السجل" },
+];
+
+const DECISION_LABELS: Record<SourceTreeSuggestionDecision, string> = {
+  accepted: "اعتماد",
+  corrected: "تصحيح",
+  deferred: "تأجيل",
+  rejected: "رفض",
+};
+
+const EVENT_LABELS: Record<string, string> = {
+  reopened: "إعادة فتح",
+  decision: "قرار",
+  region_revised: "تعديل حدود",
+  split: "تقسيم",
+  merge: "دمج",
+};
 
 const QUEUE_LIMIT = 200;
 const MAX_QUEUE_LIMIT = 200;
@@ -104,6 +162,26 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const [activeID, setActiveID] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [filter, setFilter] = useState<QueueFilter>("all");
+  const [queueMode, setQueueMode] = useState<QueueMode>("pending");
+  const [summary, setSummary] = useState<NameReviewSummary | null>(null);
+  const [sessionCounts, setSessionCounts] = useState<SessionCounts>(EMPTY_SESSION);
+  const [history, setHistory] = useState<SourceSuggestionHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
+  const [regionDraft, setRegionDraft] = useState<PercentRegion | null>(null);
+  const [regionPreview, setRegionPreview] = useState<SourceSuggestionRegionPreview | null>(null);
+  const [regionBusy, setRegionBusy] = useState(false);
+  const [regionError, setRegionError] = useState("");
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitRegions, setSplitRegions] = useState<[PercentRegion, PercentRegion] | null>(null);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [splitError, setSplitError] = useState("");
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState("");
+  const [localReadings, setLocalReadings] = useState<LocalNameReading[]>([]);
   const [previewURL, setPreviewURL] = useState("");
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [tightURL, setTightURL] = useState("");
@@ -116,7 +194,9 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const [zoom, setZoom] = useState(1);
   const [mapZoom, setMapZoom] = useState(1);
   const [enhance, setEnhance] = useState(false);
-  const [knownNames, setKnownNames] = useState<string[]>([]);
+  const [knownNames, setKnownNames] = useState<CountedFileName[]>([]);
+ const [reviewPreparation,setReviewPreparation]=useState<{suggestionId:string;context:NamePreparationContext|null;preparation?:NameCandidatePreparation}|null>(null);
+  const [readingCapabilities, setReadingCapabilities] = useState<ReadingCapabilities | null>(null);
   const [aiCandidates, setAICandidates] = useState<string[]>([]);
   const [aiLoading, setAILoading] = useState(false);
   const [aiError, setAIError] = useState("");
@@ -140,6 +220,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const aiRequestRef = useRef(0);
   const judgeRequestRef = useRef(0);
   const judgeUsedRef = useRef(false);
+ const activePostureRef=useRef(false);
   const judgeUsedResultRef = useRef<JudgeResultState | null>(null);
   // The judge result is valid for one active suggestion and one candidate set.
   // These refs let the debounced effect read the latest snapshot without making
@@ -147,7 +228,9 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const draftRef = useRef("");
   const judgeCandidatesRef = useRef<ReturnType<typeof judgeCandidatesFromSnapshot>>([]);
   const judgeSnapshotRef = useRef<ReturnType<typeof buildCandidateSnapshot>>([]);
-  const shadowSnapshotsRef = useRef(new Map<string, ReturnType<typeof buildCandidateSnapshot>>());
+  const cropFileRef = useRef(fileId);
+  const cropCacheRef = useRef(new Map<string, { tight: Blob; context: Blob }>());
+  const localRereadButtonRef = useRef<HTMLButtonElement>(null);
   // The origin is what the reviewer did, not what the final text happens to
   // equal. Typing a candidate's spelling is still manual entry; clicking it is
   // a candidate choice. That distinction is the measurement.
@@ -160,18 +243,31 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   );
   const activePage = active?.pageNumber ?? null;
 
+  const refreshSummary = useCallback(async () => {
+    try {
+      setSummary(await fetchNameReviewSummary(fileId));
+    } catch {
+      // Counts are assistance, not evidence. A failed count must not hide the
+      // queue or make a saved decision look unsaved.
+    }
+  }, [fileId]);
+
   // The queue is deliberately loaded in pages. A wall chart can contain
   // thousands of names; the browser should not receive all of them to show one.
+  // Pending, deferred, and history are separate operational reads over the same
+  // append-only ledger.
   const loadInitial = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [queue, measured] = await Promise.all([
-        fetchSourceTreeSuggestions(fileId, "suggested", QUEUE_LIMIT, 0),
+      const [queue, measured, counted] = await Promise.all([
+        fetchSourceTreeSuggestions(fileId, queueStatus(queueMode), QUEUE_LIMIT, 0),
         fetchSourceSuggestionAccuracy(fileId),
+        fetchNameReviewSummary(fileId).catch(() => null),
       ]);
       setSuggestions(queue);
       setAccuracy(measured);
+      setSummary(counted);
       setHasMore(queue.length === QUEUE_LIMIT);
       setActiveID((current) => {
         if (current && queue.some((suggestion) => suggestion.id === current)) return current;
@@ -182,11 +278,24 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     } finally {
       setLoading(false);
     }
-  }, [fileId]);
+  }, [fileId, queueMode]);
 
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
+
+  const refreshReadingCapabilities = useCallback(async () => {
+    try { setReadingCapabilities(await fetchReadingCapabilities(fileId)); }
+    catch { setReadingCapabilities(null); }
+  }, [fileId]);
+
+  useEffect(() => {
+    let live = true;
+    setReadingCapabilities(null);
+    void fetchReadingCapabilities(fileId).then((value) => { if (live) setReadingCapabilities(value); })
+      .catch(() => { if (live) setReadingCapabilities(null); });
+    return () => { live = false; };
+  }, [fileId]);
 
   // The judge posture is optional. A failed config request means "no judge",
   // not a failed review, so it never touches the page-level error.
@@ -222,24 +331,12 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     };
   }, []);
 
-  // Names already decided in this file are the most useful spelling aid for the
-  // next name: the same chart repeats family names, and a reviewer's own
-  // spelling is better than a generic lexicon.
+  // Complete counted context is optional for interactive spelling assistance.
+  // The initial preparation independently pins its exact server revision.
   useEffect(() => {
-    let live = true;
-    void Promise.all([
-      fetchSourceTreeSuggestions(fileId, "accepted", MAX_QUEUE_LIMIT, 0),
-      fetchSourceTreeSuggestions(fileId, "corrected", MAX_QUEUE_LIMIT, 0),
-    ]).then(([accepted, corrected]) => {
-      if (!live) return;
-      const names = [...accepted, ...corrected]
-        .map((suggestion) => suggestion.decidedTextAr || suggestion.suggestedTextAr)
-        .filter(Boolean);
-      setKnownNames(uniqueNames(names));
-    }).catch(() => {
-      // A spelling aid is optional. The main queue and the source crop are not.
-    });
-    return () => { live = false; };
+    const abort = new AbortController();
+    void fetchNameLexicon(fileId, abort.signal).then((lexicon) => { if (!abort.signal.aborted) setKnownNames(lexicon.entries); }).catch(() => {});
+    return () => abort.abort();
   }, [fileId]);
 
   const loadMore = useCallback(async () => {
@@ -247,7 +344,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const next = await fetchSourceTreeSuggestions(fileId, "suggested", MAX_QUEUE_LIMIT, suggestions.length);
+      const next = await fetchSourceTreeSuggestions(fileId, queueStatus(queueMode), MAX_QUEUE_LIMIT, suggestions.length);
       setSuggestions((current) => {
         const seen = new Set(current.map((suggestion) => suggestion.id));
         return [...current, ...next.filter((suggestion) => !seen.has(suggestion.id))];
@@ -262,7 +359,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [fileId, hasMore, suggestions.length]);
+  }, [fileId, hasMore, queueMode, suggestions.length]);
 
   useEffect(() => {
     if (suggestions.length > 0 && suggestions.length <= 20 && hasMore && !loadingMore) {
@@ -274,13 +371,16 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     setRefreshing(true);
     setError("");
     void refreshJudgeConfig();
+    void refreshReadingCapabilities();
     try {
-      const [queue, measured] = await Promise.all([
-        fetchSourceTreeSuggestions(fileId, "suggested", QUEUE_LIMIT, 0),
+      const [queue, measured, counted] = await Promise.all([
+        fetchSourceTreeSuggestions(fileId, queueStatus(queueMode), QUEUE_LIMIT, 0),
         fetchSourceSuggestionAccuracy(fileId),
+        fetchNameReviewSummary(fileId).catch(() => null),
       ]);
       setSuggestions(queue);
       setAccuracy(measured);
+      setSummary(counted);
       setHasMore(queue.length === QUEUE_LIMIT);
       setActiveID((current) => {
         if (current && queue.some((suggestion) => suggestion.id === current)) return current;
@@ -292,7 +392,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     } finally {
       setRefreshing(false);
     }
-  }, [fileId, refreshJudgeConfig]);
+  }, [fileId, queueMode, refreshJudgeConfig, refreshReadingCapabilities]);
 
   useEffect(() => {
     if (!activePage) {
@@ -324,16 +424,19 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     setTightURL("");
     setContextURL("");
     setCropError("");
+    if (cropFileRef.current !== fileId) { cropFileRef.current = fileId; cropCacheRef.current.clear(); setCropState("idle"); return; }
     if (!activeID) {
       setCropState("idle");
       return;
     }
     let live = true;
+    const abort = new AbortController();
     let tightObjectURL = "";
     let contextObjectURL = "";
     setCropNaturalSize({ width: 0, height: 0 });
     setCropState("loading");
-    void fetchSourceSuggestionCrop(activeID).then(({ tight, context }) => {
+    const cached = cropCacheRef.current.get(activeID);
+    void (cached ? Promise.resolve(cached) : fetchSourceSuggestionCrop(activeID, abort.signal)).then(({ tight, context }) => {
       tightObjectURL = URL.createObjectURL(tight);
       contextObjectURL = URL.createObjectURL(context);
       if (live) {
@@ -352,10 +455,24 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     });
     return () => {
       live = false;
+      abort.abort();
       if (tightObjectURL) URL.revokeObjectURL(tightObjectURL);
       if (contextObjectURL) URL.revokeObjectURL(contextObjectURL);
     };
-  }, [activeID, cropAttempt]);
+  }, [activeID, cropAttempt, fileId]);
+
+  // Warm one adjacent crop only after the active crop is ready. Cache at most
+  // the active/next pair; aborting display work never cancels a durable run.
+  useEffect(() => {
+    if (cropState !== "ready" || !activeID) return;
+    const index = suggestions.findIndex((item) => item.id === activeID);
+    const next = suggestions[index + 1];
+    for (const id of cropCacheRef.current.keys()) if (id !== activeID && id !== next?.id) cropCacheRef.current.delete(id);
+    if (!next || cropCacheRef.current.has(next.id)) return;
+    const abort = new AbortController();
+    void fetchSourceSuggestionCrop(next.id, abort.signal).then((crop) => { if (!abort.signal.aborted) cropCacheRef.current.set(next.id, crop); }).catch(() => {});
+    return () => abort.abort();
+  }, [activeID, cropState, suggestions]);
 
   // The crop's "100%" is a fit-to-stage view, capped at twice the source pixels so
   // a tiny name is not blown up into a blur. Zoom then grows it from that fitted
@@ -401,6 +518,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     setAILoading(false);
     judgeUsedRef.current = false;
     judgeUsedResultRef.current = null;
+    activePostureRef.current=false;
   }, [activeID]);
 
   const filtered = useMemo(() => {
@@ -429,6 +547,81 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
 
   const activeIndex = active ? filtered.findIndex((suggestion) => suggestion.id === active.id) : -1;
   const current = activeIndex >= 0 ? active : filtered[0] ?? null;
+  const activeSuggestionID = current?.id ?? null;
+  const readOnly = Boolean(current && ((current.status && current.status !== "suggested") || current.superseded));
+  const wantsHistory = readOnly || historyOpen;
+  useEffect(()=>{if(judgeConfig.mode==="active")activePostureRef.current=true;},[activeID,judgeConfig.mode]);
+  const preparingReview = Boolean(current && !readOnly && reviewPreparation?.suggestionId !== current.id);
+
+  // Reset geometry and history drafts when the reviewer moves to another name.
+  // Draft text is intentionally not reset here: a recoverable crop error must
+  // preserve what the reviewer typed.
+  useEffect(() => {
+    setRegionDraft(null);
+    setRegionPreview(null);
+    setRegionError("");
+    setSplitOpen(false);
+    setSplitRegions(null);
+    setSplitError("");
+    setMergeOpen(false);
+    setMergeSelection([]);
+    setMergeError("");
+    setLocalReadings([]);
+    setHistoryOpen(false);
+    setHistory(null);
+  }, [activeSuggestionID]);
+
+  useEffect(() => {
+    if (!activeSuggestionID || !wantsHistory) {
+      setHistory(null);
+      setHistoryLoading(false);
+      return undefined;
+    }
+    const suggestionId = activeSuggestionID;
+    const abort = new AbortController();
+    setHistoryLoading(true);
+    setHistory(null);
+    void fetchSourceSuggestionHistory(suggestionId, abort.signal).then((value) => {
+      if (!abort.signal.aborted) {
+        setHistory(value);
+        setHistoryLoading(false);
+      }
+    }).catch(() => {
+      if (!abort.signal.aborted) setHistoryLoading(false);
+    });
+    return () => abort.abort();
+  }, [activeSuggestionID, historyAttempt, wantsHistory]);
+
+  useEffect(() => {
+    if (!activeSuggestionID) return undefined;
+    if (readOnly) {
+      setReviewPreparation(null);
+      return undefined;
+    }
+    const suggestionId=activeSuggestionID;
+    const abort=new AbortController();
+    void (async () => {
+      try {
+        const context=await beginNameReview(suggestionId,abort.signal);
+        if(abort.signal.aborted)return;
+        let preparation=context.preparation;
+        if(!preparation && context.canPrepare) preparation=await prepareNameCandidates(suggestionId,context.exposureId,buildPreparedCandidateSnapshot(context),abort.signal);
+        if(abort.signal.aborted)return;
+        setKnownNames(context.lexicon.entries);
+        setSuggestions((queue)=>queue.map((item)=>item.id===suggestionId?{...item,suggestedTextAr:context.reading,alternatives:context.alternatives}:item));
+        setReviewPreparation({suggestionId,context,preparation});
+        startedAtRef.current=typeof performance === "undefined" ? Date.now() : performance.now();
+      } catch {
+        if(abort.signal.aborted)return;
+        // An evidence failure releases manual review and stays a genuine gap.
+        // It never restarts preparation after editing has begun.
+        void sealNameReview(suggestionId).catch(()=>{});
+        setReviewPreparation({suggestionId,context:null});
+      }
+    })();
+    return ()=>abort.abort();
+  },[activeSuggestionID, readOnly]);
+
 
   const pages = useMemo(
     () => Array.from(new Set(filtered.map((suggestion) => suggestion.pageNumber))).sort((left, right) => left - right),
@@ -463,8 +656,9 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     for (const alternative of current.alternatives ?? []) {
       if (alternative.trim()) values.push(alternative.trim());
     }
+    if (reviewPreparation?.suggestionId === current.id) for (const entry of reviewPreparation.context?.readers ?? []) values.push(entry.value);
     return uniqueNames(values);
-  }, [current]);
+  }, [current, reviewPreparation]);
 
   const candidates = useMemo(
     () => rankArabicNames(draft, { reader: readerNames, ai: aiCandidates, file: knownNames }, 8),
@@ -487,20 +681,11 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     () => buildCandidateSnapshot(candidates, unmatchedAICandidates),
     [candidates, unmatchedAICandidates],
   );
-  // Capture the initial candidate pool per suggestion. The interactive chips
-  // can continue responding to edits, but those edits cannot become evidence
-  // for the shadow comparison or leak the human's answer to the judge.
-  const evidenceSnapshot = useMemo(() => {
-    if (judgeConfig.mode !== "shadow" || !current) return judgeSnapshot;
-    const cached = shadowSnapshotsRef.current.get(current.id);
-    if (cached) return cached;
-    const initial = buildShadowCandidateSnapshot(current.suggestedTextAr, current.alternatives ?? [], knownNames);
-    shadowSnapshotsRef.current.set(current.id, initial);
-    return initial;
-  }, [current, judgeConfig.mode, judgeSnapshot, knownNames]);
+  // Interaction evidence may respond to typing. Initial evaluation evidence is
+  // the immutable preparation reference, in every review mode.
+  const evidenceSnapshot = judgeSnapshot;
   const judgeCandidates = useMemo(() => judgeCandidatesFromSnapshot(evidenceSnapshot), [evidenceSnapshot]);
   const judgeSignature = useMemo(() => judgeCandidateSignature(judgeCandidates), [judgeCandidates]);
-  const activeSuggestionID = current?.id ?? null;
   draftRef.current = draft;
   judgeSnapshotRef.current = evidenceSnapshot;
   judgeCandidatesRef.current = judgeCandidates;
@@ -510,10 +695,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     judgeRequestRef.current = requestID;
     setJudgeResult(null);
     setJudgeError(null);
-    if (!activeSuggestionID || !judgeConfig.available || judgeConfig.mode === "off" || judgeCandidates.length === 0) {
-      return undefined;
-    }
-    if (judgeConfig.mode === "shadow" && !sampledForShadow(activeSuggestionID, judgeConfig.sample)) {
+    if (!activeSuggestionID || !judgeConfig.available || judgeConfig.mode !== "active" || preparingReview || judgeCandidates.length === 0) {
       return undefined;
     }
     const mode = judgeConfig.mode;
@@ -546,16 +728,14 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
       window.clearTimeout(timer);
       if (judgeRequestRef.current === requestID) judgeRequestRef.current += 1;
     };
-  }, [activeSuggestionID, judgeCandidates.length, judgeConfig, judgeSignature]);
+  }, [activeSuggestionID, judgeCandidates.length, judgeConfig, judgeSignature, preparingReview]);
 
-  const rememberName = useCallback((name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setKnownNames((currentNames) => uniqueNames([trimmed, ...currentNames]).slice(0, 500));
-  }, []);
+  const rememberName = useCallback(() => {
+    void fetchNameLexicon(fileId).then((lexicon)=>setKnownNames(lexicon.entries)).catch(()=>{});
+  }, [fileId]);
 
   const requestAICandidates = useCallback(async () => {
-    if (!current || aiLoading) return;
+    if (!current || preparingReview || aiLoading || !readingCapabilities?.hostedReader.ready) return;
     const requestID = aiRequestRef.current + 1;
     aiRequestRef.current = requestID;
     setAILoading(true);
@@ -573,7 +753,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     } finally {
       if (aiRequestRef.current === requestID) setAILoading(false);
     }
-  }, [aiLoading, current]);
+  }, [aiLoading, current, readingCapabilities, preparingReview]);
 
   const refreshAccuracy = useCallback(() => {
     void fetchSourceSuggestionAccuracy(fileId).then(setAccuracy).catch(() => {
@@ -586,7 +766,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     decision: "save" | "rejected" | "deferred",
     textOverride?: string,
   ) => {
-    if (!current || working) return;
+    if (!current || readOnly || working || preparingReview) return;
     let text = (textOverride ?? draft).trim();
     let actualDecision: SourceTreeSuggestionDecision;
     let textAr = "";
@@ -606,9 +786,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
       actualDecision = decision;
     }
     const nextID = nextSuggestionID(filtered, current.id);
-    const candidateSnapshot = judgeConfig.mode === "shadow"
-      ? evidenceSnapshot
-      : buildCandidateSnapshot(candidates, unmatchedAICandidates);
+    const candidateSnapshot = buildCandidateSnapshot(candidates, unmatchedAICandidates);
     const selected = matchSnapshotCandidate(candidateSnapshot, text);
     const snapshotSignature = judgeCandidateSignature(judgeCandidatesFromSnapshot(candidateSnapshot));
     let judgeOutput: SourceTreeSuggestionDecisionEvidence["judgeOutput"];
@@ -655,20 +833,28 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     setMessage("");
     try {
       const evidence: SourceTreeSuggestionDecisionEvidence = {
+        judgeWasVisible: activePostureRef.current,
+        evidenceSchemaVersion: "name-review-v2",
+        preparationId: reviewPreparation?.suggestionId===current.id ? reviewPreparation.preparation?.id : undefined,
+        preparationSignature: reviewPreparation?.suggestionId===current.id ? reviewPreparation.preparation?.signature : undefined,
         candidateSnapshot,
         selectedCandidate,
         inputMethod,
         normalizerVersion: ARABIC_NAME_NORMALIZER_VERSION,
         candidatePoolVersion: ARABIC_NAME_POOL_VERSION,
         durationMs,
+        expectedRevision: current.reviewRevision,
+        expectedGeometryRevision: current.geometryRevision,
       };
       if (judgeOutput) evidence.judgeOutput = judgeOutput;
       const saved = await decideSourceTreeSuggestion(current.id, actualDecision, textAr, "", evidence);
       if (actualDecision === "accepted" || actualDecision === "corrected") {
-        rememberName(actualDecision === "accepted" ? current.suggestedTextAr : textAr);
+        rememberName();
       }
+      setSessionCounts((counts) => ({ ...counts, [actualDecision]: counts[actualDecision] + 1 }));
       setSuggestions((queue) => queue.filter((suggestion) => suggestion.id !== current.id));
       setActiveID(nextID);
+      void refreshSummary();
       const decidedMessage = describeDecision(actualDecision, actualDecision === "accepted" ? current.suggestedTextAr : textAr);
       setMessage(saved.evidenceRecorded
         ? decidedMessage
@@ -684,7 +870,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     } finally {
       setWorking(false);
     }
-  }, [candidates, current, draft, evidenceSnapshot, filtered, judgeConfig.mode, judgeResult, refreshAccuracy, reload, rememberName, unmatchedAICandidates, working]);
+  }, [candidates, current, draft, filtered, judgeResult, refreshAccuracy, refreshSummary, reload, rememberName, readOnly, unmatchedAICandidates, working, preparingReview, reviewPreparation]);
 
   const step = useCallback((delta: number) => {
     if (!current || filtered.length === 0) return;
@@ -692,6 +878,248 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     const next = filtered[Math.min(filtered.length - 1, Math.max(0, index + delta))];
     if (next) setActiveID(next.id);
   }, [current, filtered]);
+
+  const reopenCurrent = useCallback(async () => {
+    if (!current || working || !history?.canReopen) return;
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      await reopenSourceSuggestion(current.id, current.reviewRevision);
+      setHistoryOpen(false);
+      setMessage("أُعيد الموضع إلى قائمة الانتظار. القرار السابق محفوظ في السجل.");
+      setQueueMode("pending");
+      void refreshSummary();
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setError("تغيّر هذا الموضع في جلسة أخرى. حُدّث السجل؛ أعد المحاولة من النسخة الظاهرة.");
+        void reload();
+      } else {
+        setError(errorMessage(cause));
+      }
+    } finally {
+      setWorking(false);
+    }
+  }, [current, history?.canReopen, refreshSummary, reload, working]);
+
+  const openRegionEditor = useCallback(() => {
+    if (!current || readOnly) return;
+    setRegionDraft(regionToPercent(current.region));
+    setRegionPreview(null);
+    setRegionError("");
+    setSplitOpen(false);
+    setMergeOpen(false);
+  }, [current, readOnly]);
+
+  const updateRegionField = useCallback((field: keyof PercentRegion, value: number) => {
+    setRegionDraft((draft) => (draft ? { ...draft, [field]: value } : draft));
+    setRegionPreview(null);
+  }, []);
+
+  const previewRegion = useCallback(async () => {
+    if (!current || !regionDraft || regionBusy) return;
+    const validation = validatePercentRegion(regionDraft);
+    if (validation) {
+      setRegionError(validation);
+      return;
+    }
+    setRegionBusy(true);
+    setRegionError("");
+    try {
+      const preview = await previewSourceSuggestionRegion(current.id, {
+        expectedGeometryRevision: current.geometryRevision,
+        region: percentToRegion(regionDraft),
+      });
+      setRegionPreview(preview);
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setRegionError("تغيّر موضع الاسم في جلسة أخرى. حُدّثت القائمة؛ راجع الموضع الحالي.");
+        void reload();
+      } else {
+        setRegionError(errorMessage(cause));
+      }
+    } finally {
+      setRegionBusy(false);
+    }
+  }, [current, regionBusy, regionDraft, reload]);
+
+  const confirmRegion = useCallback(async () => {
+    if (!current || !regionDraft || !regionPreview || regionBusy) return;
+    if (!sameNameRegion(percentToRegion(regionDraft), regionPreview.region)) {
+      setRegionError("غيّرت الحدود بعد المعاينة. أعد المعاينة قبل الحفظ.");
+      return;
+    }
+    setRegionBusy(true);
+    setRegionError("");
+    try {
+      const updated = await reviseSourceSuggestionRegion(current.id, {
+        expectedGeometryRevision: current.geometryRevision,
+        region: regionPreview.region,
+        coordinateSpace: regionPreview.coordinateSpace,
+        analysisDpi: regionPreview.analysisDpi,
+        sourceChecksum: regionPreview.sourceChecksum,
+        frameWidth: regionPreview.frameWidth,
+        frameHeight: regionPreview.frameHeight,
+      });
+      setSuggestions((queue) => queue.map((item) => item.id === updated.id ? updated : item));
+      cropCacheRef.current.delete(current.id);
+      setCropAttempt((value) => value + 1);
+      setRegionDraft(null);
+      setRegionPreview(null);
+      setMessage("حُدّثت حدود القراءة. القصاصة القديمة وقراءاتها محفوظة في السجل.");
+      if (historyOpen) setHistoryAttempt((value) => value + 1);
+      void refreshSummary();
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setRegionError("تغيّر هذا الموضع في جلسة أخرى. حُدّثت القائمة؛ أعد فتح محرر الحدود.");
+        void reload();
+      } else {
+        setRegionError(errorMessage(cause));
+      }
+    } finally {
+      setRegionBusy(false);
+    }
+  }, [current, historyOpen, refreshSummary, regionBusy, regionDraft, regionPreview, reload]);
+
+  const openSplit = useCallback(() => {
+    if (!current || readOnly) return;
+    const parent = current.region;
+    const half = { ...parent, width: parent.width / 2 };
+    setSplitRegions([
+      regionToPercent(half),
+      regionToPercent({ ...parent, x: parent.x + parent.width / 2, width: parent.width / 2 }),
+    ]);
+    setSplitError("");
+    setSplitOpen(true);
+    setRegionDraft(null);
+    setMergeOpen(false);
+  }, [current, readOnly]);
+
+  const updateSplitField = useCallback((index: 0 | 1, field: keyof PercentRegion, value: number) => {
+    setSplitRegions((regions) => {
+      if (!regions) return regions;
+      const next: [PercentRegion, PercentRegion] = [{ ...regions[0] }, { ...regions[1] }];
+      next[index][field] = value;
+      return next;
+    });
+  }, []);
+
+  const submitSplit = useCallback(async () => {
+    if (!current || !splitRegions || splitBusy) return;
+    const [first, second] = splitRegions;
+    for (const region of [first, second]) {
+      const validation = validatePercentRegion(region);
+      if (validation) {
+        setSplitError(validation);
+        return;
+      }
+    }
+    const parent = regionToPercent(current.region);
+    if (!percentRegionContains(parent, first) || !percentRegionContains(parent, second)) {
+      setSplitError("يجب أن يقع كل جزء داخل حدود الموضع الأصلي.");
+      return;
+    }
+    if (percentRegionsOverlap(first, second)) {
+      setSplitError("لا يجوز أن يتداخل الجزآن؛ فسيتكرر الاسم نفسه مرتين.");
+      return;
+    }
+    setSplitBusy(true);
+    setSplitError("");
+    try {
+      const result = await splitSourceTreeSuggestion(current.id, {
+        expectedReviewRevision: current.reviewRevision,
+        expectedGeometryRevision: current.geometryRevision,
+        regions: [percentToRegion(first), percentToRegion(second)],
+      });
+      setSplitOpen(false);
+      setSplitRegions(null);
+      await loadInitial();
+      setMessage(`قُسّم الموضع إلى ${result.children.length} موضعين. الموضع الأصلي محفوظ في السجل.`);
+      void refreshSummary();
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setSplitError("تغيّر هذا الموضع في جلسة أخرى. حُدّثت القائمة؛ أعد المحاولة.");
+        void reload();
+      } else {
+        setSplitError(errorMessage(cause));
+      }
+    } finally {
+      setSplitBusy(false);
+    }
+  }, [current, loadInitial, refreshSummary, reload, splitBusy, splitRegions]);
+
+  const mergeCandidates = useMemo(
+    () => pageSuggestions.filter((suggestion) => suggestion.status === "suggested" && !suggestion.superseded),
+    [pageSuggestions],
+  );
+  const mergeRegion = useMemo(() => {
+    const selected = mergeCandidates.filter((suggestion) => mergeSelection.includes(suggestion.id));
+    return selected.length > 0 ? unionNameRegions(selected.map((suggestion) => suggestion.region)) : null;
+  }, [mergeCandidates, mergeSelection]);
+
+  const openMerge = useCallback(() => {
+    if (!current || readOnly || mergeCandidates.length < 2) return;
+    setMergeSelection([current.id]);
+    setMergeError("");
+    setMergeOpen(true);
+    setRegionDraft(null);
+    setSplitOpen(false);
+  }, [current, mergeCandidates.length, readOnly]);
+
+  const toggleMerge = useCallback((id: string) => {
+    setMergeSelection((selection) => selection.includes(id)
+      ? selection.filter((value) => value !== id)
+      : [...selection, id]);
+  }, []);
+
+  const submitMerge = useCallback(async () => {
+    if (!current || mergeBusy) return;
+    const selected = mergeCandidates.filter((suggestion) => mergeSelection.includes(suggestion.id));
+    if (selected.length < 2) {
+      setMergeError("اختر موضعين على الأقل من الصفحة نفسها.");
+      return;
+    }
+    setMergeBusy(true);
+    setMergeError("");
+    try {
+      const result = await mergeSourceTreeSuggestions(selected[0].id, {
+        members: selected.map((suggestion) => ({
+          id: suggestion.id,
+          expectedReviewRevision: suggestion.reviewRevision,
+          expectedGeometryRevision: suggestion.geometryRevision,
+        })),
+        region: unionNameRegions(selected.map((suggestion) => suggestion.region)),
+      });
+      setMergeOpen(false);
+      setMergeSelection([]);
+      await loadInitial();
+      setMessage(`دُمجت ${result.superseded.length} مواضع في موضع واحد. المواضع الأصلية محفوظة في السجل.`);
+      void refreshSummary();
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setMergeError("تغيّر أحد المواضع في جلسة أخرى. حُدّثت القائمة؛ أعد الاختيار.");
+        void reload();
+      } else {
+        setMergeError(errorMessage(cause));
+      }
+    } finally {
+      setMergeBusy(false);
+    }
+  }, [current, loadInitial, mergeBusy, mergeCandidates, mergeSelection, refreshSummary, reload]);
+
+  const assistance = current && !readOnly
+    ? readerAssistance(current, cropState, readingCapabilities, localReadings)
+    : null;
+  const runAssistance = useCallback(() => {
+    if (!assistance) return;
+    if (assistance.action === "region") {
+      openRegionEditor();
+    } else if (assistance.action === "reread") {
+      localRereadButtonRef.current?.click();
+    } else {
+      inputRef.current?.focus();
+    }
+  }, [assistance, openRegionEditor]);
 
   const goToPage = useCallback((delta: number) => {
     if (!current || pages.length === 0) return;
@@ -717,6 +1145,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
         onClose();
         return;
       }
+      if (preparingReview && !["j","k","ArrowDown","ArrowUp"].includes(event.key)) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) {
         return;
@@ -735,19 +1164,19 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
         setHelpOpen((open) => !open);
       } else if (event.key === "a") {
         event.preventDefault();
-        if (current?.suggestedTextAr.trim()) {
+        if (!readOnly && current?.suggestedTextAr.trim()) {
           draftOriginRef.current = "reader";
           void submit("save", current.suggestedTextAr);
-        } else setError("لا توجد قراءة آلية لاعتمادها هنا. اكتب الاسم من الصورة.");
+        } else if (!readOnly) setError("لا توجد قراءة آلية لاعتمادها هنا. اكتب الاسم من الصورة.");
       } else if (event.key === "r") {
         event.preventDefault();
-        void submit("rejected");
+        if (!readOnly) void submit("rejected");
       } else if (event.key === "d") {
         event.preventDefault();
-        void submit("deferred");
+        if (!readOnly) void submit("deferred");
       } else if (/^[1-8]$/.test(event.key)) {
         const candidate = candidates[Number(event.key) - 1];
-        if (candidate) {
+        if (candidate && !readOnly) {
           event.preventDefault();
           draftOriginRef.current = "candidate";
           setDraft(candidate.value);
@@ -757,7 +1186,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [candidates, current, helpOpen, onClose, step, submit]);
+  }, [candidates, current, helpOpen, onClose, readOnly, step, submit, preparingReview]);
 
   // A percentage from a handful of decisions would be an anecdote wearing a
   // measurement's clothes. The API marks the sample; the header only shows a rate
@@ -765,7 +1194,13 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const unchangedRate = accuracy && accuracy.measurable ? Math.round(accuracy.unchangedRate * 100) : null;
   const smallAccuracySample = accuracy !== null && accuracy.total > 0 && !accuracy.measurable;
   const allUnread = suggestions.length > 0 && suggestions.every((suggestion) => !suggestion.suggestedTextAr.trim());
-  const previewURLForFallback = previewURL;
+  const pendingRemaining = summary?.pending ?? (queueMode === "pending" ? suggestions.length : null);
+  const modeCount = (mode: QueueMode): number | null => {
+    if (mode === "pending") return summary?.pending ?? (queueMode === "pending" ? suggestions.length : null);
+    if (mode === "deferred") return summary?.deferred ?? (queueMode === "deferred" ? suggestions.length : null);
+    return summary ? Math.max(0, summary.total - summary.pending) : (queueMode === "history" ? suggestions.length : null);
+  };
+  const previewURLForFallback = preparingReview ? "" : previewURL;
   const confidencePercent = Math.round((current?.confidence ?? 0) * 100);
   const confidenceLevel = confidencePercent >= 80 ? "high" : confidencePercent >= 45 ? "medium" : "low";
   const pagePosition = current ? Math.max(1, pages.indexOf(current.pageNumber) + 1) : 0;
@@ -838,6 +1273,26 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
         </header>
 
         <div className="name-bench-toolbar">
+          <div className="name-bench-queue-modes" role="tablist" aria-label="حالة قائمة الأسماء">
+            {QUEUE_MODES.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={queueMode === value}
+                className={queueMode === value ? "name-bench-queue-mode is-active" : "name-bench-queue-mode"}
+                onClick={() => {
+                  setQueueMode(value);
+                  setFilter("all");
+                  setActiveID(null);
+                  setMessage("");
+                }}
+              >
+                {label}
+                <span>{modeCount(value) ?? "—"}</span>
+              </button>
+            ))}
+          </div>
           <div className="name-bench-filters" role="tablist" aria-label="تصفية قائمة الأسماء">
             {FILTER_LABELS.map(({ value, label }) => {
               const count = countForFilter(suggestions, value, activePage);
@@ -879,7 +1334,16 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
           </div>
         </div>
 
-        {allUnread && !loading ? (
+        <div className="name-bench-session" role="status" aria-label="ملخص الجلسة">
+          <span className="name-bench-session-label">هذه الجلسة</span>
+          <span>اعتماد <strong>{sessionCounts.accepted}</strong></span>
+          <span>تصحيح <strong>{sessionCounts.corrected}</strong></span>
+          <span>تأجيل <strong>{sessionCounts.deferred}</strong></span>
+          <span>رفض <strong>{sessionCounts.rejected}</strong></span>
+          <span className="name-bench-session-remaining">المتبقي <strong>{pendingRemaining ?? "—"}</strong></span>
+        </div>
+
+        {allUnread && !loading && queueMode === "pending" ? (
           <div className="name-bench-banner" role="status">
             <ScanText size={18} />
             <p>
@@ -904,11 +1368,15 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
           ) : suggestions.length === 0 ? (
             <div className="name-bench-state name-bench-state-wide">
               <Check size={28} />
-              <h3>لا توجد أسماء بانتظار المراجعة</h3>
+              <h3>{queueMode === "deferred" ? "لا توجد مواضع مؤجلة" : queueMode === "history" ? "لا يوجد سجل بعد" : "لا توجد أسماء بانتظار المراجعة"}</h3>
               <p>
-                {accuracy && accuracy.total > 0
-                  ? `سُجّل ${accuracy.total} قراراً في هذا الملف. يمكنك العودة إلى لوحة المصدر أو بدء قراءة جديدة.`
-                  : "لم يصل هذا الملف إلى ورشة الأسماء بعد، أو لم يجد القارئ مواضع أسماء فيه. ابدأ القراءة من لوحة المصدر."}
+                {queueMode === "deferred"
+                  ? "كل موضع أجّلته سيظهر هنا بعد إعادة التحميل. يمكنك إعادة فتحه لاحقاً."
+                  : queueMode === "history"
+                    ? "ستظهر هنا القرارات السابقة، والمواضع التي أُعيد فتحها أو استُبدلت بتقسيم أو دمج."
+                    : accuracy && accuracy.total > 0
+                      ? `سُجّل ${accuracy.total} قراراً في هذا الملف. يمكنك العودة إلى لوحة المصدر أو بدء قراءة جديدة.`
+                      : "لم يصل هذا الملف إلى ورشة الأسماء بعد، أو لم يجد القارئ مواضع أسماء فيه. ابدأ القراءة من لوحة المصدر."}
               </p>
               <button type="button" className="name-bench-primary" onClick={() => void reload()}>
                 <RefreshCw size={15} /> حدّث القائمة
@@ -962,7 +1430,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
 
                 <div className="name-bench-source-row">
                   <figure className={cropState === "ready" ? "name-bench-crop" : "name-bench-crop is-placeholder"}>
-                    {cropState === "ready" && tightURL ? (
+                    {!preparingReview && cropState === "ready" && tightURL ? (
                       <div className={cropDisplayWidth > 0 && !cropFitsViewport ? "name-bench-crop-viewport is-scrollable" : "name-bench-crop-viewport"} ref={cropViewportRef}>
                         <img
                           src={tightURL}
@@ -1011,7 +1479,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
 
                   <div className="name-bench-source-side">
                     <figure className="name-bench-context">
-                      {contextURL ? (
+                      {!preparingReview && contextURL ? (
                         <img src={contextURL} alt={`سياق الاسم في صفحة ${current.pageNumber}`} />
                       ) : (
                         <div className="name-bench-context-placeholder">السياق حول الاسم</div>
@@ -1020,13 +1488,13 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     </figure>
                     <div className="name-bench-reading">
                       <span className="name-bench-kicker">ما قرأته الآلة</span>
-                      <strong>{current.suggestedTextAr || "لم تقرأ اسماً هنا"}</strong>
-                      <div className="name-bench-confidence">
+                      <strong>{preparingReview ? "نجهّز مساحة القراءة…" : current.suggestedTextAr || "لم تقرأ اسماً هنا"}</strong>
+                      {current.readingMethod === "local_tesseract_crop" ? <small>{current.viewCount} قراءات محلية تجريبية · تحتاج مراجعتك من المصدر</small> : <div className="name-bench-confidence">
                         <div className="name-bench-confidence-track">
                           <span className={`is-${confidenceLevel}`} style={{ width: `${Math.max(2, confidencePercent)}%` }} />
                         </div>
                         <span>{confidencePercent}٪ · {current.viewCount} {current.viewCount === 1 ? "قراءة" : "قراءات"}</span>
-                      </div>
+                      </div>}
                       <p>
                         {current.suggestedTextAr
                           ? "هذه فرضية قراءة، لا حكم على الاسم. صحّحها إن كانت قريبة."
@@ -1036,7 +1504,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                         <div className="name-bench-alternatives">
                           <span>بدائل القارئ:</span>
                           {current.alternatives.map((alternative) => (
-                            <button key={alternative} type="button" onClick={() => { draftOriginRef.current = "candidate"; setDraft(alternative); inputRef.current?.focus(); }}>
+                            <button key={alternative} type="button" disabled={preparingReview} onClick={() => { draftOriginRef.current = "candidate"; setDraft(alternative); inputRef.current?.focus(); }}>
                               {alternative}
                             </button>
                           ))}
@@ -1059,7 +1527,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     </div>
                   </div>
                   <div className="name-bench-map-viewport" ref={mapViewportRef}>
-                    {previewURL ? (
+                    {!preparingReview && previewURL ? (
                       <div className="name-bench-map-frame" style={{ width: `${mapZoom * 100}%` }}>
                         <img src={previewURL} alt={`معاينة صفحة ${current.pageNumber}`} onLoad={() => setPreviewLoaded(true)} />
                         <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
@@ -1089,15 +1557,42 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                 <div className="name-bench-editor-head">
                   <div>
                     <span className="name-bench-kicker">الاسم {Math.max(1, activeIndex + 1)} من {filtered.length}</span>
-                    <h3>{current.suggestedTextAr ? "راجع القراءة أو صحّحها" : "اكتب الاسم من الصورة"}</h3>
+                    <h3>{readOnly ? "سجل هذا الموضع" : current.suggestedTextAr ? "راجع القراءة أو صحّحها" : "اكتب الاسم من الصورة"}</h3>
                   </div>
-                  <span className="name-bench-position">صفحة {current.pageNumber}</span>
+                  <div className="name-bench-editor-head-tools">
+                    <span className="name-bench-position">صفحة {current.pageNumber}</span>
+                    {!readOnly ? (
+                      <button type="button" className="name-bench-text-button" onClick={() => setHistoryOpen((open) => !open)} aria-pressed={historyOpen}>
+                        <History size={14} /> السجل
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
+                {readOnly ? (
+                  <>
+                    <ReviewHistoryPanel
+                      history={history}
+                      loading={historyLoading}
+                      onReopen={() => void reopenCurrent()}
+                      reopening={working}
+                    />
+                    <div className="name-bench-nav">
+                      <button type="button" onClick={() => step(-1)} disabled={activeIndex <= 0} title="k">
+                        <ChevronRight size={15} /> السابق
+                      </button>
+                      <button type="button" onClick={() => step(1)} disabled={activeIndex < 0 || activeIndex >= filtered.length - 1} title="j">
+                        التالي <ChevronLeft size={15} />
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
                 <label className="name-bench-field">
                   <span>الاسم كما تراه</span>
                   <input
                     ref={inputRef}
+                    disabled={working || preparingReview}
                     value={draft}
                     onChange={(event) => { draftOriginRef.current = "typed"; setDraft(event.target.value); if (error) setError(""); if (message) setMessage(""); }}
                     onKeyDown={(event) => {
@@ -1130,14 +1625,16 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                       type="button"
                       className="name-bench-ai-button"
                       onClick={() => void requestAICandidates()}
-                      disabled={aiLoading}
-                      title="يرسل قصاصة الاسم وحدها إلى النموذج البصري"
+                      disabled={preparingReview || aiLoading || !readingCapabilities?.hostedReader.ready}
+                      aria-busy={aiLoading}
+                      title={readingCapabilities?.hostedReader.ready ? "يرسل قصاصة الاسم وحدها إلى النموذج البصري" : readerReason(readingCapabilities?.hostedReader.reason)}
                     >
                       {aiLoading ? <Loader2 size={14} className="name-bench-spin" /> : <Sparkles size={14} />}
                       {aiCandidates.length > 0 ? "اقترح مرة أخرى" : "اقترح بالذكاء الاصطناعي"}
                     </button>
-                    <small>يقرأ القصاصة نفسها، ويعيد احتمالات فقط.</small>
+                    <small>{readingCapabilities?.hostedReader.ready ? "يقرأ القصاصة نفسها، ويعيد احتمالات فقط." : readerReason(readingCapabilities?.hostedReader.reason)}</small>
                   </div>
+                  <LocalNameReadingTool key={current.id} suggestionId={current.id} available={readingCapabilities?.localReader.ready === true} unavailableReason={readerReason(readingCapabilities?.localReader.reason, true)} onReadings={setLocalReadings} buttonRef={localRereadButtonRef} />
                   {aiError ? <p className="name-bench-ai-error">{aiError}</p> : null}
                   {candidates.length > 0 ? (
                     <div className="name-bench-chips">
@@ -1146,7 +1643,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                           key={`${candidate.source}-${candidate.value}`}
                           type="button"
                           className={`name-bench-chip is-${candidate.source}`}
-                          onClick={() => { draftOriginRef.current = "candidate"; setDraft(candidate.value); inputRef.current?.focus(); }}
+                          disabled={preparingReview} onClick={() => { draftOriginRef.current = "candidate"; setDraft(candidate.value); inputRef.current?.focus(); }}
                           title={`${SOURCE_LABELS[candidate.source]} · اضغط ${index + 1}`}
                         >
                           {candidate.source === "reader" ? <ScanText size={13} /> : candidate.source === "ai" ? <Sparkles size={13} /> : candidate.source === "file" ? <FileText size={13} /> : <BookOpen size={13} />}
@@ -1164,7 +1661,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     <div className="name-bench-alternatives name-bench-ai-suggestions">
                       <span><Sparkles size={13} /> من النموذج:</span>
                       {unmatchedAICandidates.map((name) => (
-                        <button key={name} type="button" onClick={() => { draftOriginRef.current = "candidate"; setDraft(name); inputRef.current?.focus(); }} title="اقتراح من النموذج للقصاصة نفسها">
+                        <button key={name} type="button" disabled={preparingReview} onClick={() => { draftOriginRef.current = "candidate"; setDraft(name); inputRef.current?.focus(); }} title="اقتراح من النموذج للقصاصة نفسها">
                           {name}
                         </button>
                       ))}
@@ -1227,6 +1724,150 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                   </p>
                 </div>
 
+                {assistance ? (
+                  <div className={`name-bench-assistance is-${assistance.tone}`} role="status">
+                    <ScanText size={17} />
+                    <div>
+                      <strong>{assistance.title}</strong>
+                      <p>{assistance.detail}</p>
+                    </div>
+                    {assistance.actionLabel ? (
+                      <button type="button" className="name-bench-text-button" onClick={runAssistance}>
+                        {assistance.actionLabel}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {regionDraft ? (
+                  <div className="name-bench-repair" role="group" aria-label="تعديل حدود القراءة">
+                    <div className="name-bench-section-label">
+                      <span><Crop size={15} /> حدود القراءة</span>
+                      <small>النسبة من صفحة المصدر</small>
+                    </div>
+                    <div className="name-bench-region-grid">
+                      {(["x", "y", "width", "height"] as const).map((field) => (
+                        <label key={field}>
+                          <span>{REGION_FIELD_LABELS[field]}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={Number(regionDraft[field].toFixed(2))}
+                            onChange={(event) => updateRegionField(field, Number(event.target.value))}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    {regionPreview ? (
+                      <div className="name-bench-region-preview">
+                        <figure>
+                          <img src={`data:image/png;base64,${regionPreview.tightPng}`} alt="معاينة الحد الضيق" />
+                          <figcaption>الحد الضيق</figcaption>
+                        </figure>
+                        <figure>
+                          <img src={`data:image/png;base64,${regionPreview.contextPng}`} alt="معاينة السياق" />
+                          <figcaption>السياق</figcaption>
+                        </figure>
+                        <p>
+                          ارتفاع الاسم {regionPreview.quality.nameHeightPx} بكسل
+                          {regionPreview.quality.clipped ? " · القصاصة تلامس حافة المصدر" : ""}
+                        </p>
+                      </div>
+                    ) : null}
+                    {regionError ? <p className="name-bench-error" role="alert">{regionError}</p> : null}
+                    <div className="name-bench-repair-actions">
+                      <button type="button" className="name-bench-secondary" onClick={() => void previewRegion()} disabled={regionBusy}>
+                        {regionBusy ? <Loader2 size={14} className="name-bench-spin" /> : <ScanText size={14} />} معاينة
+                      </button>
+                      <button type="button" className="name-bench-primary" onClick={() => void confirmRegion()} disabled={!regionPreview || regionBusy}>
+                        <Check size={14} /> حفظ الحدود
+                      </button>
+                      <button type="button" className="name-bench-text-button" onClick={() => { setRegionDraft(null); setRegionPreview(null); setRegionError(""); }} disabled={regionBusy}>
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {splitOpen && splitRegions ? (
+                  <div className="name-bench-repair" role="group" aria-label="تقسيم الموضع">
+                    <div className="name-bench-section-label">
+                      <span><Scissors size={15} /> تقسيم الموضع</span>
+                      <small>جزءان لا يتداخلان داخل الموضع الأصلي</small>
+                    </div>
+                    <div className="name-bench-split-grid">
+                      {(["first", "second"] as const).map((label, index) => {
+                        const region = splitRegions[index as 0 | 1];
+                        return (
+                          <fieldset key={label}>
+                            <legend>{index === 0 ? "الجزء الأول" : "الجزء الثاني"}</legend>
+                            {(["x", "y", "width", "height"] as const).map((field) => (
+                              <label key={field}>
+                                <span>{REGION_FIELD_LABELS[field]}</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                  value={Number(region[field].toFixed(2))}
+                                  onChange={(event) => updateSplitField(index as 0 | 1, field, Number(event.target.value))}
+                                />
+                              </label>
+                            ))}
+                          </fieldset>
+                        );
+                      })}
+                    </div>
+                    {splitError ? <p className="name-bench-error" role="alert">{splitError}</p> : null}
+                    <div className="name-bench-repair-actions">
+                      <button type="button" className="name-bench-primary" onClick={() => void submitSplit()} disabled={splitBusy}>
+                        {splitBusy ? <Loader2 size={14} className="name-bench-spin" /> : <Scissors size={14} />} قسّم واحفظ
+                      </button>
+                      <button type="button" className="name-bench-text-button" onClick={() => { setSplitOpen(false); setSplitRegions(null); setSplitError(""); }} disabled={splitBusy}>
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {mergeOpen ? (
+                  <div className="name-bench-repair" role="group" aria-label="دمج المواضع">
+                    <div className="name-bench-section-label">
+                      <span><GitMerge size={15} /> دمج المواضع</span>
+                      <small>المواضع المختارة على الصفحة نفسها</small>
+                    </div>
+                    <div className="name-bench-merge-list">
+                      {mergeCandidates.map((suggestion) => (
+                        <label key={suggestion.id}>
+                          <input
+                            type="checkbox"
+                            checked={mergeSelection.includes(suggestion.id)}
+                            onChange={() => toggleMerge(suggestion.id)}
+                          />
+                          <span dir="rtl">{suggestion.suggestedTextAr || "بلا قراءة"}</span>
+                          <small>{Math.round(suggestion.region.x * 100)}٪، {Math.round(suggestion.region.y * 100)}٪</small>
+                        </label>
+                      ))}
+                    </div>
+                    {mergeRegion ? (
+                      <p className="name-bench-merge-region">
+                        الحد الناتج: {Math.round(mergeRegion.x * 100)}٪، {Math.round(mergeRegion.y * 100)}٪ · {Math.round(mergeRegion.width * 100)}٪ × {Math.round(mergeRegion.height * 100)}٪
+                      </p>
+                    ) : null}
+                    {mergeError ? <p className="name-bench-error" role="alert">{mergeError}</p> : null}
+                    <div className="name-bench-repair-actions">
+                      <button type="button" className="name-bench-primary" onClick={() => void submitMerge()} disabled={mergeBusy || mergeSelection.length < 2}>
+                        {mergeBusy ? <Loader2 size={14} className="name-bench-spin" /> : <GitMerge size={14} />} ادمج واحفظ
+                      </button>
+                      <button type="button" className="name-bench-text-button" onClick={() => { setMergeOpen(false); setMergeSelection([]); setMergeError(""); }} disabled={mergeBusy}>
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 {message ? <p className="name-bench-message" role="status">{message}</p> : null}
                 {error ? <p className="name-bench-error" role="alert">{error}</p> : null}
 
@@ -1235,17 +1876,35 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     type="button"
                     className="name-bench-primary"
                     onClick={() => void submit("save")}
-                    disabled={working || !draft.trim()}
+                    disabled={working || preparingReview || !draft.trim()}
                     title="Enter"
                   >
                     {working ? <Loader2 size={17} className="name-bench-spin" /> : <Check size={17} />}
                     {draft.trim() && draft.trim() === current.suggestedTextAr.trim() ? "اعتمد القراءة" : "احفظ الاسم"}
                   </button>
-                  <button type="button" className="name-bench-secondary" onClick={() => void submit("deferred")} disabled={working} title="d (يخرج من القائمة الحالية)">
+                  <button type="button" className="name-bench-secondary" onClick={() => void submit("deferred")} disabled={working || preparingReview} title="d (يخرج من القائمة الحالية)">
                     تأجيل
                   </button>
-                  <button type="button" className="name-bench-danger" onClick={() => void submit("rejected")} disabled={working} title="r (هذا الموضع ليس اسماً)">
+                  <button type="button" className="name-bench-danger" onClick={() => void submit("rejected")} disabled={working || preparingReview} title="r (هذا الموضع ليس اسماً)">
                     <CircleSlash size={15} /> رفض الموضع
+                  </button>
+                </div>
+
+                <div className="name-bench-repair-actions">
+                  <button type="button" className="name-bench-text-button" onClick={openRegionEditor} disabled={working || preparingReview}>
+                    <Crop size={14} /> تعديل الحدود
+                  </button>
+                  <button type="button" className="name-bench-text-button" onClick={openSplit} disabled={working || preparingReview}>
+                    <Scissors size={14} /> تقسيم
+                  </button>
+                  <button
+                    type="button"
+                    className="name-bench-text-button"
+                    onClick={openMerge}
+                    disabled={working || preparingReview || mergeCandidates.length < 2}
+                    title={mergeCandidates.length < 2 ? "تحتاج موضعين على الصفحة نفسها للدمج" : "دمج مواضع الصفحة نفسها"}
+                  >
+                    <GitMerge size={14} /> دمج
                   </button>
                 </div>
 
@@ -1280,11 +1939,286 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     <CircleHelp size={14} /> اختصارات: Enter حفظ · j/k تنقّل · 1–8 اقتراحات
                   </p>
                 )}
+                {historyOpen ? (
+                  <ReviewHistoryPanel
+                    history={history}
+                    loading={historyLoading}
+                    onReopen={() => void reopenCurrent()}
+                    reopening={working}
+                  />
+                ) : null}
+                  </>
+                )}
               </aside>
             </>
           ) : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+const REGION_FIELD_LABELS: Record<keyof PercentRegion, string> = {
+  x: "س",
+  y: "ص",
+  width: "العرض",
+  height: "الارتفاع",
+};
+
+function queueStatus(mode: QueueMode): string {
+  return mode === "pending" ? "suggested" : mode;
+}
+
+function regionToPercent(region: NameRegion): PercentRegion {
+  return {
+    x: region.x * 100,
+    y: region.y * 100,
+    width: region.width * 100,
+    height: region.height * 100,
+  };
+}
+
+function percentToRegion(region: PercentRegion): NameRegion {
+  return {
+    x: region.x / 100,
+    y: region.y / 100,
+    width: region.width / 100,
+    height: region.height / 100,
+  };
+}
+
+function validatePercentRegion(region: PercentRegion): string | null {
+  for (const value of [region.x, region.y, region.width, region.height]) {
+    if (!Number.isFinite(value)) return "أدخل أرقاماً صالحة لكل حقل.";
+  }
+  if (region.width <= 0 || region.height <= 0) return "يجب أن يكون عرض الحد وارتفاعه أكبر من صفر.";
+  if (region.x < 0 || region.y < 0) return "لا يمكن أن يبدأ الحد خارج الصفحة.";
+  if (region.x + region.width > 100.0001 || region.y + region.height > 100.0001) {
+    return "يجب أن يبقى الحد داخل صفحة المصدر.";
+  }
+  return null;
+}
+
+function sameNameRegion(left: NameRegion, right: NameRegion): boolean {
+  const epsilon = 1e-9;
+  return Math.abs(left.x - right.x) <= epsilon
+    && Math.abs(left.y - right.y) <= epsilon
+    && Math.abs(left.width - right.width) <= epsilon
+    && Math.abs(left.height - right.height) <= epsilon;
+}
+
+function percentRegionContains(outer: PercentRegion, inner: PercentRegion): boolean {
+  const epsilon = 1e-6;
+  return inner.x + epsilon >= outer.x
+    && inner.y + epsilon >= outer.y
+    && inner.x + inner.width <= outer.x + outer.width + epsilon
+    && inner.y + inner.height <= outer.y + outer.height + epsilon;
+}
+
+function percentRegionsOverlap(left: PercentRegion, right: PercentRegion): boolean {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const rightEdge = Math.min(left.x + left.width, right.x + right.width);
+  const bottom = Math.min(left.y + left.height, right.y + right.height);
+  return rightEdge - x > 1e-6 && bottom - y > 1e-6;
+}
+
+function unionNameRegions(regions: NameRegion[]): NameRegion {
+  if (regions.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  let left = regions[0].x;
+  let top = regions[0].y;
+  let right = regions[0].x + regions[0].width;
+  let bottom = regions[0].y + regions[0].height;
+  for (const region of regions.slice(1)) {
+    left = Math.min(left, region.x);
+    top = Math.min(top, region.y);
+    right = Math.max(right, region.x + region.width);
+    bottom = Math.max(bottom, region.y + region.height);
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+interface ReaderAssistance {
+  tone: "ready" | "caution" | "blocked";
+  title: string;
+  detail: string;
+  action: "region" | "reread" | "input";
+  actionLabel: string;
+}
+
+// Turn a reader-stage outcome into the one useful next action, without turning
+// a machine score into a correctness claim. The reviewer still writes the name.
+function readerAssistance(
+  suggestion: SourceTreeSuggestion,
+  cropState: CropState,
+  capabilities: ReadingCapabilities | null,
+  readings: LocalNameReading[],
+): ReaderAssistance {
+  if (cropState === "error") {
+    return {
+      tone: "blocked",
+      title: "تعذّرت قراءة القصاصة من المصدر",
+      detail: "عدّل الحدود لالتقاط الاسم كاملاً، أو اكتبه يدوياً إن كان واضحاً في السياق.",
+      action: "region",
+      actionLabel: "عدّل الحدود",
+    };
+  }
+  const latest = readings[0];
+  if (!latest) {
+    if (capabilities && !capabilities.localReader.ready) {
+      return {
+        tone: suggestion.suggestedTextAr.trim() ? "ready" : "caution",
+        title: suggestion.suggestedTextAr.trim() ? "جاهز للمراجعة من المصدر" : "القارئ المحلي غير متاح",
+        detail: suggestion.suggestedTextAr.trim()
+          ? "اقرأ الاسم من القصاصة، ثم اعتمد القراءة أو صحّحها."
+          : "يمكنك كتابة الاسم من الصورة؛ لا حاجة لأي مزوّد خارجي.",
+        action: "input",
+        actionLabel: "أدخل الاسم",
+      };
+    }
+    return {
+      tone: "ready",
+      title: "جاهز للمراجعة",
+      detail: "اقرأ الاسم من القصاصة، أو اطلب قراءة محلية تجريبية للمقارنة.",
+      action: capabilities?.localReader.ready ? "reread" : "input",
+      actionLabel: capabilities?.localReader.ready ? "أعد القراءة محلياً" : "راجع النص",
+    };
+  }
+  if (latest.quality.clipped) {
+    return {
+      tone: "caution",
+      title: "القصاصة تلامس حافة المصدر",
+      detail: "قد يكون جزء من الاسم خارج الحد. عدّل الحدود قبل الاعتماد.",
+      action: "region",
+      actionLabel: "عدّل الحدود",
+    };
+  }
+  if (latest.outcome === "reading_unavailable") {
+    return {
+      tone: "blocked",
+      title: "تعذّرت القراءة المحلية",
+      detail: "أعد طلب القراءة المحلية بعد تعديل الحدود، أو اكتب الاسم من الصورة.",
+      action: capabilities?.localReader.ready ? "reread" : "input",
+      actionLabel: capabilities?.localReader.ready ? "أعد القراءة محلياً" : "أدخل الاسم",
+    };
+  }
+  const variants = uniqueNames(latest.variants.map((variant) => variant.rawText));
+  if (variants.length > 1) {
+    return {
+      tone: "caution",
+      title: "قراءات محلية متعارضة",
+      detail: "الاختلاف بين القراءات لا يثبت صحة اسم. راجع البدائل واختر ما تراه في الأصل.",
+      action: "input",
+      actionLabel: "راجع البدائل",
+    };
+  }
+  if (latest.outcome === "unreadable") {
+    return {
+      tone: "caution",
+      title: "لم يُستخرج نص واضح",
+      detail: "القارئ المحلي لم يجد نصاً موثوقاً. اكتب الاسم من الصورة.",
+      action: "input",
+      actionLabel: "أدخل الاسم",
+    };
+  }
+  return {
+    tone: "ready",
+    title: "قراءة محلية جاهزة للمقارنة",
+    detail: "النص الآلي احتمال، وليس اعتماداً. راجع الأصل ثم اكتب الاسم أو اعتمده.",
+    action: "input",
+    actionLabel: "راجع النص",
+  };
+}
+
+function formatReviewTime(value: string): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("ar", { dateStyle: "short", timeStyle: "short" });
+}
+
+function ReviewHistoryPanel({ history, loading, onReopen, reopening }: {
+  history: SourceSuggestionHistory | null;
+  loading: boolean;
+  onReopen: () => void;
+  reopening: boolean;
+}) {
+  if (loading) {
+    return <div className="name-bench-history is-loading"><Loader2 size={18} className="name-bench-spin" /><span>نجهّز السجل…</span></div>;
+  }
+  if (!history) {
+    return <div className="name-bench-history"><p>تعذّر تحميل السجل الآن. أعد المحاولة من زر التحديث.</p></div>;
+  }
+  const originalReading = history.decisions[0]?.suggestedTextAr || history.suggestion.suggestedTextAr;
+  return (
+    <div className="name-bench-history">
+      <div className="name-bench-section-label">
+        <span><History size={15} /> سجل المراجعة</span>
+        <small>{history.suggestion.superseded ? "موضع مُستبدل" : history.suggestion.status === "suggested" ? "بانتظار المراجعة" : "مقرر"}</small>
+      </div>
+      {history.suggestion.superseded ? (
+        <p className="name-bench-history-note">استُبدل هذا الموضع بتقسيم أو دمج. قراءته وقراراته السابقة باقية للقراءة فقط.</p>
+      ) : null}
+      <div className="name-bench-history-original">
+        <span>القراءة الأصلية</span>
+        <strong dir="rtl">{originalReading || "لم تقرأ الآلة اسماً"}</strong>
+      </div>
+      {history.decisions.length > 0 ? (
+        <ol className="name-bench-history-decisions">
+          {history.decisions.map((decision) => (
+            <li key={decision.id}>
+              <div>
+                <strong>المراجعة {decision.revision}</strong>
+                <em>{DECISION_LABELS[decision.decision]}</em>
+                <small>{formatReviewTime(decision.reviewedAt)}</small>
+              </div>
+              {decision.decidedTextAr ? <p dir="rtl">«{decision.decidedTextAr}»</p> : null}
+              {decision.noteAr ? <p className="name-bench-history-meta">{decision.noteAr}</p> : null}
+              {decision.reviewerLabelAr ? <p className="name-bench-history-meta">بواسطة {decision.reviewerLabelAr}</p> : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="name-bench-history-note">لا قرار بشري بعد.</p>
+      )}
+      {history.regionRevisions.length > 0 ? (
+        <div className="name-bench-history-block">
+          <span>حدود القراءة المعدّلة</span>
+          {history.regionRevisions.map((revision) => (
+            <p key={revision.id}>
+              المراجعة {revision.revision}: {Math.round(revision.previousRegion.x * 100)}٪، {Math.round(revision.previousRegion.y * 100)}٪
+              {" → "}
+              {Math.round(revision.region.x * 100)}٪، {Math.round(revision.region.y * 100)}٪
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {history.lineage.length > 0 ? (
+        <div className="name-bench-history-block">
+          <span>الارتباط الهندسي</span>
+          {history.lineage.map((edge) => (
+            <p key={`${edge.kind}-${edge.parentId}-${edge.childId}`}>
+              {EVENT_LABELS[edge.kind] ?? edge.kind}: {edge.parentId.slice(0, 8)} ← {edge.childId.slice(0, 8)}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {history.events.filter((event) => event.type !== "decision").length > 0 ? (
+        <div className="name-bench-history-block">
+          <span>الأحداث</span>
+          {history.events.filter((event) => event.type !== "decision").map((event) => (
+            <p key={event.id}>
+              {EVENT_LABELS[event.type] ?? event.type} · المراجعة {event.revision} · {formatReviewTime(event.createdAt)}
+              {typeof event.metadata?.note === "string" && event.metadata.note ? ` — ${event.metadata.note}` : ""}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {history.canReopen ? (
+        <button type="button" className="name-bench-secondary name-bench-reopen" onClick={onReopen} disabled={reopening}>
+          {reopening ? <Loader2 size={15} className="name-bench-spin" /> : <Undo2 size={15} />}
+          إعادة فتح الموضع
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1338,12 +2272,25 @@ function cropErrorMessage(cause: unknown): string {
   return "تعذّر تجهيز القصاصة من المصدر. أعد المحاولة.";
 }
 
+function readerReason(reason?: string, local = false): string {
+  switch (reason) {
+    case "disabled_by_policy": return local ? "القراءة المحلية معطّلة في الإعدادات الحالية." : "القراءة البصرية الخارجية معطّلة لهذا المصدر. يمكنك تصحيح الاسم يدوياً.";
+    case "not_configured": return "القارئ البصري غير مهيأ. يمكنك تصحيح الاسم يدوياً.";
+    case "local_reader_not_implemented": return "إعادة قراءة القصاصة محلياً غير متاحة في هذه المرحلة.";
+    case "tool_missing": return "تحتاج القراءة المحلية إلى أدوات غير مثبتة.";
+    case "language_missing": return "بيانات اللغة العربية للقراءة المحلية غير مثبتة.";
+    default: return "خدمة القراءة غير متاحة مؤقتاً. يمكنك التصحيح يدوياً أو تحديث الحالة.";
+  }
+}
+
 function candidateErrorMessage(cause: unknown): string {
   if (cause instanceof ApiError) {
+    if (cause.code === "disabled_by_policy" || cause.code === "not_configured" || cause.code === "temporarily_unavailable") return readerReason(cause.code);
+    if (cause.code === "unreadable_crop") return "لم يتمكن القارئ من قراءة هذه القصاصة. يمكنك كتابة الاسم يدوياً.";
     if (cause.status === 401 || cause.status === 403) return "انتهت الجلسة أو لا تملك صلاحية طلب الاقتراحات. أعد تسجيل الدخول.";
     if (cause.status === 404) return "لم يعد موضع الاسم موجوداً في هذا الملف.";
     if (cause.status === 429) return "طلبت اقتراحات كثيرة بسرعة. انتظر قليلاً ثم أعد المحاولة.";
-    if (cause.status === 503) return "خدمة الاقتراح الذكي غير مهيأة الآن. يمكنك الاعتماد على القراءة والاقتراحات الأخرى.";
+    if (cause.status === 503) return readerReason("temporarily_unavailable");
     if (cause.status === 422) return "لم يتمكن النموذج من اقتراح أسماء لهذه القصاصة. جرّب كتابة الاسم يدوياً.";
     return "تعذّر طلب اقتراحات النموذج. جرّب لاحقاً أو اكتب الاسم يدوياً.";
   }
@@ -1354,4 +2301,63 @@ function errorMessage(cause: unknown): string {
   if (cause instanceof ApiError) return cause.message;
   if (cause instanceof Error) return cause.message;
   return "تعذّر إكمال الطلب.";
+}
+
+function LocalNameReadingTool({ suggestionId, available, unavailableReason, onReadings, buttonRef }: { suggestionId: string; available: boolean; unavailableReason: string; onReadings?: (readings: LocalNameReading[]) => void; buttonRef?: { current: HTMLButtonElement | null } }) {
+ const [run, setRun] = useState<NameReadingRun | null>(null);
+ const [readings, setReadings] = useState<LocalNameReading[]>([]);
+ const [busy, setBusy] = useState(false);
+ const [error, setError] = useState("");
+ const request = useRef<AbortController | null>(null);
+ const active = run?.status === "queued" || run?.status === "running";
+ useEffect(() => { onReadings?.(readings); }, [onReadings, readings]);
+ useEffect(() => {
+  const abort = new AbortController();
+  void fetchLocalNameReadings(suggestionId, abort.signal).then((values) => { if (!abort.signal.aborted) setReadings(values); }).catch(() => {});
+  void fetchLatestLocalRereadRun(suggestionId, abort.signal).then((value) => { if (!abort.signal.aborted) setRun(value); }).catch(() => {});
+  return () => { abort.abort(); request.current?.abort(); };
+ }, [suggestionId]);
+ useEffect(() => {
+  if (!run || !active) return;
+  const abort = new AbortController();
+  const timer = window.setTimeout(() => {
+   void fetchNameReadingRun(run.id, abort.signal).then(async (value) => {
+    if (abort.signal.aborted) return;
+    setRun(value);
+    if (value.status !== "queued" && value.status !== "running") {
+     const values = await fetchLocalNameReadings(suggestionId, abort.signal);
+     if (!abort.signal.aborted) setReadings(values);
+    }
+   }).catch(() => { if (!abort.signal.aborted) { setError("تعذّر تحديث الحالة. يمكنك متابعة التصحيح أو طلب الحالة مجدداً؛ الإعداد المحلي مستمر في الخلفية."); setRun(null); } });
+  }, 1500);
+  return () => { window.clearTimeout(timer); abort.abort(); };
+ }, [run, active, suggestionId]);
+ const reread = async () => {
+  if (!available || busy || active) return;
+  request.current?.abort(); const abort = new AbortController(); request.current = abort;
+  setBusy(true); setError("");
+  try {
+   const value = await rereadSourceSuggestionLocally(suggestionId, abort.signal);
+   if (abort.signal.aborted) return;
+   setRun(value);
+   if (value.status !== "queued" && value.status !== "running") setReadings(await fetchLocalNameReadings(suggestionId, abort.signal));
+  } catch { if (!abort.signal.aborted) setError("تعذّر طلب القراءة المحلية. يمكنك كتابة الاسم يدوياً."); }
+  finally { if (!abort.signal.aborted) setBusy(false); }
+ };
+ return <>
+  <div className="name-bench-ai-row">
+   <button ref={buttonRef} type="button" className="name-bench-ai-button" disabled={!available || busy || active} aria-busy={busy || active} title={available ? "تجهيز قصاصة الاسم بالأدوات المحلية؛ لا تُرسل الصورة إلى نموذج خارجي" : unavailableReason} onClick={() => void reread()}><ScanText size={14} /> إعادة القراءة محلياً</button>
+   <small>{!available ? unavailableReason : active ? "جارٍ الإعداد محلياً؛ يمكنك متابعة التصحيح." : "قراءات تجريبية محلية، ولا يُحفظ اسم دون قرارك."}</small>
+  </div>
+  {error ? <p className="name-bench-ai-error">{error}</p> : null}
+  {readings.length > 0 ? <details className="name-bench-suggestions"><summary>مقارنة القراءات المحلية المحفوظة</summary>
+   <small>اختلاف القراءات ودرجات الأداة لا يثبت صحة اسم.</small>
+   {readings.slice(0, 3).map((reading, index) => <div key={index}>
+    <small>{reading.readerVersion} · {reading.outcome === "reading_unavailable" ? "القارئ غير متاح" : reading.outcome === "manual_review" ? "يحتاج فحص المصدر يدوياً" : reading.outcome === "unreadable" ? "لم يُستخرج نص" : "نص آلي يحتاج مراجعتك"}{reading.quality.clipped ? " · القصاصة تلامس حافة المصدر" : ""}</small>
+    <small>الجودة: ارتفاع الاسم {reading.quality.nameHeightPx} بكسل · تباين {(reading.quality.contrast ?? 0).toFixed(2)}{reading.quality.reason ? ` · ${reading.quality.reason}` : ""}</small>
+    {reading.variants.map((variant) => <p key={variant.variant}><span>{variant.variant}</span> · <span dir="rtl">{variant.rawText || "لا نص"}</span>{variant.engineScore !== undefined ? <small> · درجة الأداة الخام {variant.engineScore.toFixed(3)}</small> : null}</p>)}
+    {reading.alternatives?.length ? <p><small>بدائل مقترحة: <span dir="rtl">{reading.alternatives.join("، ")}</span></small></p> : null}
+   </div>)}
+  </details> : null}
+ </>;
 }

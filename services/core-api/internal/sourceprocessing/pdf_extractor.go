@@ -89,6 +89,9 @@ func (p *ChartPDFPage) RenderRegion(ctx context.Context, region ChartTileBounds)
 		return nil, ErrPDFToolsUnavailable
 	}
 	prefix := filepath.Join(p.TempDir, fmt.Sprintf("region-%d-%d-%d-%d-%d", p.PageNumber, region.X, region.Y, region.Width, region.Height))
+	// A worker reuses this page across many crops. Release each render even
+	// when Poppler fails, rather than retaining it until the page closes.
+	defer os.Remove(prefix + ".png")
 	if _, err := runBounded(ctx, pageCommandLimit, p.PDFToPPM, "-f", strconv.Itoa(p.PageNumber), "-l", strconv.Itoa(p.PageNumber), "-singlefile", "-r", strconv.Itoa(p.DPI), "-x", strconv.Itoa(region.X), "-y", strconv.Itoa(region.Y), "-W", strconv.Itoa(region.Width), "-H", strconv.Itoa(region.Height), "-png", p.PDFPath, prefix); err != nil {
 		return nil, pdfCommandError(err, p.PageNumber)
 	}

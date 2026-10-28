@@ -17,7 +17,7 @@
 - **Depends on:** the current uncommitted Plan 019/021/022 implementation
 - **Category:** correctness / tooling / evaluation
 - **Planned at:** commit `f0fcb6e`, 2026-10-27
-- **Status:** TODO
+- **Status:** DONE
 - **Next stages:** [024](024-durable-local-name-reading.md), then
   [025](025-name-context-and-shadow-preparation.md) and
   [026](026-name-review-repair-and-verification.md)
@@ -167,6 +167,9 @@ cleanup may touch only that explicitly isolated scope.
   ```
 
   Also register these plan files in `infra/local/check-doc-links.py`.
+  The shared-service reuse guard also touches `infra/local/migration_test.sh`,
+  because its direct Compose startup must not restart the review database
+  container when a test database name is present.
 
 **Out of scope:** provider enablement for private files, new OCR/model downloads,
 reading-quality changes, history rewriting, job execution, identity/relationship
@@ -296,13 +299,13 @@ Run from the repository root unless stated otherwise:
 | `env -u DATABASE_URL -u AI_RESEARCH_URL make verify` | pass |
 | `make generated-check && make docs-check && git diff --check` | pass |
 
-- [ ] Disabled hosted reading cannot load credentials or make a provider call.
-- [ ] The guarded integration runner is available before subsequent stages and
+- [x] Disabled hosted reading cannot load credentials or make a provider call.
+- [x] The guarded integration runner is available before subsequent stages and
   refuses inherited real-database/storage settings before a write.
-- [ ] The UI does not offer a working-looking action for an unavailable reader.
-- [ ] Setup failures do not fan out to one failed request per crop.
-- [ ] Doctor output is aggregate-only and cohort mixing cannot pass evaluation.
-- [ ] Existing review rows and class-map bytes are unchanged.
+- [x] The UI does not offer a working-looking action for an unavailable reader.
+- [x] Setup failures do not fan out to one failed request per crop.
+- [x] Doctor output is aggregate-only and cohort mixing cannot pass evaluation.
+- [x] Existing review rows and class-map bytes are unchanged.
 
 ## Git workflow, stops, and maintenance
 
@@ -319,3 +322,58 @@ database; never point a database-writing test at the real review database.
 This stage deliberately keeps the provider configuration separate from health.
 Future adapters must implement the same typed capability/reason contract. Local
 reader readiness becomes true only when Plan 024 supplies a working adapter.
+
+## Implementation record — 2026-10-27
+
+Implemented against `3de1de1` after checking the drift from `f0fcb6e` and the live
+source shapes. The changes remain uncommitted.
+
+- Explicit reader policy replaces the private runtime credential-lookup guard.
+  Both services default to local intent; hosted reading needs explicit mode and
+  enablement, plus source-side approval for on-demand image requests. No private
+  source approval or hosted provider enablement was performed.
+- Source-authorized capabilities use bounded local tool probes and cached AI
+  service metadata. The metadata GET is explicitly bodyless at the real Python
+  middleware boundary; inference routes retain their original body limits.
+- The bench disables unavailable readers before click, shows distinct Arabic
+  reasons, and keeps manual edits usable. Off/shadow markup is identical in the
+  component test. Local crop rereading is visibly unavailable until Plan 024.
+- Permanent batch failures stop once, transient failures have two attempts, and
+  only validation failures can fall back to individual crops.
+- Doctor reports aggregate tools, policy, service status, versions and evidence
+  gaps. Its current exit 2 correctly reports the unimplemented local adapter.
+- Evaluation loads saved pool/reader/model/prompt versions, supports four cohort
+  selectors, reports legacy evidence separately and blocks the combined gate
+  when versions mix. Sample floors and pre-registered class coverage are intact.
+- Private reports retain the cutoff and class-map hash. Fingerprints confirm all
+  111 original actions and class-map bytes are unchanged; no truth was generated.
+
+The first full database run was interrupted when the app launcher caused Compose
+to recreate the shared PostgreSQL container. The failed isolated database/log
+were retained. The guarded runner and migration verification now reuse the
+running service without reconfiguring it; the next isolated run exposed an existing
+cross-package fixture race in the visibility matrix's two whole-table counts;
+the guarded runner now fixes Go package concurrency to one. The final run used
+another fresh database, and no assertions or skip audits were weakened. It passed
+with the shared database container unchanged.
+
+Validation completed:
+
+| Check | Result |
+|---|---|
+| Guard unit tests (also part of `make verify`) | 11 passed |
+| Python suite and Ruff | 86 passed; lint passed |
+| Web suite, ESLint, typecheck and build | 85 passed; all checks passed |
+| `env -u DATABASE_URL -u AI_RESEARCH_URL make verify` | passed; later full gate also passed with the final changes |
+| Guarded `verify-full` | passed: 930 Go tests, 924 passed, 6 optional skips, **0 database skips**; fixture audit passed |
+| Migration verification and AI evaluation | all five migration cases and every metric group passed |
+| Guarded `e2e` in a separate dedicated database/storage directory | 30 journeys passed |
+| `generated-check`, `docs-check`, `git diff --check` | passed |
+| Real evaluation replay and all four cohort selectors | 111 actions / 80 truths overall; selected coherent cohort has 79 truths; gate remains false |
+| Review preservation | all 111 original row fingerprints and the frozen class-map SHA-256 match |
+
+The live launcher now uses explicit local reader policy without the private
+runtime monkeypatch, with `NAME_JUDGE_MODE=shadow`, sample 1 and images false.
+No source was approved for hosted reading, no original file was changed, and no
+new human decision or missing judge output was generated. The read-only doctor
+returns exit 2 for the pending local adapter, as intended. Plan 024 is next.

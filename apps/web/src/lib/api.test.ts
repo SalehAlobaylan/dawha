@@ -189,7 +189,7 @@ describe("the suggestion queue", () => {
 
     const queue = await fetchSourceTreeSuggestions("file/id");
     expect(queue).toHaveLength(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/source-files/file%2Fid/suggestions?");
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/source-files/file%2Fid/review-queue?");
 
     const accuracy = await fetchSourceSuggestionAccuracy("file/id");
     // Four decisions is an anecdote, and the client must not present it as a
@@ -274,6 +274,8 @@ describe("the suggestion queue", () => {
       normalizerVersion: "ar-name-keys-v1",
       candidatePoolVersion: "ar-name-pool-v1",
       durationMs: 1200,
+      expectedRevision: 0,
+      expectedGeometryRevision: 1,
     });
 
     expect(result.evidenceRecorded).toBe(false);
@@ -282,6 +284,8 @@ describe("the suggestion queue", () => {
       decision: "corrected",
       textAr: "عبدالله",
       noteAr: "",
+      expectedRevision: 0,
+      expectedGeometryRevision: 1,
     });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).not.toContain("عبدالله");
@@ -312,5 +316,98 @@ describe("the suggestion queue", () => {
       selectedCandidate: "عبدالله",
     })).rejects.toMatchObject({ status: 503 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("review history and geometry repair", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("reads history and reopens with the revision the reviewer saw", async () => {
+    const { fetchSourceSuggestionHistory, reopenSourceSuggestion } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      if (String(args[0]).endsWith("/history")) {
+        return new Response(JSON.stringify({
+          suggestion: { id: "suggestion-1", status: "accepted", reviewRevision: 1, geometryRevision: 0, superseded: false },
+          originalRegion: { x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+          decisions: [], events: [], regionRevisions: [], lineage: [],
+          canReopen: true, canReviseRegion: false, canSplit: false, canMerge: false,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ id: "suggestion-1", status: "suggested", reviewRevision: 1, geometryRevision: 0, superseded: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const history = await fetchSourceSuggestionHistory("suggestion-1");
+    expect(history.canReopen).toBe(true);
+    await reopenSourceSuggestion("suggestion-1", 1, "أعدت القراءة");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/history");
+    expect(fetchMock.mock.calls[1][0]).toBe("http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/reopen");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ expectedRevision: 1, noteAr: "أعدت القراءة" });
+  });
+
+  it("previews, confirms, splits, and merges without inventing coordinates", async () => {
+    const { previewSourceSuggestionRegion, reviseSourceSuggestionRegion, splitSourceTreeSuggestion, mergeSourceTreeSuggestions } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      const url = String(args[0]);
+      if (url.endsWith("/region-preview")) {
+        return new Response(JSON.stringify({
+          geometryRevision: 0, region: { x: 0.2, y: 0.2, width: 0.3, height: 0.2 },
+          coordinateSpace: "native_raster", analysisDpi: 0, sourceChecksum: "a".repeat(64),
+          frameWidth: 600, frameHeight: 400, tightBounds: { x: 0, y: 0, width: 1, height: 1 },
+          contextBounds: { x: 0, y: 0, width: 1, height: 1 },
+          quality: { nameHeightPx: 20, contrast: 1, clipped: false, coloured: false }, tightPng: "ZmFrZQ==", contextPng: "ZmFrZQ==",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ id: "suggestion-1", status: "suggested", reviewRevision: 0, geometryRevision: 1, superseded: false }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const region = { x: 0.2, y: 0.2, width: 0.3, height: 0.2 };
+    const preview = await previewSourceSuggestionRegion("suggestion-1", { expectedGeometryRevision: 0, region });
+    expect(preview.sourceChecksum).toHaveLength(64);
+    await reviseSourceSuggestionRegion("suggestion-1", {
+      expectedGeometryRevision: 0, region, coordinateSpace: preview.coordinateSpace,
+      analysisDpi: preview.analysisDpi, sourceChecksum: preview.sourceChecksum,
+      frameWidth: preview.frameWidth, frameHeight: preview.frameHeight,
+    });
+    await splitSourceTreeSuggestion("suggestion-1", {
+      expectedReviewRevision: 0, expectedGeometryRevision: 1,
+      regions: [{ x: 0.2, y: 0.2, width: 0.15, height: 0.2 }, { x: 0.35, y: 0.2, width: 0.15, height: 0.2 }],
+    });
+    await mergeSourceTreeSuggestions("suggestion-1", {
+      members: [{ id: "suggestion-1", expectedReviewRevision: 0, expectedGeometryRevision: 1 }],
+      region,
+    });
+
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      "http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/region-preview",
+      "http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/region",
+      "http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/split",
+      "http://localhost:8181/api/v1/source-tree-suggestions/suggestion-1/merge",
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+      expectedGeometryRevision: 0,
+      region,
+      sourceChecksum: "a".repeat(64),
+      frameWidth: 600,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({
+      expectedReviewRevision: 0,
+      expectedGeometryRevision: 1,
+      regions: [{ x: 0.2, y: 0.2, width: 0.15, height: 0.2 }, { x: 0.35, y: 0.2, width: 0.15, height: 0.2 }],
+    });
   });
 });

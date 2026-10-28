@@ -71,3 +71,30 @@ func TestSuggestNamesPostsTheTightCropAndCleansTheCandidates(t *testing.T) {
 		t.Fatalf("candidates were not trimmed and de-duplicated: %+v", names)
 	}
 }
+
+func TestChartReaderHTTPFailuresDistinguishPolicySetupAndOutage(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		detail string
+		want   error
+	}{
+		{403, "reader_disabled_by_policy", ErrChartVisionPolicy},
+		{401, "private provider error must not escape", ErrChartVisionSetup},
+		{403, "credentials rejected", ErrChartVisionSetup},
+		{503, "hosted chart vision is not configured", ErrChartVisionSetup},
+		{503, "temporarily unavailable", ErrChartVisionUnavailable},
+		{429, "rate limit", ErrChartVisionUnavailable},
+	} {
+		t.Run(test.detail, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.status)
+				_ = json.NewEncoder(w).Encode(map[string]string{"detail": test.detail})
+			}))
+			defer server.Close()
+			_, err := NewHTTPChartVisionProvider(server.URL).SuggestNames(context.Background(), []byte("fixture"))
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error=%v want=%v", err, test.want)
+			}
+		})
+	}
+}

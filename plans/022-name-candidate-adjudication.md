@@ -873,3 +873,32 @@ gate and record the actual command.
   must still work.
 - The plan's long-term comparison is a small local ranker trained on the decision ledger. Liquid is
   a zero-shot judge, not a substitute for learning from the decisions we already collect.
+
+### Plan 023 version-boundary check — 2026-10-27
+
+The read-only evaluation still contains 111 human actions and 80 truth labels,
+with 18 truths present in the saved top-eight pool. The new version report keeps
+missing judge metadata in a legacy cohort. Explicitly selecting the saved
+pool/reader/`d1:3b`/`name-judge-liquid-v1` cohort yields 79 truth-labelled
+shadow decisions, all from `calligraphic_dense`, and `ready=false`.
+
+The pre-registered outcome remains **no result / no adoption decision**: the
+100-label rate floor, 300-decision shadow floor, three-class coverage, and
+reviewer-time criterion are unmet. No output was backfilled and no labels were
+created. Existing decision fingerprints and the frozen class-map hash were
+verified unchanged. Plan 023 is engineering preparation for later reading and
+review tooling; it does not complete this human evaluation.
+
+
+### Plan 025 follow-up — 2026-10-28
+
+Counted context, explicit initial/final evidence roles and durable frozen shadow
+requests are implemented in [Plan 025](025-name-context-and-shadow-preparation.md).
+The original 111 actions, candidate snapshots and judge outputs remain unchanged.
+Their eighty truths are now explicitly development/regression examples; the
+historical 79 complete shadow labels are not a new held-out batch. The later
+counterfactual candidate replay is diagnostic only (23/80 versus the original
+18/80 top-eight presence), below the rate floor. No missing old result was
+backfilled. New held-out source/rendering groups and classes must be registered
+before review; there are currently zero held-out truths and `ready=false`.
+The pre-registered go/no-go rule and human-measurement checklist remain pending.

@@ -1,3 +1,4 @@
+import commonNames from "../../../../services/core-api/internal/sourceprocessing/name_candidate_common.json";
 // The names the review screen can suggest while a person types.
 //
 // This is not an authority and it is not a genealogy source. It is a spelling
@@ -16,13 +17,15 @@ export interface NameCandidate {
   source: NameCandidateSource;
 }
 
+export interface CountedFileName { value: string; count: number; variants?: string[]; }
+
 export interface NameCandidateGroups {
   /** The reader's chosen text and its alternative readings, best first. */
   reader?: string[];
   /** On-demand candidates from the vision model for this one crop. */
   ai?: string[];
   /** Names already accepted or corrected in this file. */
-  file?: string[];
+  file?: readonly (string | CountedFileName)[];
   /** The built-in spelling aid. */
   common?: readonly string[];
 }
@@ -35,47 +38,12 @@ const SOURCE_RANK: Record<NameCandidateSource, number> = {
 };
 
 /** Common given names and family names, kept deliberately short. */
-export const COMMON_ARABIC_NAMES: readonly string[] = [
-  // Given names
-  "محمد", "أحمد", "محمود", "مصطفى", "علي", "حسن", "حسين", "عمر", "عثمان", "صالح",
-  "يوسف", "إبراهيم", "إسماعيل", "يعقوب", "موسى", "عيسى", "داود", "سليمان", "أيوب", "زكريا",
-  "يحيى", "هارون", "إلياس", "يونس", "نوح", "آدم", "إدريس", "هود", "شعيب", "فهد",
-  "ناصر", "جابر", "صباح", "سلمان", "مبارك", "حمد", "خالد", "فيصل", "بندر", "تركي",
-  "سعود", "سعد", "مساعد", "منصور", "ماجد", "مشعل", "طلال", "بدر", "نواف", "سامي",
-  "عادل", "راشد", "حمود", "حمزة", "سيف", "سلطان", "وليد", "وائل", "ياسر", "عمار",
-  "أنس", "بلال", "زياد", "طارق", "عمرو", "كريم", "مالك", "معاذ", "مهند", "نبيل",
-  "نزار", "هشام", "هيثم", "وسام", "أمين", "أيمن", "إياد", "بسام", "تامر", "جمال",
-  "حاتم", "حازم", "حسان", "رامي", "ربيع", "رشاد", "رياض", "زيد", "سامر", "شادي",
-  "شريف", "صابر", "عاطف", "عصام", "علاء", "عماد", "غسان", "فادي", "فؤاد", "قاسم",
-  "كمال", "لؤي", "مأمون", "محسن", "مروان", "مصعب", "منير", "نضال", "هاني", "هلال",
-  "فارس", "فراس", "نايف", "راكان", "ريان", "عبد الله", "عبد الرحمن", "عبد العزيز", "عبد الكريم",
-  "عبد اللطيف", "عبد المحسن", "عبد الوهاب", "عبد الرزاق", "عبد الغفار", "عبد الجليل", "عبد الحميد", "عبد المجيد", "عبد الستار", "عبد القادر",
-  "عبد المنعم", "عبد الهادي", "عبد السلام", "عبد الفتاح", "عبد العظيم", "عبد الحكيم", "عبد الرحيم", "عبد الخالق", "عبد الباري", "عبد الرشيد",
-  "عبد الودود", "عبد الإله", "عبد الصمد", "عبد الغني", "عبد الملك", "عبد الواحد", "عبد الأحد", "عبد العليم", "عبد المعين", "عبد المنان",
-
-  // Female names
-  "فاطمة", "عائشة", "خديجة", "مريم", "زينب", "رقية", "سارة", "هاجر", "آسيا", "أسماء",
-  "أمل", "إيمان", "بشرى", "تقوى", "جميلة", "حنان", "حياة", "دلال", "رحمة", "رزان",
-  "رغد", "رنا", "ريم", "زهرة", "سعاد", "سلمى", "سمية", "شذى", "شريفة", "صفاء",
-  "عبير", "عزيزة", "علياء", "غادة", "فاتن", "فرح", "لطيفة", "لمياء", "ليلى", "ماجدة",
-  "منال", "منى", "مها", "مي", "نادية", "نجلاء", "نرمين", "نهى", "نور", "هالة",
-  "هند", "وداد", "وفاء", "ياسمين", "حصة", "نورة", "موضي", "شيخة", "لولوة", "منيرة",
-  "أنوار", "أوراد", "روان", "ريماس", "شموخ", "عسلاء",
-
-  // Family names common in the Gulf and in the charts in this corpus
-  "الصباح", "آل الصباح", "العجلان", "العيب", "الحيان", "الشرمي", "المقبل", "الجاسر", "الفهد", "العتيبي",
-  "القحطاني", "الدوسري", "الشمري", "الحربي", "المطيري", "العنزي", "السبيعي", "الشهري", "الزهراني", "الغامدي",
-  "البقمي", "العسيري", "الشثري", "الرشيد", "السديري", "الجربا", "الخرافي", "الغانم", "البحر", "النصف",
-  "الخليفة", "العوضي", "الرومي", "القطامي", "السعيد", "الفلاح", "الجاسم", "المطوع", "الحمد", "السالم",
-  "العلي", "العبدلي", "الفارس", "الخالد", "المبارك", "السلطان", "الأنصاري", "الشايع", "الشايجي", "المزيني",
-  "الحساوي", "الكندري", "العجمي", "الرشيدي", "الظفيري", "الهاجري", "العازمي", "السهلي", "الجهني", "البلوي",
-  "الحويطي", "الوهيبي", "الدعجاني", "الثبيتي", "السواط", "الحارثي",
-];
+export const COMMON_ARABIC_NAMES: readonly string[] = commonNames;
 
 // The versioned keys are evidence. A decision snapshot without them cannot be
 // reproduced after the normalizer or the candidate pool changes.
 export const ARABIC_NAME_NORMALIZER_VERSION = "ar-name-keys-v1";
-export const ARABIC_NAME_POOL_VERSION = "ar-name-pool-v1";
+export const ARABIC_NAME_POOL_VERSION = "ar-name-pool-v2";
 
 export type NameCandidateMatchKind = "canonical" | "compact" | "particle" | "skeleton" | "listed";
 
@@ -190,21 +158,23 @@ export function rankArabicNames(
   if (limit < 1) return [];
   const queryKeys = arabicNameKeys(query);
   const emptyQuery = queryKeys.canonical === "";
-  const sources: Array<[NameCandidateSource, readonly string[]]> = [
-    ["reader", groups.reader ?? []],
-    ["ai", groups.ai ?? []],
-    ["file", groups.file ?? []],
-    ["common", groups.common ?? COMMON_ARABIC_NAMES],
+  type Input = { value: string; count: number; occurrence: string };
+  const plain = (values: readonly string[]): Input[] => values.map((value) => ({ value, count: 0, occurrence: "" }));
+  const file = (groups.file ?? []).flatMap((entry, index): Input[] => typeof entry === "string"
+    ? [{ value: entry, count: 1, occurrence: String(index) }]
+    : Array.from(new Set([entry.value, ...(entry.variants ?? [])])).map((value) => ({ value, count: Math.max(0, Math.floor(entry.count)), occurrence: String(index) })));
+  const sources: Array<[NameCandidateSource, Input[]]> = [
+    ["reader", plain(groups.reader ?? [])], ["ai", plain(groups.ai ?? [])],
+    ["file", file], ["common", plain(groups.common ?? COMMON_ARABIC_NAMES)],
   ];
-
-  type MutableCandidate = RankedNameCandidate & { order: number };
+  type MutableCandidate = RankedNameCandidate & { order: number; fileOccurrences: Set<string> };
   const byKey = new Map<string, MutableCandidate>();
   let order = 0;
 
   for (const [source, values] of sources) {
     if (emptyQuery && source === "common") continue;
     for (let index = 0; index < values.length; index += 1) {
-      const display = displayName(values[index] ?? "");
+      const display = displayName(values[index]?.value ?? "");
       if (!display) continue;
       const keys = arabicNameKeys(display);
       if (!keys.canonical) continue;
@@ -241,7 +211,10 @@ export function rankArabicNames(
         if (score > 0 && (existing.matchKind === "listed" || score > previousScore)) {
           existing.matchKind = matchKind;
         }
-        if (source === "file") existing.fileCount += 1;
+        if (source === "file" && !existing.fileOccurrences.has(values[index].occurrence)) {
+          existing.fileOccurrences.add(values[index].occurrence);
+          existing.fileCount += values[index].count;
+        }
         // The file's spelling is the spelling a reviewer already chose for this
         // chart, so it wins over the machine's or the lexicon's spelling when
         // the keys agree. The machine reading is still visible above the chips.
@@ -267,7 +240,8 @@ export function rankArabicNames(
         sources: [source],
         ranks: { [source]: rank },
         score,
-        fileCount: source === "file" ? 1 : 0,
+        fileCount: source === "file" ? values[index].count : 0,
+        fileOccurrences: new Set(source === "file" ? [values[index].occurrence] : []),
         matchKind,
         order: order++,
       });
@@ -280,12 +254,13 @@ export function rankArabicNames(
       SOURCE_RANK[left.source] - SOURCE_RANK[right.source] ||
       right.fileCount - left.fileCount ||
       left.key.length - right.key.length ||
-      left.key.localeCompare(right.key, "ar") ||
+      (left.key < right.key ? -1 : left.key > right.key ? 1 : 0) ||
       left.order - right.order,
     )
     .slice(0, limit)
     .map((candidate) => {
-      const { order, ...ranked } = candidate;
+      const { order, fileOccurrences, ...ranked } = candidate;
+      void fileOccurrences;
       void order; // the insertion order is a sort key, not part of the result
       return ranked;
     });

@@ -2905,6 +2905,12 @@ export interface SourceTreeSuggestion {
   decidedAt?: string;
   decisionNoteAr?: string;
   sourcePageEvidenceId?: string;
+  /** The human revision cycle this occurrence is in. 0 means a first decision. */
+  reviewRevision: number;
+  /** Immutable geometry version; a region repair increments it. */
+  geometryRevision: number;
+  /** True when split/merge retired this occurrence; its evidence remains. */
+  superseded: boolean;
 }
 
 export type SourceTreeSuggestionDecision = "accepted" | "corrected" | "rejected" | "deferred";
@@ -2977,6 +2983,10 @@ export interface NameJudgeResult {
 }
 
 export interface SourceTreeSuggestionDecisionEvidence {
+ judgeWasVisible?: boolean;
+ evidenceSchemaVersion?: string;
+ preparationId?: string;
+ preparationSignature?: string;
   candidateSnapshot?: SourceTreeSuggestionCandidateSnapshot[];
   selectedCandidate?: string;
   inputMethod?: SourceTreeSuggestionInputMethod;
@@ -2984,6 +2994,153 @@ export interface SourceTreeSuggestionDecisionEvidence {
   normalizerVersion?: string;
   candidatePoolVersion?: string;
   durationMs?: number;
+  /** The review revision the reviewer saw. Required after a reopen. */
+  expectedRevision?: number;
+  expectedGeometryRevision?: number;
+}
+
+export interface NameRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// A human decision revision. The ledger is append-only: reopening and correcting
+// add rows, they never edit this one.
+export interface SourceSuggestionDecisionRecord {
+  id: string;
+  reviewerId: string;
+  reviewerLabelAr?: string;
+  decision: SourceTreeSuggestionDecision;
+  suggestedTextAr: string;
+  decidedTextAr?: string;
+  noteAr?: string;
+  revision: number;
+  geometryRevision?: number;
+  supersedesDecisionId?: string;
+  reviewedAt: string;
+  candidateSnapshot?: SourceTreeSuggestionCandidateSnapshot[];
+  selectedCandidate?: string;
+  inputMethod?: SourceTreeSuggestionInputMethod;
+  normalizerVersion?: string;
+  candidatePoolVersion?: string;
+}
+
+export type SourceSuggestionReviewEventType = "reopened" | "decision" | "region_revised" | "split" | "merge";
+
+export interface SourceSuggestionReviewEvent {
+  id: string;
+  type: SourceSuggestionReviewEventType;
+  actorId: string;
+  actorLabelAr?: string;
+  revision: number;
+  previousDecisionId?: string;
+  decisionId?: string;
+  geometryRevisionId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SourceSuggestionRegionRevision {
+  id: string;
+  revision: number;
+  previousRegion: NameRegion;
+  region: NameRegion;
+  coordinateSpace: string;
+  analysisDpi: number;
+  sourceChecksum: string;
+  frameWidth: number;
+  frameHeight: number;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SourceSuggestionLineageEdge {
+  kind: "repair" | "split" | "merge";
+  parentId: string;
+  childId: string;
+  createdAt: string;
+}
+
+export interface SourceSuggestionHistory {
+  suggestion: SourceTreeSuggestion;
+  originalRegion: NameRegion;
+  decisions: SourceSuggestionDecisionRecord[];
+  events: SourceSuggestionReviewEvent[];
+  regionRevisions: SourceSuggestionRegionRevision[];
+  lineage: SourceSuggestionLineageEdge[];
+  canReopen: boolean;
+  canReviseRegion: boolean;
+  canSplit: boolean;
+  canMerge: boolean;
+}
+
+export interface NameReviewSummary {
+  total: number;
+  pending: number;
+  deferred: number;
+  accepted: number;
+  corrected: number;
+  rejected: number;
+  decided: number;
+  superseded: number;
+  decisionEvents: number;
+}
+
+export interface SourceSuggestionRegionInput {
+  expectedGeometryRevision: number;
+  region: NameRegion;
+  coordinateSpace?: string;
+  analysisDpi?: number;
+  sourceChecksum?: string;
+  frameWidth?: number;
+  frameHeight?: number;
+  noteAr?: string;
+}
+
+export interface SourceSuggestionRegionPreview {
+  geometryRevision: number;
+  region: NameRegion;
+  coordinateSpace: string;
+  analysisDpi: number;
+  sourceChecksum: string;
+  frameWidth: number;
+  frameHeight: number;
+  tightBounds: { x: number; y: number; width: number; height: number };
+  contextBounds: { x: number; y: number; width: number; height: number };
+  quality: { nameHeightPx: number; contrast: number; clipped: boolean; coloured: boolean; reason?: string };
+  tightPng: string;
+  contextPng: string;
+}
+
+export interface SourceSuggestionSplitInput {
+  expectedReviewRevision: number;
+  expectedGeometryRevision: number;
+  regions: NameRegion[];
+  noteAr?: string;
+}
+
+export interface SourceSuggestionSplitResult {
+  parent: SourceTreeSuggestion;
+  children: SourceTreeSuggestion[];
+}
+
+export interface SourceSuggestionMergeMember {
+  id: string;
+  expectedReviewRevision: number;
+  expectedGeometryRevision: number;
+}
+
+export interface SourceSuggestionMergeInput {
+  members: SourceSuggestionMergeMember[];
+  region: NameRegion;
+  noteAr?: string;
+}
+
+export interface SourceSuggestionMergeResult {
+  merged: SourceTreeSuggestion;
+  superseded: SourceTreeSuggestion[];
 }
 
 // The accuracy the review decisions imply. The count is reported beside the
@@ -2997,4 +3154,45 @@ export interface SourceSuggestionAccuracy {
   deferred: number;
   unchangedRate: number;
   measurable: boolean;
+}
+
+export type ReadingReason = "configured" | "disabled_by_policy" | "not_configured" | "local_reader_not_implemented" | "tool_missing" | "language_missing" | "temporarily_unavailable";
+export interface ReadingCapabilities {
+  mode: "off" | "local" | "hosted";
+  localReader: { configured: boolean; ready: boolean; reason: ReadingReason; version: string; languages: string[]; tools: Array<{ name: string; available: boolean; version?: string }> };
+  hostedReader: { enabled: boolean; configured: boolean; allowedForSource: boolean; ready: boolean; reason: ReadingReason; version: string };
+}
+
+export interface NameReadingRun {
+ id: string;
+ sourceFileId: string;
+ status: "queued" | "running" | "partial" | "succeeded" | "failed" | "cancelled";
+ stage: "queued" | "preparing" | "detecting" | "reading" | "complete";
+ config: { rendererVersion: string; geometryVersion: string; localiserVersion: string; preprocessingVersion: string; readerVersion: string; engineVersion: string; readerMode: string; privacyPolicy: "local_only"; cropBudgetMs: number };
+ pages: number; detected: number; named: number; unreadable: number; unavailable: number;
+ manualReview: number; sourcePixelWarnings: number; completedUnits: number; failedUnits: number; totalUnits: number; cacheHits: number;
+ timings: Record<string, number>; errorCode?: string; updatedAt: string;
+}
+export interface LocalNameReading {
+ outcome: "readable" | "unreadable" | "reading_unavailable" | "manual_review";
+ text: string;
+ alternatives: string[];
+ readerVersion: string;
+ preprocessingVersion: string;
+ variants: Array<{ variant: string; segmentation: number; rawText: string; engineScore?: number; outcome: string; errorCode?: string; durationMs: number; bytes: number }>;
+ quality: { nameHeightPx: number; contrast: number; clipped: boolean; coloured: boolean; reason?: string };
+ measuredAgreement: number;
+}
+
+
+export interface NameLexiconEntry { value: string; key: string; compactKey: string; particleKey: string; count: number; variants: string[]; variantsTruncated: boolean; }
+export interface NameLexicon { revision: string; version: string; asOf: string; entries: NameLexiconEntry[]; totalOccurrences: number; totalSpellings: number; truncated: boolean; omittedEntries: number; invalidSpellings: number; }
+export interface NameCandidatePreparation { id: string; signature: string; snapshot: SourceTreeSuggestionCandidateSnapshot[]; }
+export interface NamePreparationContext {
+ privacyPolicy?: string; judgeMode?: NameJudgeConfig["mode"]; judgeSample?: number;
+ exposureId: string; reading: string; alternatives: string[];
+ readers: Array<{ value: string; variant: string; readerVersion: string }>;
+ lexicon: NameLexicon; versions: Record<string, string>; diagnostics: string[];
+ eligible: boolean; eligibilityReason: string; firstExposedAt: string;
+ canPrepare: boolean; preparation?: NameCandidatePreparation;
 }

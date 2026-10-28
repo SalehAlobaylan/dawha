@@ -17,7 +17,7 @@
 - **Depends on:** [Plan 023](023-local-reading-capabilities-and-cohorts.md)
 - **Category:** processing / performance / tooling
 - **Planned at:** commit `f0fcb6e`, 2026-10-27
-- **Status:** TODO
+- **Status:** DONE
 
 ## Why this matters
 
@@ -46,7 +46,7 @@ Do not add another model call merely to make the pipeline longer.
 - `cmd/api/main.go:118–121` sets `WriteTimeout: 15 * time.Second`.
   `apps/web/src/lib/api.ts:2308` waits 300 seconds for this operation;
   `chart_vision_client.go:106` permits 115 seconds per provider call.
-- `tree_suggestions.go:808–866` loops over all pages and saves suggestions only
+- `tree_suggestions.go:746` loops over all pages and saves suggestions only
   after `ReadNamesOnPage` succeeds. In `name_reading.go:203–211`, a non-nil reader
   is invoked and any reading error discards the current tile's returned regions.
 - `cmd/api/main.go:105` always constructs a non-nil HTTP vision adapter; pointer
@@ -277,12 +277,12 @@ coverage. Never put test-generated decisions in the real evaluation database.
 | `make generated-check && make docs-check && git diff --check` | pass |
 | guarded database verification using a dedicated test database | no data or fixtures in the review database |
 
-- [ ] Local detection survives optional-reader failure and is immediately reviewable.
-- [ ] Prepare requests enqueue; restart/resume/cancel are fenced and idempotent.
-- [ ] Source/crop work is reused; a text-only judge no longer decodes the source.
-- [ ] Local crop reading works with hosted credentials absent and network transport denied.
-- [ ] Every hypothesis has an immutable processing/geometry/version identity.
-- [ ] The original human labels, snapshots, source checksums, and class map are unchanged.
+- [x] Local detection survives optional-reader failure and is immediately reviewable.
+- [x] Prepare requests enqueue; restart/resume/cancel are fenced and idempotent.
+- [x] Source/crop work is reused; a text-only judge no longer decodes the source.
+- [x] Local crop reading works with hosted credentials absent and network transport denied.
+- [x] Every hypothesis has an immutable processing/geometry/version identity.
+- [x] The original human labels, snapshots, source checksums, and class map are unchanged.
 
 ## Stops and maintenance
 
@@ -295,3 +295,84 @@ storage abstraction are the intended owners.
 Future renderer or OCR upgrades invalidate relevant artifacts and create new
 processing versions. Measure local reader quality as an experiment; no model or
 preprocessing improvement is guaranteed by this plan.
+
+
+## Implementation record — 2026-10-28
+
+Implemented against `3de1de1` with the uncommitted Plan 023 work preserved.
+No commit, push, model download, hosted source approval or human decision was
+created by this implementation.
+
+- Additive migrations 0054–0056 separate durable runs, checkpoint units,
+  source-space frames, bounded private crop artifacts and immutable local
+  reading attempts. The live local database received only these migrations.
+- The normal read route returns HTTP 202 after transactional enqueue. The
+  existing PostgreSQL queue owns leases, heartbeats, scoped recovery and
+  generation fencing. Successful units survive restart/resume; explicit cancel
+  revokes the lease and late reader results cannot write. Geometry is committed
+  before optional OCR, including when Arabic OCR is unavailable.
+- Raster frames retain native pixels/DPI 0; PDF frames retain 240-DPI analysis
+  dimensions. Artifact identities pin checksum, frame/geometry, crop bounds and
+  processing versions. Per-fetch authorization, render coalescing, private
+  storage, a 256-MiB per-file budget and bounded 30-day expiry preserve originals.
+  Prepared text-only judge requests make zero original reads or PDF calls.
+- Local Tesseract uses at most three inspectable raw/adaptive/segmentation
+  variants under one 12-second default budget and two CPU slots. Tiny, low
+  contrast and clipped regions have explicit routes. Engine scores and view
+  agreement remain distinct. Reader identity includes the installed engine,
+  Arabic data, preprocessing and budget; no Liquid/hosted fallback exists.
+- Authenticated operator commands and browser controls expose prepare, status,
+  resume, cancel and local reread. Display subscriptions abort obsolete requests
+  without cancelling durable work; prefetch holds only the active/next crops.
+  The local comparison view never fills the draft or accepts a name, and new
+  local readings show no correctness percentage.
+- The isolated guard's scoped-package manifest now requires exactly the selected
+  database-backed packages; full verification retains the complete manifest.
+  The telemetry series budget explicitly includes the new job type.
+
+Initial isolated acceptance runs exposed a non-UUID artifact primary key that
+prevented generic fixture cleanup, and a recovery fixture racing its still-live
+heartbeat. The failed databases/logs were retained. Migration 0055 gives artifact
+records UUID identity while preserving their unique fingerprint; the recovery
+fixture now models an actually stopped worker. A response-shape fixture and
+lease-loss error normalization were corrected. A later verification failure
+identified the missed telemetry series-budget assertion; it was updated without
+weakening the enumeration or test audits.
+
+The private benchmark froze six pending regions, two per registered class,
+before inference. All six product-path local rereads completed, with four text
+hypotheses and two manual-review outcomes. Fourteen OCR operations took 1,416 ms
+and encoded 404,642 variant PNG bytes; the report preserves the class/variant
+breakdowns. Twelve cached fetches took 3–12 ms. These are processing counts, not
+name accuracy. Full measurements and limits are recorded in
+[the local pipeline guide](../docs/local-name-reading-pipeline.md).
+
+The running app uses local reading with hosted reading disabled and
+`NAME_JUDGE_MODE=shadow`, sample 1, images false. Doctor returns exit 0 with the
+installed local Arabic reader ready. The 111 original review rows and snapshots,
+source checksums and frozen class map match their starting fingerprints; the
+benchmark's six original suggestions also remained unchanged. The read-only
+`name-eval` replay still has 80 truths, 79 qualifying shadow decisions in one
+class and `ready=false`; the pre-registered evaluation rule is unchanged.
+
+
+Validation completed:
+
+| Check | Result |
+|---|---|
+| Focused Go sourceprocessing, HTTP, operator and jobs suites | passed |
+| Guarded scoped sourceprocessing/HTTP database gate | 361 tests: 360 passed, 1 optional skip, 0 database skips; fixture audit passed |
+| Guarded `verify-full` | passed: 949 Go tests, 943 passed, 6 optional skips, 0 database skips; fixture audit passed |
+| Migration runner and AI evaluation | all five migration cases passed; all configured metric groups hold their existing baselines |
+| Python suite / Ruff | 86 passed / passed |
+| Web suite / ESLint / typecheck / build | 91 passed; all checks passed (the full gate preceded the final local-percentage display test) |
+| Isolated browser gate in separate database/storage | 30 journeys passed |
+| Test-environment guard unit tests | 12 passed |
+| `env -u DATABASE_URL -u AI_RESEARCH_URL make verify` | passed, including the final display change |
+| `generated-check`, `docs-check`, `git diff --check` | passed |
+| Local doctor and six-crop product-path benchmark | exit 0, local reader ready; six durable rereads succeeded; no hosted image call |
+| Preservation and read-only evaluation replay | 111/111 original actions unchanged; 12 corpus originals verified; class map and HEAD unchanged; evaluation remains not ready |
+
+Plan 024 is complete and the work remains uncommitted. Plan 025 owns complete
+file context, candidate versioning and durable pre-review shadow preparation;
+Plan 022's human measurement remains pending.
