@@ -88,7 +88,7 @@ func syntheticCarrierPage(t *testing.T, shapes []carrierShape, background color.
 			}
 			// a stem every few pixels, so the ink breaks into letter-like strokes
 			if (x-wordLeft)%6 == 0 {
-				for thickness := 3; thickness <= 7; thickness++ {
+				for thickness := 1; thickness <= 7; thickness++ {
 					paint(x, shape.top+shape.textRow-thickness)
 				}
 			}

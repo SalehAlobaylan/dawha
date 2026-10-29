@@ -122,7 +122,13 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
-	h.writeUser(w, http.StatusOK, user)
+	roles, err := h.Service.CurrentRoles(r.Context(), user.ID)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "roles": roles})
 }
 
 func (h Handler) Logout(w http.ResponseWriter, r *http.Request) {

@@ -75,8 +75,7 @@ test.describe("create and publish a tree", () => {
 
     // The refusal has to be visible: a silent no-op would read as success.
     await expect(page.getByRole("status")).toContainText(/سجّل? الدخول/);
-    // And nothing was written: the tree selector still offers only what existed
-    // before the attempt.
-    await expect(page.getByRole("combobox", { name: "اختيار الشجرة" }).getByText("شجرة زائر")).toHaveCount(0);
+    // A rejected creation must not add a saved record to the library.
+    await expect(page.locator(".tree-library-row").getByRole("heading", { name: "شجرة زائر" })).toHaveCount(0);
   });
 });

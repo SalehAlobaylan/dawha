@@ -147,10 +147,12 @@ const (
 	// The model names both halves of the answer: the carriers are found by the
 	// colour anchor, the names by the ink grouping that runs with or without
 	// carriers.
-	carrierReadingModel = "colour-text-anchor-v1+ink-name-groups-v1"
+	carrierReadingModel         = "colour-text-anchor-v1+contrast-name-groups-v3"
+	previousCarrierReadingModel = "colour-text-anchor-v1+contrast-name-groups-v2"
+	legacyCarrierReadingModel   = "colour-text-anchor-v1+ink-name-groups-v1"
 )
 
-// inkBlob is one connected run of dark ink, with the carriers it touches.
+// inkBlob is one connected run of foreground pixels, with the carriers it touches.
 type inkBlob struct {
 	touched []int32
 	box     box
@@ -186,6 +188,14 @@ func boxGap(left, right box) int {
 // The page is expected to be a rendered PNG or JPEG. A page with no coloured shape, or
 // with no ink, yields no regions and no error.
 func DetectNameCarriers(data []byte, config CarrierLocaliserConfig) ([]PageRegion, error) {
+	return detectNameCarriersWithPolicy(data, config, true, true)
+}
+
+func detectNameCarriers(data []byte, config CarrierLocaliserConfig, improved bool) ([]PageRegion, error) {
+	return detectNameCarriersWithPolicy(data, config, improved, false)
+}
+
+func detectNameCarriersWithPolicy(data []byte, config CarrierLocaliserConfig, improved, strict bool) ([]PageRegion, error) {
 	if len(data) == 0 {
 		return nil, ErrValidation
 	}
@@ -205,6 +215,14 @@ func DetectNameCarriers(data []byte, config CarrierLocaliserConfig) ([]PageRegio
 
 	saturated := make([]bool, width*height)
 	ink := make([]bool, width*height)
+	var lightInk, lightLetter, greenBackground []bool
+	var luminances []uint8
+	if improved {
+		lightInk = make([]bool, width*height)
+		lightLetter = make([]bool, width*height)
+		greenBackground = make([]bool, width*height)
+		luminances = make([]uint8, width*height)
+	}
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			r, g, b, _ := imageData.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
@@ -225,7 +243,36 @@ func DetectNameCarriers(data []byte, config CarrierLocaliserConfig) ([]PageRegio
 			index := y*width + x
 			saturated[index] = highest-lowest >= config.SaturationThreshold
 			luminance := (299*red + 587*green + 114*blue) / 1000
+			if improved {
+				luminances[index] = uint8(luminance)
+				lightLetter[index] = red >= 170 && green >= 150 && blue < 120 && red >= green*9/10
+				greenBackground[index] = green*10 > red*11 && green*10 > blue*12
+			}
 			ink[index] = luminance < config.InkThreshold
+		}
+	}
+	// Some charts print light yellow names on coloured leaves. Dark-only thresholding
+	// misses those names and instead proposes the leaf veins and branch edges.
+	// Require local contrast against several saturated, darker neighbours; a
+	// uniformly bright sky or coloured fill is not light text.
+	radius := max(4, int(math.Round(float64(max(width, height))*.0035)))
+	diagonal := max(3, radius*3/4)
+	for y := radius; improved && y < height-radius; y++ {
+		for x := radius; x < width-radius; x++ {
+			index := y*width + x
+			if luminances[index] < 160 {
+				continue
+			}
+			contrast := 0
+			for _, offset := range [][2]int{{-radius, 0}, {radius, 0}, {0, -radius}, {0, radius}, {-diagonal, -diagonal}, {diagonal, -diagonal}, {-diagonal, diagonal}, {diagonal, diagonal}} {
+				near := (y+offset[1])*width + x + offset[0]
+				if saturated[near] && (!strict || greenBackground[near]) && int(luminances[index])-int(luminances[near]) >= 45 {
+					contrast++
+				}
+			}
+			if lightLetter[index] && contrast >= 3 {
+				lightInk[index] = true
+			}
 		}
 	}
 
@@ -319,64 +366,73 @@ func DetectNameCarriers(data []byte, config CarrierLocaliserConfig) ([]PageRegio
 	// page. Pixel evidence is both stronger and safer: the anti-aliased edge of a
 	// letter is dark and saturated at once, so the pixels of a word reach the
 	// shape it is written on even when the letter's interior does not.
-	seen := make([]bool, width*height)
-	blobs := make([]inkBlob, 0, 1024)
-	for start := 0; start < width*height; start++ {
-		if !ink[start] || seen[start] {
-			continue
-		}
-		current := inkBlob{box: box{minX: width, minY: height, maxX: -1, maxY: -1}}
-		pixelCarriers := map[int32]bool{}
-		stack = stack[:0]
-		stack = append(stack, start)
-		seen[start] = true
-		for len(stack) > 0 {
-			index := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			y, x := index/width, index%width
-			if id := carrierID[index]; id >= 0 {
-				pixelCarriers[id] = true
+	collectBlobs := func(mask []bool) []inkBlob {
+		seen := make([]bool, width*height)
+		blobs := make([]inkBlob, 0, 1024)
+		for start := 0; start < width*height; start++ {
+			if !mask[start] || seen[start] {
+				continue
 			}
-			if x < current.box.minX {
-				current.box.minX = x
-			}
-			if x > current.box.maxX {
-				current.box.maxX = x
-			}
-			if y < current.box.minY {
-				current.box.minY = y
-			}
-			if y > current.box.maxY {
-				current.box.maxY = y
-			}
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					nx, ny := x+dx, y+dy
-					if nx < 0 || ny < 0 || nx >= width || ny >= height {
-						continue
-					}
-					next := ny*width + nx
-					if ink[next] && !seen[next] {
-						seen[next] = true
-						stack = append(stack, next)
+			current := inkBlob{box: box{minX: width, minY: height, maxX: -1, maxY: -1}}
+			pixelCarriers := map[int32]bool{}
+			stack = stack[:0]
+			stack = append(stack, start)
+			seen[start] = true
+			for len(stack) > 0 {
+				index := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				y, x := index/width, index%width
+				if id := carrierID[index]; id >= 0 {
+					pixelCarriers[id] = true
+				}
+				if x < current.box.minX {
+					current.box.minX = x
+				}
+				if x > current.box.maxX {
+					current.box.maxX = x
+				}
+				if y < current.box.minY {
+					current.box.minY = y
+				}
+				if y > current.box.maxY {
+					current.box.maxY = y
+				}
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						nx, ny := x+dx, y+dy
+						if nx < 0 || ny < 0 || nx >= width || ny >= height {
+							continue
+						}
+						next := ny*width + nx
+						if mask[next] && !seen[next] {
+							seen[next] = true
+							stack = append(stack, next)
+						}
 					}
 				}
 			}
-		}
-		blobArea := float64((current.box.maxX - current.box.minX) * (current.box.maxY - current.box.minY))
-		if blobArea <= 0 {
-			continue
-		}
-		if blobArea/pageArea > config.MaxAreaFraction {
-			// Too big to be a word: a line, a border, a block of prose.
-			continue
-		}
-		if len(pixelCarriers) > 0 {
-			for id := range pixelCarriers {
-				current.touched = append(current.touched, id)
+			blobArea := float64((current.box.maxX - current.box.minX) * (current.box.maxY - current.box.minY))
+			if blobArea <= 0 {
+				continue
 			}
+			if blobArea/pageArea > config.MaxAreaFraction {
+				// Too big to be a word: a line, a border, a block of prose.
+				continue
+			}
+			if len(pixelCarriers) > 0 {
+				for id := range pixelCarriers {
+					current.touched = append(current.touched, id)
+				}
+			}
+			blobs = append(blobs, current)
 		}
-		blobs = append(blobs, current)
+
+		return blobs
+	}
+	blobs := collectBlobs(ink)
+	var lightBlobs []inkBlob
+	if improved {
+		lightBlobs = collectBlobs(lightInk)
 	}
 
 	// Merge the carriers that share a text blob: fragments of one shape share a
@@ -464,6 +520,49 @@ func DetectNameCarriers(data []byte, config CarrierLocaliserConfig) ([]PageRegio
 		config.NameGroupMaxAreaFraction,
 		int(float64(height)*config.NameGroupMinHeightFraction),
 		config.NameGroupMinAreaFraction)
+
+	// Group the two polarities independently: connecting light letters to dark
+	// branch strokes creates huge false names on illustrated trees.
+	lightGroups := groupNameBlobs(lightBlobs,
+		int(float64(max(width, height))*config.NameGroupGapFraction), width, height,
+		config.NameGroupMaxAreaFraction, int(float64(height)*config.NameGroupMinHeightFraction), config.NameGroupMinAreaFraction)
+	if improved {
+		bounded := func(items []PageRegion) []PageRegion {
+			kept := items[:0]
+			for _, group := range items {
+				if !isNameFragment(group.Width*float64(width), group.Height*float64(height)) {
+					kept = append(kept, group)
+				}
+			}
+			return kept
+		}
+		nameGroups = bounded(nameGroups)
+		lightGroups = bounded(lightGroups)
+	}
+	// Prefer the existing dark-text interpretation unless light lettering is
+	// the dominant usable evidence. This fallback avoids turning highlights on
+	// a photographic tree into hundreds of extra names beside valid dark text.
+	if len(lightGroups) <= len(nameGroups)*2 {
+		lightGroups = nil
+	} else if strict {
+		// With dominant light lettering, dark components are the tree drawing,
+		// not a second set of name placeholders. Keep the detected text polarity.
+		nameGroups = nil
+	}
+	for _, candidate := range lightGroups {
+		duplicate := false
+		for _, existing := range nameGroups {
+			w := math.Max(0, math.Min(existing.X+existing.Width, candidate.X+candidate.Width)-math.Max(existing.X, candidate.X))
+			h := math.Max(0, math.Min(existing.Y+existing.Height, candidate.Y+candidate.Height)-math.Max(existing.Y, candidate.Y))
+			if w*h/math.Min(existing.Width*existing.Height, candidate.Width*candidate.Height) > .7 {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			nameGroups = append(nameGroups, candidate)
+		}
+	}
 
 	regions := make([]PageRegion, 0, len(groups))
 	for root, group := range groups {
@@ -636,6 +735,12 @@ func groupNameBlobs(blobs []inkBlob, gap int, pageWidth, pageHeight int, maxArea
 		})
 	}
 	return regions
+}
+
+// A conservative source-pixel floor, not a claim that a remaining region is a
+// name. Keep both orientations; tiny dots and single thin stems are fragments.
+func isNameFragment(width, height float64) bool {
+	return math.Min(width, height) < 5-1e-6 || math.Max(width, height) < 10-1e-6 || width*height < 64-1e-6
 }
 
 // blobGap returns the distance between two boxes, zero when they touch or overlap.

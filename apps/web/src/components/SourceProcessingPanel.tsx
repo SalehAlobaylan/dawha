@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Check, Eye, FileText, GitBranch, Quote, Save, ScanSearch, Upload, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useRef, useState } from "react";
 import { createSourceFileDownloadLink, createSourceTreeDraft, fetchSourceChartAnalysis, fetchSourcePageEvidence, fetchSourcePageEvidenceIndex, fetchSourceProcessing, fetchLatestNameReadingRun, controlNameReadingRun, readSourceTreeSuggestions, reextractReviewedPage as reextractReviewedPageAPI, reprocessSourceFile, reviewSourceCandidate, reviewSourcePage, startSourceChartAnalysis, uploadSourceFile } from "../lib/api";
@@ -223,20 +224,16 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
         <div>
           <div className="eyebrow">معالجة المصدر</div>
           <h3>{sourceTitle}</h3>
-          <p>ارفع نصاً أو PDF أو صورة شجرة عربية، ثم راجع كل نتيجة على الصفحة الأصلية قبل اتخاذ قرار.</p>
+          <p>{sourceType === "family_document" ? "تابع استيراد المشجر لمراجعة الأسماء والوصلات وإنشاء شجرة خاصة." : "ارفع نصاً أو PDF أو صورة، ثم راجع النتائج على الصفحة الأصلية."}</p>
         </div>
         <FileText size={18} />
       </div>
-      {sourceType === "family_document" ? <ol className="source-processing-steps" dir="rtl">
-        <li><strong>ارفع PDF العائلة</strong><span>تُحفظ النسخة الأصلية وتُستخرج قراءات الصفحات.</span></li>
-        <li><strong>راجع النص والرسم</strong><span>افتح الصفحات، صحح الأسماء، ثم ارسم كل وصلة ظاهرة بنفسك.</span></li>
-        <li><strong>أنشئ الشجرة الخاصة</strong><span>بعد مراجعة الأسماء والوصلات، افتح رابط الشجرة الذي يظهر بعد الاستيراد.</span></li>
-      </ol> : sourceType === "book" || sourceType === "manuscript" ? <ol className="source-processing-steps" dir="rtl">
+      {sourceType === "book" || sourceType === "manuscript" ? <ol className="source-processing-steps" dir="rtl">
         <li><strong>ارفع الكتاب أو المخطوط</strong><span>تُحفظ النسخة وتُفهرس قراءة كل صفحة.</span></li>
         <li><strong>راجع النسخ مع الصفحة</strong><span>صحح النص يدوياً، واحفظ كل مراجعة كنسخة مستقلة.</span></li>
         <li><strong>سجّل عبارة موثقة</strong><span>اختر اقتباساً، ثم أدخل الأسماء والعلاقة كما يذكرها النص.</span></li>
       </ol> : null}
-      <div className="source-processing-upload">
+      <details className="source-upload-disclosure" open={sourceType !== "family_document" || !processing?.files.length || undefined}><summary>إضافة ملف إلى المصدر</summary><div className="source-processing-upload">
         <label className="composer-label source-processing-file">
           ملف المصدر
           <input type="file" accept={SUPPORTED_UPLOAD_ACCEPT} onChange={chooseFile} />
@@ -246,6 +243,7 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
           <Upload size={15} /> {uploadMutation.isPending ? "جارٍ الرفع…" : "رفع ومعالجة"}
         </button>
       </div>
+      </details>
       {message ? <div className="evidence-workspace-message" role="status">{message}</div> : null}
       {error ? <div className="evidence-workspace-error" role="alert">{errorMessage(error)}</div> : null}
       {processingQuery.isPending ? <p className="evidence-empty">جارٍ تحميل حالة المعالجة…</p> : null}
@@ -266,22 +264,26 @@ export function SourceProcessingPanel({ sourceId, sourceTitle, sourceType }: Sou
 function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, setReviewNote, onReview, onViewPage, onViewOriginalPDF, onStartTreeDraft, treeDraftLoading, reprocessPending, onReprocess, chartAnalysisPending, onStartChartAnalysis, onReviewSuggestions, suggestionReadPending, onReadSuggestions }: { processing: SourceProcessing; sourceType: string; reviewPending: boolean; reviewNote: string; setReviewNote: (value: string) => void; onReview: (candidateId: string, decision: "accepted" | "rejected") => void; onViewPage: (fileId: string, pageNumber: number) => void; onViewOriginalPDF: (fileId: string) => void; onStartTreeDraft: (fileId: string) => void; treeDraftLoading: boolean; reprocessPending: boolean; onReprocess: (fileId: string) => void; chartAnalysisPending: boolean; onStartChartAnalysis: (fileId: string) => void; onReviewSuggestions: (fileId: string) => void; suggestionReadPending: boolean; onReadSuggestions: (fileId: string) => void }) {
   const latestRun = processing.runs[0];
   const recentRuns = processing.runs.slice(0, 8);
-  return (
-    <div className="source-processing-summary">
+  const runSummary = <>
       <div className="source-processing-run">
         <div><strong>أحدث تشغيل</strong><span>{latestRun ? `${runKindLabel(latestRun)} · ${runStatusLabel(latestRun.status)}` : "لم تبدأ"}</span></div>
         {latestRun ? <small>{latestRun.pageCount} صفحة · {latestRun.passageCount} مقطع · {latestRun.candidateCount} مرشح</small> : null}
         {latestRun?.error ? <p className="source-processing-error">{latestRun.error}</p> : null}
       </div>
       {recentRuns.length > 1 ? <details className="source-processing-history"><summary>سجل التشغيلات · {processing.runs.length}</summary>{recentRuns.map((run) => <div className="source-processing-history-row" key={run.id}><span>{runKindLabel(run)}</span><span>{runStatusLabel(run.status)} · {run.pageCount} صفحة · {run.candidateCount} مرشح</span><small>{new Date(run.createdAt).toLocaleString("ar-SA")}</small></div>)}</details> : null}
-      <label className="composer-label source-review-note">ملاحظة القرار<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={2} placeholder="اختياري: سبب القبول أو الرفض" /></label>
+      {processing.candidates.length > 0 ? <label className="composer-label source-review-note">ملاحظة القرار<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={2} placeholder="اختياري: سبب القبول أو الرفض" /></label> : null}
+  </>;
+  return (
+    <div className="source-processing-summary">
       {processing.files.length > 0 ? <div className="source-processing-files">{processing.files.map((file) => {
         const active = processing.runs.some((run) => run.sourceFileId === file.id && (run.status === "queued" || run.status === "running"));
         return <div className="source-processing-file" key={file.id}>
         <div className="source-processing-file-detail">
           <span>{file.originalFilenameAr}</span>
           {file.processingError ? <p className="source-processing-error">{file.processingError}</p> : null}
+          {sourceType === "family_document" && isVisualSource(file.mimeType) ? <div className="tree-library-actions"><Link className="primary-button" to="/tree/charts/$fileId/names" params={{ fileId: file.id }}><ScanSearch size={15} /> مراجعة اقتراحات الأسماء</Link><Link className="secondary-button" to="/import" search={{ sourceId: processing.sourceId, fileId: file.id }}><GitBranch size={15} /> الوصلات والشجرة</Link></div> : null}
           {isVisualSource(file.mimeType) ? <>
+            <details className="source-file-tools"><summary>أدوات الملف والقراءة المتقدمة</summary>
             <button className="source-pdf-page-index-toggle" type="button" disabled={active || reprocessPending || (file.processingStatus !== "succeeded" && file.processingStatus !== "failed")} onClick={() => onReprocess(file.id)}>{reprocessPending ? "جارٍ بدء إعادة القراءة…" : file.mimeType === "application/pdf" ? "إعادة OCR بدقة أعلى (400 نقطة/بوصة)" : "إعادة قراءة الصورة"}</button>
             {file.mimeType === "application/pdf" ? <>
               <button className="source-pdf-page-index-toggle" type="button" onClick={() => void onViewOriginalPDF(file.id)}><Eye size={14} /> فتح ملف PDF الأصلي</button>
@@ -289,12 +291,14 @@ function ProcessingSummary({ processing, sourceType, reviewPending, reviewNote, 
               {sourceType === "family_document" && file.checksumSha256.toLowerCase() === JASSER_CHART_CHECKSUM ? <><button className="source-chart-analysis-start" type="button" disabled={chartAnalysisPending} onClick={() => onStartChartAnalysis(file.id)}><ScanSearch size={15} /> {chartAnalysisPending ? "جارٍ فتح تحليل الرؤية…" : "فتح التحليل البصري التجريبي"}</button><small className="source-chart-analysis-hint">متاح لهذا الملف الخاص فقط. اقتراحات الرؤية معزولة عن الاستيراد حتى تأهيلها معيارياً.</small></> : null}
             </> : <button className="source-pdf-page-index-toggle" type="button" onClick={() => onViewPage(file.id, 1)}><Eye size={14} /> عرض الصفحة الأصلية</button>}
             {sourceType === "family_document" ? <><button className="source-tree-draft-start" type="button" disabled={treeDraftLoading || file.processingStatus !== "succeeded"} onClick={() => onStartTreeDraft(file.id)}><GitBranch size={15} /> إعداد مسودة شجرة من هذا الملف</button><button className="source-tree-draft-start" type="button" disabled={suggestionReadPending} onClick={() => onReadSuggestions(file.id)}><ScanSearch size={15} /> قراءة الملف واستخراج الأسماء</button><button className="source-tree-draft-start" type="button" onClick={() => onReviewSuggestions(file.id)}><Quote size={15} /> مراجعة اقتراحات القراءة</button><small className="source-tree-draft-start-hint">ستراجع الأسماء على صورة كل صفحة؛ تبقى الوصلات لمرحلة مسودة الشجرة.</small><NameReadingRunStatus fileId={file.id} /></> : null}
+            </details>
           </> : null}
         </div>
         <StatusBadge tone={file.processingStatus === "failed" ? "disputed" : "source"}>{file.processingStatus === "succeeded" ? "اكتملت" : file.processingStatus === "failed" ? "فشلت" : "قيد المعالجة"}</StatusBadge>
       </div>;
       })}</div> : null}
-      {processing.candidates.length > 0 ? <div className="source-candidate-list">{processing.candidates.map((candidate) => <CandidateRow candidate={candidate} key={candidate.id} reviewPending={reviewPending} isVisual={isVisualSource(processing.files.find((file) => file.id === candidate.sourceFileId)?.mimeType)} onReview={onReview} onViewPage={onViewPage} />)}</div> : latestRun?.status === "succeeded" ? <p className="evidence-empty">اكتملت المعالجة دون استخراج مرشحين.</p> : null}
+      {sourceType === "family_document" ? <details className="source-file-tools"><summary>حالة المعالجة وسجل التشغيلات</summary>{runSummary}</details> : runSummary}
+      {processing.candidates.length > 0 ? <div className="source-candidate-list">{processing.candidates.map((candidate) => <CandidateRow candidate={candidate} key={candidate.id} reviewPending={reviewPending} isVisual={isVisualSource(processing.files.find((file) => file.id === candidate.sourceFileId)?.mimeType)} onReview={onReview} onViewPage={onViewPage} />)}</div> : sourceType !== "family_document" && latestRun?.status === "succeeded" ? <p className="evidence-empty">اكتملت المعالجة دون استخراج مرشحين.</p> : null}
     </div>
   );
 }

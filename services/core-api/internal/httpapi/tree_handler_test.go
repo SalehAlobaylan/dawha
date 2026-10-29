@@ -61,6 +61,28 @@ func TestCreateTreeRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestTreeCollectionScopesDoNotInventWorkspaceOrPublishedRecords(t *testing.T) {
+	for _, test := range []struct {
+		scope  string
+		status int
+	}{
+		{"workspace", http.StatusOK}, // Signed out: empty personal work, never the demo.
+		{"public", http.StatusServiceUnavailable},
+		{"unknown", http.StatusBadRequest},
+	} {
+		t.Run(test.scope, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			NewRouter(Dependencies{DemoMode: true}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/trees?scope="+test.scope, nil))
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, test.status, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "بيت العنبر") {
+				t.Fatal("scoped list substituted a synthetic tree")
+			}
+		})
+	}
+}
+
 func TestTreeEditRoutesRequireAuthentication(t *testing.T) {
 	cases := []struct {
 		path string

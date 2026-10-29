@@ -213,6 +213,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/source-characterization/runs/{runID}", evidenceHandler.getSourceCharacterizationRun)
 	mux.HandleFunc("PATCH /api/v1/source-characterization/runs/{runID}/review", evidenceHandler.reviewSourceCharacterization)
 	mux.HandleFunc("GET /api/v1/sources", evidenceHandler.listSources)
+	mux.HandleFunc("GET /api/v1/chart-library", sourceProcessingHandler.chartLibrary)
 	mux.HandleFunc("POST /api/v1/sources", evidenceHandler.createSource)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}", evidenceHandler.getSource)
 	mux.HandleFunc("GET /api/v1/sources/{sourceID}/dependencies", evidenceHandler.listDependencies)

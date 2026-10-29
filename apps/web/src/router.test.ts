@@ -11,6 +11,14 @@ function makeRouter(path: string) {
 }
 
 describe("tree routes", () => {
+  it("builds resumable import and source URLs", () => {
+    const router = makeRouter("/import");
+    expect(router.buildLocation({ to: "/import", search: { sourceId: "s-1", fileId: "f-1", draftId: "d-1" } }).href).toBe("/import?sourceId=s-1&fileId=f-1&draftId=d-1");
+    expect(router.buildLocation({ to: "/sources", search: { sourceId: "s-1" } }).href).toBe("/sources?sourceId=s-1");
+    expect(router.buildLocation({ to: "/tree/charts/$fileId/names", params: { fileId: "file-1" }, search: { queue: "deferred" } }).href).toBe("/tree/charts/file-1/names?queue=deferred");
+    expect(router.buildLocation({ to: "/tree/charts/$fileId", params: { fileId: "file-1" } }).href).toBe("/tree/charts/file-1");
+    expect(router.buildLocation({ to: "/tree", search: { q: "الجاسر", kind: "charts" } }).href).toContain("kind=charts");
+  });
   it("builds addressable tree and version URLs", () => {
     const router = makeRouter("/tree");
     expect(router.buildLocation({ to: "/tree/$treeId", params: { treeId: "tree-1" } }).href).toBe("/tree/tree-1");

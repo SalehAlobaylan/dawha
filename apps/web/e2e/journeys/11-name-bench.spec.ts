@@ -237,8 +237,8 @@ test.describe("name review history and repair", () => {
 async function openBench(page: import("@playwright/test").Page, title: string): Promise<void> {
   await page.goto("/sources");
   await page.locator(".evidence-source-list").getByRole("button", { name: new RegExp(title) }).click();
-  await expect(page.locator(".evidence-source-detail").getByRole("heading", { name: title })).toBeVisible();
-  const review = page.locator(".source-processing-panel").getByRole("button", { name: /مراجعة اقتراحات القراءة/ });
+  await expect(page.locator(".source-processing-head").getByRole("heading", { name: title })).toBeVisible();
+  const review = page.locator(".source-processing-panel").getByRole("link", { name: "مراجعة اقتراحات الأسماء", exact: true });
   await expect(review).toBeVisible();
   await review.click();
   await expect(page.locator(".name-bench")).toBeVisible();

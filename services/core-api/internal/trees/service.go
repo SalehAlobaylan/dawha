@@ -506,6 +506,19 @@ func (s *Service) ListPublicTrees(ctx context.Context) ([]TreeSummary, error) {
 }
 
 func (s *Service) ListAccessibleTrees(ctx context.Context, viewerID string) ([]TreeSummary, error) {
+	return s.listAccessibleTrees(ctx, viewerID, false)
+}
+
+// Workspace trees are owned or explicitly shared with the viewer. Public trees
+// from the wider platform belong in discovery, even when the viewer is signed in.
+func (s *Service) ListWorkspaceTrees(ctx context.Context, viewerID string) ([]TreeSummary, error) {
+	if viewerID == "" {
+		return []TreeSummary{}, nil
+	}
+	return s.listAccessibleTrees(ctx, viewerID, true)
+}
+
+func (s *Service) listAccessibleTrees(ctx context.Context, viewerID string, workspaceOnly bool) ([]TreeSummary, error) {
 	if s == nil || s.Pool == nil {
 		return nil, ErrDatabaseUnavailable
 	}
@@ -539,7 +552,7 @@ func (s *Service) ListAccessibleTrees(ctx context.Context, viewerID string) ([]T
 			ORDER BY version_number DESC
 			LIMIT 1
 		) tv ON true
-		WHERE t.visibility = 'public'
+		WHERE (NOT $2::boolean AND t.visibility = 'public')
 		   OR t.owner_id = $1
 		   OR EXISTS (
 			   SELECT 1
@@ -547,7 +560,7 @@ func (s *Service) ListAccessibleTrees(ctx context.Context, viewerID string) ([]T
 			   WHERE tc.tree_id = t.id AND tc.user_id = $1
 		   )
 		ORDER BY t.updated_at DESC
-	`, viewerID)
+	`, viewerID, workspaceOnly)
 	if err != nil {
 		return nil, err
 	}

@@ -117,11 +117,15 @@ func (s *Service) lockReviewRow(ctx context.Context, tx pgx.Tx, id string) (uuid
 	var status string
 	var revision int
 	var superseded bool
-	if err := tx.QueryRow(ctx, `SELECT status,review_revision,superseded_at IS NOT NULL FROM source_tree_suggestions WHERE id=$1 FOR UPDATE`, id).Scan(&status, &revision, &superseded); err != nil {
+	var staged bool
+	if err := tx.QueryRow(ctx, `SELECT status,review_revision,superseded_at IS NOT NULL,localisation_pending FROM source_tree_suggestions WHERE id=$1 FOR UPDATE`, id).Scan(&status, &revision, &superseded, &staged); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return uuid.Nil, "", 0, false, ErrSuggestionNotFound
 		}
 		return uuid.Nil, "", 0, false, err
+	}
+	if staged {
+		return uuid.Nil, "", 0, false, ErrConflict
 	}
 	return file, status, revision, superseded, nil
 }
@@ -366,7 +370,7 @@ func (s *Service) NameReviewSummary(ctx context.Context, fileID, actorID string)
 			COUNT(*) FILTER (WHERE status IN ('accepted','corrected','rejected') AND superseded_at IS NULL),
 			COUNT(*) FILTER (WHERE superseded_at IS NOT NULL),
 			(SELECT COUNT(*) FROM source_tree_suggestion_decisions d JOIN source_tree_suggestions s2 ON s2.id=d.suggestion_id WHERE s2.source_file_id=$1 AND (d.review_revision > 1 OR (d.review_revision = 1 AND EXISTS (SELECT 1 FROM source_tree_suggestion_decisions prev WHERE prev.suggestion_id=d.suggestion_id AND prev.review_revision=0))))
-		FROM source_tree_suggestions WHERE source_file_id=$1
+		FROM source_tree_suggestions WHERE source_file_id=$1 AND NOT localisation_pending
 	`, file).Scan(&result.Total, &result.Pending, &result.Deferred, &result.Accepted, &result.Corrected, &result.Rejected, &result.Decided, &result.Superseded, &result.DecisionEvents)
 	return result, err
 }

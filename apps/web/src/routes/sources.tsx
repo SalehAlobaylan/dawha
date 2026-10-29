@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen, CheckCircle2, FileStack, Search, SlidersHorizontal, UploadCloud } from "lucide-react";
 import { useMemo, useState } from "react";
 import { sources } from "../data/demo";
@@ -6,11 +6,13 @@ import { SourceCard } from "../components/EvidencePanels";
 import { SourceEvidenceWorkspace } from "../components/SourceEvidenceWorkspace";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
+import { SourceProcessingStatus } from "../components/SourceProcessingStatus";
 import { TopBar } from "../components/TopBar";
 
 const sourceTypes = ["الكل", "مخطوط", "كتاب مطبوع", "سجل أرشيفي", "شجرة منشورة"];
 
 export function SourcesPage() {
+  const search = useSearch({ from: "/sources" });
   const [query, setQuery] = useState("");
   const [type, setType] = useState("الكل");
   const filteredSources = useMemo(() => {
@@ -22,11 +24,16 @@ export function SourcesPage() {
     });
   }, [query, type]);
 
+  const navigation = <nav className="workbench-tabs" aria-label="أقسام المصادر"><Link to="/sources" search={{ sourceId: search.sourceId }} className={!search.view ? "is-current" : ""} activeOptions={{ includeSearch: true }}>المكتبة والمصادر</Link><Link to="/sources" search={{ sourceId: search.sourceId, view: "processing" }} className={search.view === "processing" ? "is-current" : ""} activeOptions={{ includeSearch: true }}>حالة المعالجة</Link></nav>;
+  if (search.view === "processing") return <div className="page-stack"><TopBar eyebrow="المصادر / المعالجة" title="حالة معالجة المصادر" description="ملفاتك محفوظة؛ تابع تجهيزها ومراجعتها من مصدرها." />{navigation}<SourceProcessingStatus /></div>;
+
   return (
     <div className="page-stack">
       <TopBar eyebrow="المكتبة / المصادر" title="المصدر أولاً" description="ما الذي يقوله النص بالضبط؟ افتح الاقتباس، ثم احكم على الادعاء الذي بُني فوقه." />
+      {navigation}
+      <section className="demo-banner" role="status"><strong>فهرس توضيحي</strong><span>الأرقام وبطاقات الفهرس أمثلة توضيحية. مصادر مساحتك محفوظة في مساحة الأدلة أدناه.</span></section>
       <section className="source-library-hero">
-        <div className="source-library-copy"><div className="eyebrow">مكتبة المصادر</div><h2>لا نخلط بين النص<br /><em>وما استنتجناه منه.</em></h2><p>كل مصدر يحتفظ بموضعه ونصه، ويظل الاقتباس جزءاً من قوة الدليل، لا عنصراً ثانوياً.</p><div className="library-hero-actions"><a className="primary-button" href="#evidence-workspace"><UploadCloud size={15} /> أضف مصدراً</a><span><BookOpen size={14} /> 1,248 مصدراً مفهرساً</span></div></div>
+        <div className="source-library-copy"><div className="eyebrow">مكتبة المصادر</div><h2>لا نخلط بين النص<br /><em>وما استنتجناه منه.</em></h2><p>كل مصدر يحتفظ بموضعه ونصه، ويظل الاقتباس جزءاً من قوة الدليل، لا عنصراً ثانوياً.</p><div className="library-hero-actions"><Link className="primary-button" to="/import"><UploadCloud size={15} /> استيراد مشجر</Link><span><BookOpen size={14} /> 1,248 مصدراً مفهرساً</span></div></div>
         <div className="source-stack-visual"><div className="source-sheet source-sheet-back" /><div className="source-sheet source-sheet-middle" /><div className="source-sheet source-sheet-front"><span>المصدر</span><strong>ما ورد فيه</strong><i /></div><span className="source-visual-caption">طبقة النص<br />أصل الحجة</span></div>
       </section>
 

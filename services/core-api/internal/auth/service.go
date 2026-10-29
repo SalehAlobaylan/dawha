@@ -226,6 +226,28 @@ func (s *Service) UserFromRequest(ctx context.Context, r *http.Request) (User, e
 	return s.UserFromToken(ctx, cookie.Value)
 }
 
+// CurrentRoles describes the existing session's platform permissions for the
+// interface. Authorization of each operation remains in its own service.
+func (s *Service) CurrentRoles(ctx context.Context, userID string) ([]Role, error) {
+	if s == nil || s.Pool == nil {
+		return nil, ErrDatabaseUnavailable
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT role FROM user_roles WHERE user_id = $1 ORDER BY role`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	roles := []Role{}
+	for rows.Next() {
+		var role Role
+		if err := rows.Scan(&role); err != nil {
+			return nil, err
+		}
+		roles = append(roles, role)
+	}
+	return roles, rows.Err()
+}
+
 func (s *Service) RevokeToken(ctx context.Context, token string) error {
 	if s == nil || s.Pool == nil {
 		return ErrDatabaseUnavailable

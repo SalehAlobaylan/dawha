@@ -141,3 +141,13 @@ func TestCORSPreflightAdvertisesEveryMethodTheRouterServes(t *testing.T) {
 		}
 	}
 }
+
+func TestChartLibraryNeverSubstitutesDemoRecordsForUnavailableDatabase(t *testing.T) {
+	for _, demo := range []bool{false, true} {
+		recorder := httptest.NewRecorder()
+		NewRouter(Dependencies{DemoMode: demo}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/chart-library", nil))
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("demo=%v: chart library status=%d, want 503", demo, recorder.Code)
+		}
+	}
+}

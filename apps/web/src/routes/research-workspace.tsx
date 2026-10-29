@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, BookOpen, Check, CircleHelp, FileSearch, GitBranch, Link2, Map, MessageCircleQuestion, Plus, RefreshCw, ShieldAlert, ShieldQuestion, Sparkles, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { demoDashboard, sources } from "../data/demo";
-import { ApiError, addClaimEvidence, createClaim, createDispute, createQuestion, fetchResearchRun, fetchResearchWorkspace, linkDisputeClaim, linkQuestionClaim, linkQuestionDispute, linkQuestionEntity, linkQuestionFinding, queryResearch, reviewEntityResolutionCandidate } from "../lib/api";
+import { ApiError, addClaimEvidence, createClaim, createDispute, fetchResearchRun, fetchResearchWorkspace, linkDisputeClaim, linkQuestionClaim, linkQuestionDispute, linkQuestionFinding, queryResearch, reviewEntityResolutionCandidate } from "../lib/api";
 import type { CreateClaimInput, EntityResolutionReviewInput, EpistemicTone, GraphStats, ResearchQueryResult, ResearchRunDetail, ResearchWorkspaceSnapshot, WorkspaceClaim, WorkspaceFinding, WorkspaceIdentityCandidate, WorkspaceTimelineEvent } from "../types";
 import { demoTreeDetail } from "../lib/api";
 import { GraphPathsPanel, ResearchResultPanel } from "./research";
@@ -12,6 +12,8 @@ import { GeospatialIntelligencePanel } from "../components/GeospatialIntelligenc
 import { ResearchAgentPanel } from "../components/ResearchAgentPanel";
 import { SectionHeading } from "../components/SectionHeading";
 import { StatusBadge } from "../components/StatusBadge";
+import { ResearchRecordPicker, SourceStatementPicker, type PickedRecord } from "../components/ResearchPickers";
+import { QuestionManagementPanel } from "../components/QuestionManagementPanel";
 import { TopBar } from "../components/TopBar";
 
 type IdentityDecision = "approve" | "reject" | "defer";
@@ -27,7 +29,8 @@ export function ResearchWorkspacePage() {
   const [graphEnhanced, setGraphEnhanced] = useState(false);
   const [historyDetail, setHistoryDetail] = useState<ResearchRunDetail | null>(null);
   const [historyLoadingID, setHistoryLoadingID] = useState("");
-  const [claimDraft, setClaimDraft] = useState({ predicate: "", objectId: "", notes: "" });
+  const [claimDraft, setClaimDraft] = useState<{ predicate: string; objectId: string; objectName?: string; objectType?: PickedRecord["type"]; notes: string }>({ predicate: "", objectId: "", notes: "" });
+  const [claimSubject, setClaimSubject] = useState<PickedRecord | null>(null);
   const [evidenceClaimId, setEvidenceClaimId] = useState("");
   const [evidenceStatementId, setEvidenceStatementId] = useState("");
   const workspaceContext = {
@@ -39,7 +42,7 @@ export function ResearchWorkspacePage() {
   const workspaceQuery = useQuery({
     queryKey: ["research-workspace", questionId, workspaceContext.entityType, workspaceContext.entityId, workspaceContext.treeId, workspaceContext.treeVersionId],
     queryFn: async () => {
-      if (!isUuid(questionId)) return demoWorkspace(questionId, workspaceContext.entityType, workspaceContext.entityId);
+      if (["q-1", "q-2", "q-3"].includes(questionId)) return demoWorkspace(questionId, workspaceContext.entityType, workspaceContext.entityId);
       return fetchResearchWorkspace({ questionId, ...workspaceContext });
     },
     enabled: Boolean(questionId),
@@ -60,10 +63,10 @@ export function ResearchWorkspacePage() {
   const claimMutation = useMutation({
     mutationFn: async () => {
       if (!snapshot) throw new Error("مساحة البحث غير جاهزة.");
-      const subjectId = snapshot.context.entityId;
-      const subjectType = normalizeEntityType(snapshot.context.entityType) ?? "person";
+      const subjectId = claimSubject?.id || snapshot.context.entityId;
+      const subjectType = claimSubject?.type || normalizeEntityType(snapshot.context.entityType) || "person";
       if (!subjectId || !claimDraft.predicate.trim() || !claimDraft.objectId.trim()) throw new Error("أكمل وصف العلاقة ومعرف الكائن.");
-      const input: CreateClaimInput = { subject_type: subjectType, subject_id: subjectId, predicate: claimDraft.predicate.trim(), object_type: "person", object_id: claimDraft.objectId.trim(), status: "unresolved", notes_ar: claimDraft.notes.trim() || undefined };
+      const input: CreateClaimInput = { subject_type: subjectType, subject_id: subjectId, predicate: claimDraft.predicate.trim(), object_type: claimDraft.objectType || "person", object_id: claimDraft.objectId.trim(), status: "unresolved", notes_ar: claimDraft.notes.trim() || undefined };
       const created = await createClaim(input);
       if (isUuid(questionId)) await linkQuestionClaim(questionId, { claim_id: created.id, role: "concerns" });
       return created;
@@ -89,16 +92,6 @@ export function ResearchWorkspacePage() {
     onSuccess: async () => { setMessage("فُتح خلاف للادعاء."); setError(""); await invalidate(); },
     onError: (value) => setError(actionError(value, "تعذر فتح الخلاف.")),
   });
-  const questionMutation = useMutation({
-    mutationFn: async () => {
-      const created = await createQuestion({ title_ar: "سؤال جديد من مساحة البحث", status: "open", priority: "normal" });
-      const entityType = normalizeEntityType(snapshot?.context.entityType);
-      if (entityType && isUuid(snapshot?.context.entityId)) await linkQuestionEntity(created.question.id, { entity_type: entityType, entity_id: snapshot?.context.entityId ?? "" });
-      return created;
-    },
-    onSuccess: async (value) => { setMessage("أُنشئ السؤال الجديد."); setError(""); await invalidate(); await navigate({ to: "/research/$questionId", params: { questionId: value.question.id }, search: workspaceContext }); },
-    onError: (value) => setError(actionError(value, "تعذر إنشاء السؤال.")),
-  });
   const findingMutation = useMutation({
     mutationFn: (finding: WorkspaceFinding) => linkQuestionFinding(questionId, { finding_id: finding.id }),
     onSuccess: async () => { setMessage("ربطت الملاحظة بالسؤال."); setError(""); await invalidate(); },
@@ -123,14 +116,18 @@ export function ResearchWorkspacePage() {
   };
 
   if (workspaceQuery.isPending) return <WorkspaceState title="جارٍ فتح مساحة البحث…" description="تُجمع مكونات السؤال والسياق من مصادره." />;
-  if (workspaceQuery.error || !snapshot) return <WorkspaceState title="تعذر فتح مساحة البحث" description={actionError(workspaceQuery.error, "تحقق من Core API ثم أعد المحاولة.")} error />;
+  if (workspaceQuery.error || !snapshot) return <div className="page-stack"><WorkspaceState title="تعذر فتح مساحة البحث" description="أعد المحاولة، أو ارجع إلى دفتر البحث لاختيار سؤال محفوظ." error /><button className="secondary-button" type="button" onClick={() => void workspaceQuery.refetch()}>إعادة المحاولة</button><Link className="inline-link" to="/research">العودة إلى دفتر البحث</Link></div>;
   const permissions = snapshot.permissions;
   const entityLabel = snapshot.context.entityNameAr || "سياق السؤال";
   const graphAvailable = Boolean(snapshot.context.entityType && isUuid(snapshot.context.entityId));
   const evidenceClaims = snapshot.claims.filter((claim) => claim.id === evidenceClaimId);
   const historyStats: GraphStats | undefined = historyDetail ? graphStatsForRun(historyDetail) : undefined;
 
+  const panel = search.panel ?? "evidence";
+  const subject = claimSubject || (snapshot.context.entityId ? { id: snapshot.context.entityId, name: snapshot.context.entityNameAr || "موضوع السؤال", type: normalizeEntityType(snapshot.context.entityType) || "person" } : null);
   return <div className="page-stack workspace-page">
+    <Link className="inline-link" to="/research" search={{}}>العودة إلى دفتر البحث <ArrowLeft size={14} /></Link>
+    {!isUuid(questionId) ? <section className="demo-banner" role="status"><strong>تحقيق توضيحي</strong><span>هذه أمثلة لعرض مساحة التحقيق؛ افتح سؤالاً محفوظاً من دفتر البحث للعمل على بياناتك.</span></section> : null}
     <TopBar eyebrow="مكتب البحث / مساحة موحدة" title={snapshot.context.questionTitleAr} description={snapshot.context.questionDetailAr || "اجمع الشجرة والأدلة والخلاف والسؤال في مسار واحد قابل للتتبع."} />
     <section className="workspace-context-bar">
       <div className="workspace-context-main"><div className="workspace-context-icon"><UserRound size={18} /></div><div><div className="eyebrow">سياق البحث</div><strong>{entityLabel}</strong><span>{snapshot.context.entityType ? `${snapshot.context.entityType} · ${snapshot.context.entityId}` : "سؤال مفتوح"}</span></div></div>
@@ -139,37 +136,25 @@ export function ResearchWorkspacePage() {
     {snapshot.context.entityAliasesAr?.length ? <div className="workspace-alias-line"><span>أسماء أخرى:</span>{snapshot.context.entityAliasesAr.map((alias) => <span className="workspace-alias" key={alias}>{alias}</span>)}</div> : null}
     {message ? <div className="workspace-feedback workspace-feedback-success" role="status"><Check size={15} />{message}</div> : null}
     {error ? <div className="workspace-feedback workspace-feedback-error" role="alert"><AlertTriangle size={15} />{error}<button type="button" aria-label="إغلاق الرسالة" onClick={() => setError("")}><X size={13} /></button></div> : null}
-    <div className="workspace-action-strip"><div><Sparkles size={15} /><span>كل تعديل يبقى داخل سياق السؤال، ولا يغير المصادر التاريخية.</span></div><div className="workspace-action-links"><button className="text-button" type="button" aria-pressed={graphEnhanced} disabled={!graphAvailable} onClick={() => setGraphEnhanced((value) => !value)}><GitBranch size={13} /> {graphEnhanced ? "إيقاف مسار العلاقات" : "تفعيل مسار العلاقات"}</button><Link to="/contradictions">مراجعة التعارضات</Link><Link to="/entity-resolution">مطابقة الهوية</Link><Link to="/questions">كل الأسئلة</Link></div></div>
+    <div className="workspace-action-strip"><div><Sparkles size={15} /><span>كل تعديل يبقى داخل سياق السؤال، ولا يغير المصادر التاريخية.</span></div><div className="workspace-action-links"><button className="text-button" type="button" aria-pressed={graphEnhanced} disabled={!graphAvailable} onClick={() => setGraphEnhanced((value) => !value)}><GitBranch size={13} /> {graphEnhanced ? "إيقاف مسار العلاقات" : "تفعيل مسار العلاقات"}</button><Link to="/research" search={{ view: "review", review: "contradictions" }}>تعارض الروايات</Link><Link to="/research" search={{ view: "review", review: "identity" }}>مطابقة الهوية</Link><Link to="/research">دفتر البحث</Link></div></div>
 
     {result ? <ResearchResultPanel result={result} /> : null}
     {historyDetail ? <section className="workspace-history-detail"><div className="workspace-history-detail-head"><div><div className="eyebrow">سجل محفوظ</div><strong>{historyDetail.query}</strong><small>{historyDetail.answerAr || "لا توجد إجابة نصية محفوظة."}</small></div><button className="icon-button" type="button" aria-label="إغلاق سجل التحقيق" onClick={() => setHistoryDetail(null)}><X size={14} /></button></div><GraphPathsPanel paths={historyDetail.graphPaths} stats={historyStats} /></section> : null}
 
-    <div className="workspace-grid">
-      <main className="workspace-main">
-        <ClaimsPanel snapshot={snapshot} claimDraft={claimDraft} setClaimDraft={setClaimDraft} onCreateClaim={() => claimMutation.mutate()} claimPending={claimMutation.isPending} evidenceClaimId={evidenceClaimId} setEvidenceClaimId={setEvidenceClaimId} evidenceStatementId={evidenceStatementId} setEvidenceStatementId={setEvidenceStatementId} evidenceClaims={evidenceClaims} onLinkEvidence={() => evidenceMutation.mutate()} evidencePending={evidenceMutation.isPending} onDispute={(claim) => disputeMutation.mutate(claim)} disputePending={disputeMutation.isPending} canCreate={permissions.canCreateClaim} canLink={permissions.canLinkEvidence} canDispute={permissions.canDisputeClaim} />
-        <TreePanel snapshot={snapshot} />
-        <MapTimelinePanel snapshot={snapshot} />
-        <TemporalAnalysisPanel snapshot={snapshot} canRun={permissions.canRunTemporalAnalysis} canReview={permissions.canReviewTemporalFinding} />
-        <GeospatialIntelligencePanel snapshot={snapshot} canRun={permissions.canRunGeospatialAnalysis} canReview={permissions.canReviewGeospatialFinding} />
-        <ResearchAgentPanel snapshot={snapshot} canRun={permissions.canRunResearchAgent} canReview={permissions.canReviewResearchQuestionCandidate} />
-        <SourcesPanel snapshot={snapshot} />
-      </main>
-      <aside className="workspace-side">
-        <FindingsPanel snapshot={snapshot} onAttach={(finding) => findingMutation.mutate(finding)} canAttach={permissions.canAttachFinding} pending={findingMutation.isPending} />
-        <QuestionsPanel snapshot={snapshot} context={workspaceContext} onCreate={() => questionMutation.mutate()} canCreate={permissions.canCreateQuestion} pending={questionMutation.isPending} />
-        <IdentityPanel snapshot={snapshot} onReview={(candidate, decision) => identityMutation.mutate({ candidate, decision })} canReview={permissions.canReviewIdentityCandidate} pending={identityMutation.isPending} />
-        <NotesPanel snapshot={snapshot} />
-        <HistoryPanel snapshot={snapshot} onOpen={openHistory} loadingID={historyLoadingID} />
-      </aside>
-    </div>
+    <nav className="workbench-tabs question-workspace-tabs" aria-label="أقسام التحقيق">{[{ id: "evidence", label: "الأدلة والادعاءات" }, { id: "context", label: "الشجرة والمواضع" }, { id: "analysis", label: "التحليل" }, { id: "history", label: "سجل التحقيق" }, { id: "manage", label: "الحالة والملاحظات" }].map((item) => <Link key={item.id} to="/research/$questionId" params={{ questionId }} search={{ ...search, panel: item.id === "evidence" ? undefined : item.id as "context" | "analysis" | "history" | "manage" }} activeOptions={{ includeSearch: true }} className={panel === item.id ? "is-current" : ""}>{item.label}</Link>)}</nav>
+    {panel === "context" ? <><TreePanel snapshot={snapshot} /><MapTimelinePanel snapshot={snapshot} /></> : panel === "analysis" ? <><TemporalAnalysisPanel snapshot={snapshot} canRun={permissions.canRunTemporalAnalysis} canReview={permissions.canReviewTemporalFinding} /><GeospatialIntelligencePanel snapshot={snapshot} canRun={permissions.canRunGeospatialAnalysis} canReview={permissions.canReviewGeospatialFinding} /><ResearchAgentPanel snapshot={snapshot} canRun={permissions.canRunResearchAgent} canReview={permissions.canReviewResearchQuestionCandidate} /></> : panel === "history" ? <HistoryPanel snapshot={snapshot} onOpen={openHistory} loadingID={historyLoadingID} /> : panel === "manage" ? isUuid(questionId) ? <QuestionManagementPanel key={questionId} questionId={questionId} canManage={permissions.canManageSelectedQuestion} /> : <NotesPanel snapshot={snapshot} /> : <div className="workspace-grid"><main className="workspace-main">
+      <ClaimsPanel snapshot={snapshot} subject={subject} onSubject={setClaimSubject} claimDraft={claimDraft} setClaimDraft={setClaimDraft} onCreateClaim={() => claimMutation.mutate()} claimPending={claimMutation.isPending} evidenceClaimId={evidenceClaimId} setEvidenceClaimId={setEvidenceClaimId} evidenceStatementId={evidenceStatementId} setEvidenceStatementId={setEvidenceStatementId} evidenceClaims={evidenceClaims} onLinkEvidence={() => evidenceMutation.mutate()} evidencePending={evidenceMutation.isPending} onDispute={(claim) => disputeMutation.mutate(claim)} disputePending={disputeMutation.isPending} canCreate={permissions.canCreateClaim} canLink={permissions.canLinkEvidence} canDispute={permissions.canDisputeClaim} />
+      <SourcesPanel snapshot={snapshot} />
+    </main><aside className="workspace-side"><FindingsPanel snapshot={snapshot} onAttach={(finding) => findingMutation.mutate(finding)} canAttach={permissions.canAttachFinding} pending={findingMutation.isPending} /><QuestionsPanel snapshot={snapshot} context={workspaceContext} onCreate={() => void navigate({ to: "/research", search: { create: true } })} canCreate={permissions.canCreateQuestion} pending={false} /><IdentityPanel snapshot={snapshot} onReview={(candidate, decision) => identityMutation.mutate({ candidate, decision })} canReview={permissions.canReviewIdentityCandidate} pending={identityMutation.isPending} /></aside></div>}
+
   </div>;
 }
 
-function ClaimsPanel({ snapshot, claimDraft, setClaimDraft, onCreateClaim, claimPending, evidenceClaimId, setEvidenceClaimId, evidenceStatementId, setEvidenceStatementId, evidenceClaims, onLinkEvidence, evidencePending, onDispute, disputePending, canCreate, canLink, canDispute }: { snapshot: ResearchWorkspaceSnapshot; claimDraft: { predicate: string; objectId: string; notes: string }; setClaimDraft: (value: { predicate: string; objectId: string; notes: string }) => void; onCreateClaim: () => void; claimPending: boolean; evidenceClaimId: string; setEvidenceClaimId: (value: string) => void; evidenceStatementId: string; setEvidenceStatementId: (value: string) => void; evidenceClaims: WorkspaceClaim[]; onLinkEvidence: () => void; evidencePending: boolean; onDispute: (claim: WorkspaceClaim) => void; disputePending: boolean; canCreate: boolean; canLink: boolean; canDispute: boolean }) {
+function ClaimsPanel({ snapshot, subject, onSubject, claimDraft, setClaimDraft, onCreateClaim, claimPending, evidenceClaimId, setEvidenceClaimId, evidenceStatementId, setEvidenceStatementId, evidenceClaims, onLinkEvidence, evidencePending, onDispute, disputePending, canCreate, canLink, canDispute }: { snapshot: ResearchWorkspaceSnapshot; subject: PickedRecord | null; onSubject: (value: PickedRecord | null) => void; claimDraft: { predicate: string; objectId: string; objectName?: string; objectType?: PickedRecord["type"]; notes: string }; setClaimDraft: (value: { predicate: string; objectId: string; objectName?: string; objectType?: PickedRecord["type"]; notes: string }) => void; onCreateClaim: () => void; claimPending: boolean; evidenceClaimId: string; setEvidenceClaimId: (value: string) => void; evidenceStatementId: string; setEvidenceStatementId: (value: string) => void; evidenceClaims: WorkspaceClaim[]; onLinkEvidence: () => void; evidencePending: boolean; onDispute: (claim: WorkspaceClaim) => void; disputePending: boolean; canCreate: boolean; canLink: boolean; canDispute: boolean }) {
   return <section className="workspace-panel workspace-claims-panel"><SectionHeading eyebrow="الطبقة الأولى" title="الادعاءات والأدلة" description="الدليل المؤيد والدليل المضاد يبقيان منفصلين." />
     <div className="workspace-claim-list">{snapshot.claims.length ? snapshot.claims.map((claim) => <article className="workspace-claim-card" key={claim.id}><div className="workspace-item-head"><div><span className="workspace-item-id">{claim.id.slice(0, 8)}</span><strong>{claim.predicate}</strong></div><StatusBadge tone={claimTone(claim.status)}>{claim.status}</StatusBadge></div><p>{claim.subjectType} {claim.subjectId.slice(0, 8)} <ArrowLeft size={11} /> {claim.objectType} {claim.objectId.slice(0, 8)}</p>{claim.notesAr ? <small>{claim.notesAr}</small> : null}<div className="workspace-evidence-columns"><div><strong>داعم</strong>{claim.evidence.filter((item) => item.kind === "evidence").map((item) => <EvidenceLine evidence={item} key={item.id} />)}{claim.evidence.filter((item) => item.kind === "evidence").length === 0 ? <span className="workspace-muted">لا يوجد دليل مباشر.</span> : null}</div><div><strong>مضاد / سياق</strong>{claim.evidence.filter((item) => item.kind === "counter_evidence").map((item) => <EvidenceLine evidence={item} key={item.id} />)}{claim.evidence.filter((item) => item.kind === "counter_evidence").length === 0 ? <span className="workspace-muted">لا يوجد دليل مضاد.</span> : null}</div></div><div className="workspace-card-actions">{canLink ? <button className="text-button" type="button" onClick={() => setEvidenceClaimId(claim.id)}><Link2 size={13} /> ربط دليل</button> : null}{canDispute ? <button className="text-button workspace-danger-action" type="button" onClick={() => onDispute(claim)} disabled={disputePending}><ShieldQuestion size={13} /> افتح خلافاً</button> : null}</div></article>) : <EmptyWorkspace label="لا توجد ادعاءات مرتبطة بالسياق." />}</div>
-    {canCreate ? <form className="workspace-inline-form" onSubmit={(event) => { event.preventDefault(); onCreateClaim(); }}><div className="eyebrow">إضافة ادعاء</div><div className="workspace-form-grid"><input required value={claimDraft.predicate} onChange={(event) => setClaimDraft({ ...claimDraft, predicate: event.target.value })} placeholder="وصف العلاقة" /><input required value={claimDraft.objectId} onChange={(event) => setClaimDraft({ ...claimDraft, objectId: event.target.value })} placeholder="معرف الكائن" /><input value={claimDraft.notes} onChange={(event) => setClaimDraft({ ...claimDraft, notes: event.target.value })} placeholder="ملاحظة اختيارية" /><button className="primary-button" type="submit" disabled={claimPending}><Plus size={14} /> احفظ</button></div></form> : null}
-    {canLink ? <form className="workspace-inline-form workspace-evidence-form" onSubmit={(event) => { event.preventDefault(); onLinkEvidence(); }}><div className="eyebrow">ربط مصدر بادعاء</div><div className="workspace-form-grid"><select required value={evidenceClaimId} onChange={(event) => setEvidenceClaimId(event.target.value)}><option value="">اختر ادعاءً</option>{snapshot.claims.map((claim) => <option value={claim.id} key={claim.id}>{claim.predicate} · {claim.id.slice(0, 8)}</option>)}</select><input required value={evidenceStatementId} onChange={(event) => setEvidenceStatementId(event.target.value)} placeholder="معرف عبارة المصدر" /><button className="secondary-button" type="submit" disabled={evidencePending || evidenceClaims.length === 0}><Link2 size={14} /> اربط</button></div></form> : null}
+    {canCreate ? <form className="workspace-inline-form" onSubmit={(event) => { event.preventDefault(); onCreateClaim(); }}><div className="eyebrow">إضافة ادعاء</div><div className="workspace-form-grid"><input required value={claimDraft.predicate} onChange={(event) => setClaimDraft({ ...claimDraft, predicate: event.target.value })} placeholder="وصف العلاقة" /><ResearchRecordPicker label="موضوع الادعاء" value={subject} onChange={onSubject} /><ResearchRecordPicker label="الطرف الآخر في العلاقة" value={claimDraft.objectId ? { id: claimDraft.objectId, name: claimDraft.objectName || claimDraft.objectId, type: claimDraft.objectType || "person" } : null} onChange={(value) => setClaimDraft({ ...claimDraft, objectId: value?.id ?? "", objectName: value?.name, objectType: value?.type })} /><input value={claimDraft.notes} onChange={(event) => setClaimDraft({ ...claimDraft, notes: event.target.value })} placeholder="ملاحظة اختيارية" /><button className="primary-button" type="submit" disabled={claimPending || !subject || !claimDraft.objectId || !claimDraft.predicate.trim()}><Plus size={14} /> احفظ</button></div></form> : null}
+    {canLink ? <form className="workspace-inline-form workspace-evidence-form" onSubmit={(event) => { event.preventDefault(); onLinkEvidence(); }}><div className="eyebrow">ربط مصدر بادعاء</div><div className="workspace-form-grid"><select required value={evidenceClaimId} onChange={(event) => setEvidenceClaimId(event.target.value)}><option value="">اختر ادعاءً</option>{snapshot.claims.map((claim) => <option value={claim.id} key={claim.id}>{claim.predicate} · {claim.id.slice(0, 8)}</option>)}</select><SourceStatementPicker value={evidenceStatementId} onChange={setEvidenceStatementId} /><button className="secondary-button" type="submit" disabled={evidencePending || evidenceClaims.length === 0 || !evidenceStatementId}><Link2 size={14} /> اربط</button></div></form> : null}
   </section>;
 }
 
@@ -178,11 +163,11 @@ function TreePanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
 }
 
 function MapTimelinePanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
-  return <section className="workspace-panel workspace-map-panel"><SectionHeading eyebrow="الجغرافيا والزمن" title="الخريطة والخط الزمني" description="الأمكنة والموضعات تحتفظ بتاريخها." /><div className="workspace-map-summary"><div className="workspace-map-heading"><Map size={16} /><strong>الموضعات</strong><span>{snapshot.mapFeatures.length}</span></div>{snapshot.mapFeatures.length ? snapshot.mapFeatures.map((feature) => <div className="workspace-map-row" key={feature.id}><span>{feature.placeName || "موضع غير مسمى"}</span><small>{feature.kind} · {feature.status}</small>{feature.sourceTitle ? <Link to="/sources">{feature.sourceTitle}</Link> : null}</div>) : <EmptyWorkspace label="لا توجد موضعات مباشرة لهذا الكيان." />}</div><div className="workspace-timeline"><div className="workspace-map-heading"><GitBranch size={16} /><strong>الخط الزمني</strong><span>{snapshot.timeline.length}</span></div>{snapshot.timeline.length ? snapshot.timeline.map((event) => <TimelineLine event={event} key={event.id} />) : <EmptyWorkspace label="لا توجد أحداث زمنية." />}</div></section>;
+  return <section className="workspace-panel workspace-map-panel"><SectionHeading eyebrow="الجغرافيا والزمن" title="الخريطة والخط الزمني" description="الأمكنة والموضعات تحتفظ بتاريخها." /><div className="workspace-map-summary"><div className="workspace-map-heading"><Map size={16} /><strong>الموضعات</strong><span>{snapshot.mapFeatures.length}</span></div>{snapshot.mapFeatures.length ? snapshot.mapFeatures.map((feature) => <div className="workspace-map-row" key={feature.id}><span>{feature.placeName || "موضع غير مسمى"}</span><small>{feature.kind} · {feature.status}</small>{feature.sourceTitle ? <Link to="/sources" search={{ sourceId: feature.sourceId }}>{feature.sourceTitle}</Link> : null}</div>) : <EmptyWorkspace label="لا توجد موضعات مباشرة لهذا الكيان." />}</div><div className="workspace-timeline"><div className="workspace-map-heading"><GitBranch size={16} /><strong>الخط الزمني</strong><span>{snapshot.timeline.length}</span></div>{snapshot.timeline.length ? snapshot.timeline.map((event) => <TimelineLine event={event} key={event.id} />) : <EmptyWorkspace label="لا توجد أحداث زمنية." />}</div></section>;
 }
 
 function SourcesPanel({ snapshot }: { snapshot: ResearchWorkspaceSnapshot }) {
-  return <section className="workspace-panel"><SectionHeading eyebrow="المكتبة" title="المصادر ذات الصلة" description="كل مصدر يبقى قابلاً للفتح والتتبع." /><div className="workspace-source-list">{snapshot.sources.length ? snapshot.sources.map((source) => <article className="workspace-source-card" key={source.id}><div className="workspace-item-head"><div><BookOpen size={15} /><strong>{source.titleAr}</strong></div><StatusBadge tone={source.dependencyStatus === "independent" ? "source" : "finding"}>{source.dependencyStatus}</StatusBadge></div><p>{source.authorAr || "مؤلف غير محدد"} · {source.sourceType}</p><small>{source.passageCount} مقطع · {source.statementCount} عبارة</small><Link className="text-button" to="/sources">فتح المصدر <ArrowLeft size={13} /></Link></article>) : <EmptyWorkspace label="لا توجد مصادر ظاهرة لهذا السؤال." />}</div></section>;
+  return <section className="workspace-panel"><SectionHeading eyebrow="المكتبة" title="المصادر ذات الصلة" description="كل مصدر يبقى قابلاً للفتح والتتبع." /><div className="workspace-source-list">{snapshot.sources.length ? snapshot.sources.map((source) => <article className="workspace-source-card" key={source.id}><div className="workspace-item-head"><div><BookOpen size={15} /><strong>{source.titleAr}</strong></div><StatusBadge tone={source.dependencyStatus === "independent" ? "source" : "finding"}>{source.dependencyStatus}</StatusBadge></div><p>{source.authorAr || "مؤلف غير محدد"} · {source.sourceType}</p><small>{source.passageCount} مقطع · {source.statementCount} عبارة</small><Link className="text-button" to="/sources" search={{ sourceId: source.id }}>فتح المصدر <ArrowLeft size={13} /></Link></article>) : <EmptyWorkspace label="لا توجد مصادر ظاهرة لهذا السؤال." />}</div></section>;
 }
 
 function FindingsPanel({ snapshot, onAttach, canAttach, pending }: { snapshot: ResearchWorkspaceSnapshot; onAttach: (finding: WorkspaceFinding) => void; canAttach: boolean; pending: boolean }) {
@@ -234,7 +219,7 @@ function EmptyWorkspace({ label }: { label: string }) {
 }
 
 function WorkspaceState({ title, description, error = false }: { title: string; description: string; error?: boolean }) {
-  return <div className="workspace-state"><div className={error ? "workspace-state-icon workspace-state-error" : "workspace-state-icon"}>{error ? <AlertTriangle size={20} /> : <RefreshCw className="spin" size={20} />}</div><h2>{title}</h2><p>{description}</p></div>;
+  return <div className="workspace-state" role={error ? "alert" : "status"}><div className={error ? "workspace-state-icon workspace-state-error" : "workspace-state-icon"}>{error ? <AlertTriangle size={20} /> : <RefreshCw className="spin" size={20} />}</div><h2>{title}</h2><p>{description}</p></div>;
 }
 
 function demoWorkspace(questionId: string, entityType?: string, entityId?: string): ResearchWorkspaceSnapshot {
@@ -245,7 +230,7 @@ function demoWorkspace(questionId: string, entityType?: string, entityId?: strin
 }
 
 function isUuid(value: string | undefined): boolean {
-  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value));
 }
 
 function normalizeEntityType(value: string | undefined): "person" | "family" | "branch" | undefined {

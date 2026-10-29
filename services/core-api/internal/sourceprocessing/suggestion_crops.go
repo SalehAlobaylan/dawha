@@ -1,9 +1,13 @@
 package sourceprocessing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/draw"
+	"image/png"
 	"math"
 	"strings"
 
@@ -37,8 +41,29 @@ const (
 // for one suggestion. []byte is base64-encoded by encoding/json, so the browser
 // receives two PNGs in one response and one page open.
 type SuggestionCrop struct {
-	TightPNG   []byte `json:"tightPng"`
-	ContextPNG []byte `json:"contextPng"`
+	TightPNG   []byte                  `json:"tightPng"`
+	ContextPNG []byte                  `json:"contextPng"`
+	ReviewPNG  []byte                  `json:"reviewPng,omitempty"`
+	Geometry   *SuggestionCropGeometry `json:"geometry,omitempty"`
+}
+
+// Crop-local coordinates must come from the same source frame and clamped
+// bounds as the rendered pixels, including when those pixels came from cache.
+type SuggestionCropGeometry struct {
+	PageWidth     int     `json:"pageWidth"`
+	PageHeight    int     `json:"pageHeight"`
+	TightRegion   Region  `json:"tightRegion"`
+	ContextRegion Region  `json:"contextRegion"`
+	ReviewRegion  *Region `json:"reviewRegion,omitempty"`
+	Fragment      bool    `json:"fragment"`
+}
+
+func cropGeometry(region Region, frame NamePageFrame) *SuggestionCropGeometry {
+	local := func(view string) Region {
+		bounds, _ := suggestionCropBounds(region, frame.Width, frame.Height, view)
+		return Region{X: (region.X*float64(frame.Width) - float64(bounds.X)) / float64(bounds.Width), Y: (region.Y*float64(frame.Height) - float64(bounds.Y)) / float64(bounds.Height), Width: region.Width * float64(frame.Width) / float64(bounds.Width), Height: region.Height * float64(frame.Height) / float64(bounds.Height)}
+	}
+	return &SuggestionCropGeometry{PageWidth: frame.Width, PageHeight: frame.Height, TightRegion: local("tight"), ContextRegion: local("context"), Fragment: isNameFragment(region.Width*float64(frame.Width), region.Height*float64(frame.Height))}
 }
 
 // suggestionSource is the source-side context both review reads need: the page,
@@ -149,7 +174,39 @@ func (s *Service) GetSuggestionCrop(ctx context.Context, suggestionID string, ac
 		return SuggestionCrop{}, err
 	}
 	artifact, err := s.prepareNameCrop(ctx, source, nil, nil)
-	return artifact.Crop, err
+	if err != nil {
+		return SuggestionCrop{}, err
+	}
+	artifact.Crop.Geometry = cropGeometry(source.region, artifact.Frame)
+	if artifact.Crop.Geometry.Fragment {
+		// Display a bounded neighbourhood for a fragment without changing the
+		// tight crop used by readers, artifact identities, or stored geometry.
+		artifact.Crop.ReviewPNG, artifact.Crop.Geometry.ReviewRegion, err = fragmentReviewCrop(artifact.Crop.ContextPNG, artifact.Crop.Geometry.ContextRegion)
+		if err != nil {
+			return SuggestionCrop{}, err
+		}
+	}
+	return artifact.Crop, nil
+}
+
+func fragmentReviewCrop(contextPNG []byte, region Region) ([]byte, *Region, error) {
+	decoded, err := png.Decode(bytes.NewReader(contextPNG))
+	if err != nil {
+		return nil, nil, ErrValidation
+	}
+	w, h := decoded.Bounds().Dx(), decoded.Bounds().Dy()
+	cw := min(w, max(160, int(math.Ceil(region.Width*float64(w)))+16))
+	ch := min(h, max(100, int(math.Ceil(region.Height*float64(h)))+16))
+	x := max(0, min(w-cw, int((region.X+region.Width/2)*float64(w))-cw/2))
+	y := max(0, min(h-ch, int((region.Y+region.Height/2)*float64(h))-ch/2))
+	canvas := image.NewRGBA(image.Rect(0, 0, cw, ch))
+	draw.Draw(canvas, canvas.Bounds(), decoded, image.Pt(decoded.Bounds().Min.X+x, decoded.Bounds().Min.Y+y), draw.Src)
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, canvas); err != nil {
+		return nil, nil, err
+	}
+	local := Region{X: (region.X*float64(w) - float64(x)) / float64(cw), Y: (region.Y*float64(h) - float64(y)) / float64(ch), Width: region.Width * float64(w) / float64(cw), Height: region.Height * float64(h) / float64(ch)}
+	return buffer.Bytes(), &local, nil
 }
 
 // SuggestionCandidates asks the configured vision model to suggest spellings for

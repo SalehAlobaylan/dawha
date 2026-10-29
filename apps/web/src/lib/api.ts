@@ -666,6 +666,29 @@ export async function fetchPublicTrees(): Promise<TreeSummary[]> {
   }
 }
 
+async function fetchScopedTrees(scope: "workspace" | "public"): Promise<TreeSummary[]> {
+  if (!apiBaseUrl) throw new ApiError("شغّل خدمة الأشجار لعرض القائمة المحفوظة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/trees?scope=${scope}`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const payload = (await response.json()) as { items?: TreeSummary[] };
+  return payload.items ?? [];
+}
+
+export const fetchWorkspaceTrees = () => fetchScopedTrees("workspace");
+export const fetchPublishedTrees = () => fetchScopedTrees("public");
+
+export async function fetchChartLibrary(): Promise<import("../types").ChartLibraryItem[]> {
+  if (!apiBaseUrl) throw new ApiError("شغّل خدمة المصادر لعرض مشجراتك المحفوظة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/chart-library`, { credentials: "include", signal: AbortSignal.timeout(10000), cache: "no-store" });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const payload = await response.json() as { items?: import("../types").ChartLibraryItem[] };
+  return payload.items ?? [];
+}
+
 export async function fetchTree(treeId: string): Promise<TreeDetail> {
   if (treeId === demoTreeId) {
     return demoTreeDetail;
@@ -1151,7 +1174,7 @@ export async function fetchQuestions(): Promise<OpenQuestionRecord[]> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لعرض الأسئلة.", 503);
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/questions`, { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
@@ -1163,7 +1186,7 @@ export async function fetchQuestion(questionId: string): Promise<QuestionDetail>
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لعرض السؤال.", 503);
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
@@ -1714,7 +1737,8 @@ export async function previewSourceTreeDraftImport(draftId: string, expectedRevi
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
-  return (await response.json()) as SourceTreeDraftImportPreview;
+  const result = (await response.json()) as SourceTreeDraftImportPreview;
+  return { ...result, collisions: result.collisions ?? [], warnings: result.warnings ?? [] };
 }
 
 export async function importSourceTreeDraft(draftId: string, input: SourceTreeDraftImportInput): Promise<SourceTreeDraftImportResult> {
@@ -1822,6 +1846,23 @@ export async function uploadSourceFile(sourceId: string, file: File): Promise<So
   return (await response.json()) as SourceFile;
 }
 
+export async function fetchSessionStatus(): Promise<boolean> {
+  if (!apiBaseUrl) throw new ApiError("تعذر الاتصال بالخدمة. حاول مرة أخرى.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/auth/me`, { credentials: "include", signal: AbortSignal.timeout(5000) });
+  if (response.status === 401) return false;
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return true;
+}
+
+export async function fetchResearchAccess(): Promise<{ signedIn: boolean; canReview: boolean; canMerge: boolean }> {
+  if (!apiBaseUrl) throw new ApiError("تعذر الاتصال بالخدمة.", 503);
+  const response = await fetch(`${apiBaseUrl}/api/v1/auth/me`, { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(5000) });
+  if (response.status === 401) return { signedIn: false, canReview: false, canMerge: false };
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const { roles = [] } = await response.json() as { roles?: string[] };
+  return { signedIn: true, canReview: roles.some((role) => ["researcher", "moderator", "admin"].includes(role)), canMerge: roles.some((role) => ["moderator", "admin"].includes(role)) };
+}
+
 export async function reviewSourceCandidate(candidateId: string, decision: "accepted" | "rejected", noteAr?: string): Promise<SourceCandidate> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لمراجعة المرشح.", 503);
@@ -1902,7 +1943,7 @@ export async function fetchClaim(claimId: string): Promise<ResearchClaim> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API أولاً لعرض الادعاء.", 503);
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}`, { signal: AbortSignal.timeout(3000) });
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
@@ -2219,7 +2260,16 @@ export async function mergeSourceTreeSuggestions(
 // The source-resolution crops for one suggestion. The endpoint returns two
 // base64 PNGs in one response so the page is opened once; the browser gets an
 // object URL for each and revokes them when the active name changes.
-export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: AbortSignal): Promise<{ tight: Blob; context: Blob }> {
+export interface SuggestionCropGeometry {
+  pageWidth: number;
+  pageHeight: number;
+  tightRegion: { x: number; y: number; width: number; height: number };
+  contextRegion: { x: number; y: number; width: number; height: number };
+  reviewRegion?: { x: number; y: number; width: number; height: number };
+  fragment: boolean;
+}
+
+export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: AbortSignal): Promise<{ tight: Blob; context: Blob; review?: Blob; geometry?: SuggestionCropGeometry }> {
   if (!apiBaseUrl) {
     throw new ApiError("شغّل Core API لعرض صورة الاسم.", 503);
   }
@@ -2231,11 +2281,11 @@ export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: A
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
-  const payload = (await response.json()) as { tightPng?: string; contextPng?: string };
+  const payload = (await response.json()) as { tightPng?: string; contextPng?: string; reviewPng?: string; geometry?: SuggestionCropGeometry };
   if (!payload.tightPng || !payload.contextPng) {
     throw new ApiError("لم تُرجع الخدمة صورة الاسم.", 502);
   }
-  return { tight: base64PNG(payload.tightPng), context: base64PNG(payload.contextPng) };
+  return { tight: base64PNG(payload.tightPng), context: base64PNG(payload.contextPng), review: payload.reviewPng ? base64PNG(payload.reviewPng) : undefined, geometry: payload.geometry };
 }
 
 // On-demand spelling candidates from the vision model for ONE tight crop. It is

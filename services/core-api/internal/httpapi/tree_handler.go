@@ -26,9 +26,23 @@ type publishTreeRequest struct {
 }
 
 func (h treeHandler) list(w http.ResponseWriter, r *http.Request) {
-	items, err := h.Service.ListAccessibleTrees(r.Context(), h.optionalUserID(r))
+	var items []trees.TreeSummary
+	var err error
+	scope := r.URL.Query().Get("scope")
+	switch scope {
+	case "":
+		items, err = h.Service.ListAccessibleTrees(r.Context(), h.optionalUserID(r))
+	case "workspace":
+		items, err = h.Service.ListWorkspaceTrees(r.Context(), h.optionalUserID(r))
+	case "public":
+		items, err = h.Service.ListPublicTrees(r.Context())
+	default:
+		writeTreeError(w, trees.ErrValidation)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	if err != nil {
-		if err == trees.ErrDatabaseUnavailable && h.Demo {
+		if err == trees.ErrDatabaseUnavailable && h.Demo && scope == "" {
 			// The demo tree, labelled as demo, and only when DEMO_MODE says the
 			// synthetic answer is allowed. The label travels in the body AND in a
 			// header, because a client that renders this list should not be able to

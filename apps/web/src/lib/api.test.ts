@@ -411,3 +411,35 @@ describe("review history and geometry repair", () => {
     });
   });
 });
+
+describe("chart import responses", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
+  it("normalizes null preview lists returned for an import with no matches or warnings", async () => {
+    const { previewSourceTreeDraftImport } = await loadApi("http://localhost:8181");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ draftId: "draft-1", expectedRevision: 2, newPeople: 2, collisions: null, warnings: null }), { status: 200 })));
+    const preview = await previewSourceTreeDraftImport("draft-1", 2);
+    expect(preview).toMatchObject({ newPeople: 2, expectedRevision: 2, collisions: [], warnings: [] });
+  });
+});
+
+describe("research access follows the existing session's roles", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
+  it("does not confuse signing in with permission to review or merge", async () => {
+    const { fetchResearchAccess } = await loadApi("http://localhost:8181");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ roles: ["registered"] }), { status: 200 })));
+    await expect(fetchResearchAccess()).resolves.toEqual({ signedIn: true, canReview: false, canMerge: false });
+  });
+  it("allows research review while reserving merge execution for moderators", async () => {
+    const { fetchResearchAccess } = await loadApi("http://localhost:8181");
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roles: ["registered", "researcher"] }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ roles: ["moderator"] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchResearchAccess()).resolves.toEqual({ signedIn: true, canReview: true, canMerge: false });
+    await expect(fetchResearchAccess()).resolves.toEqual({ signedIn: true, canReview: true, canMerge: true });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:8181/api/v1/auth/me", expect.objectContaining({ credentials: "include", cache: "no-store" }));
+  });
+  it("keeps signed-out accounts out of protected review", async () => {
+    const { fetchResearchAccess } = await loadApi("http://localhost:8181");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+    await expect(fetchResearchAccess()).resolves.toEqual({ signedIn: false, canReview: false, canMerge: false });
+  });
+});

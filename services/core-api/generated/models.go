@@ -1446,6 +1446,7 @@ type SourceTreeSuggestion struct {
 	GeometryRevision     int32
 	SupersededAt         pgtype.Timestamptz
 	SupersededByEventID  pgtype.UUID
+	LocalisationPending  bool
 }
 
 type SourceTreeSuggestionDecision struct {

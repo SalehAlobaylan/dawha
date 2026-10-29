@@ -38,7 +38,7 @@ export function PlacesPage() {
 
   return (
     <div className="page-stack">
-      <TopBar eyebrow="الجغرافيا / المواضع" title="الموضع جزء من السؤال" description="الاحضور، والهجرة، والحدود — كلها درجات حضور، وليست خطوطاً قاطعة." />
+      <TopBar eyebrow="الخريطة الجغرافية / المواضع" title="الموضع جزء من السؤال" description="الحضور، والهجرة، والحدود — كلها درجات حضور، وليست خطوطاً قاطعة." />
       <section className="places-toolbar"><div className="place-breadcrumb"><MapPinned size={16} /><span>فهرس المواضع</span><ChevronLeft size={14} /><strong>الرياض وما حوله</strong></div><div className="place-toolbar-actions"><label className="place-period"><CalendarDays size={15} /><select aria-label="تصفية بالفترة" value={period} onChange={(event) => setPeriod(event.target.value)}>{[allPeriods, ...periodOptions].map((option) => <option key={option}>{option}</option>)}</select></label><button className="secondary-button" type="button"><SlidersHorizontal size={15} /> تصفية</button><button className="primary-button" type="button"><Plus size={15} /> إضافة موضع</button></div></section>
 
       <section className="places-workspace">

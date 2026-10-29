@@ -312,6 +312,26 @@ export interface SourceFile {
   createdAt: string;
 }
 
+export interface ChartLibraryItem {
+  sourceId: string;
+  titleAr: string;
+  visibility: "public" | "private";
+  canReview: boolean;
+  updatedAt: string;
+  fileId?: string;
+  filename?: string;
+  mimeType?: string;
+  processingStatus?: SourceFile["processingStatus"];
+  totalNames: number;
+  pendingNames: number;
+  deferredNames: number;
+  reviewedNames: number;
+  readingStatus?: NameReadingRun["status"];
+  draftId?: string;
+  draftState?: SourceTreeDraft["state"];
+  treeId?: string;
+}
+
 export interface SourceProcessingRun {
   id: string;
   sourceId: string;

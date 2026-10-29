@@ -74,6 +74,13 @@ func TestASuggestionCropComesFromTheOriginalSource(t *testing.T) {
 	if tightWidth == 0 || tightHeight == 0 || contextWidth == 0 || contextHeight == 0 {
 		t.Fatalf("crop returned an empty image: tight=%dx%d context=%dx%d", tightWidth, tightHeight, contextWidth, contextHeight)
 	}
+	if crop.Geometry == nil || crop.Geometry.PageWidth != 600 || crop.Geometry.PageHeight != 400 {
+		t.Fatalf("crop frame is missing: %+v", crop.Geometry)
+	}
+	cachedCrop, err := service.GetSuggestionCrop(ctx, queue[0].ID, owner.User.ID)
+	if err != nil || cachedCrop.Geometry == nil || cachedCrop.Geometry.ContextRegion != crop.Geometry.ContextRegion {
+		t.Fatalf("cached crop lost its locator: %+v %v", cachedCrop.Geometry, err)
+	}
 	if tightWidth >= contextWidth || tightHeight >= contextHeight {
 		// The source is 600x400 and the name is 80x40: the tight crop should be
 		// a name and its padding, and the context crop should show neighbours.

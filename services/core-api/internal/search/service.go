@@ -293,6 +293,7 @@ func (s *Service) searchSources(ctx context.Context, query string, input Input) 
 			return nil, err
 		}
 		item.Kind = "source"
+		item.SourceID = item.ID
 		item.Subtitle = author
 		item.Status = status
 		item.Route = "/sources"
@@ -362,7 +363,7 @@ func (s *Service) searchClaims(ctx context.Context, policy visibility.Policy, qu
 
 func (s *Service) searchPassages(ctx context.Context, query string, input Input) ([]Result, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT sp.id, s.title_ar, sp.text_ar, sp.locator_ar, GREATEST(CASE WHEN sp.normalized_text_ar = $1 THEN 100 ELSE 0 END, similarity(sp.normalized_text_ar, $1) * 80, CASE WHEN sp.normalized_text_ar ILIKE '%' || $1 || '%' THEN 65 ELSE 0 END) AS score
+		SELECT sp.id, sp.source_id, s.title_ar, sp.text_ar, sp.locator_ar, GREATEST(CASE WHEN sp.normalized_text_ar = $1 THEN 100 ELSE 0 END, similarity(sp.normalized_text_ar, $1) * 80, CASE WHEN sp.normalized_text_ar ILIKE '%' || $1 || '%' THEN 65 ELSE 0 END) AS score
 		FROM source_passages sp JOIN sources s ON s.id = sp.source_id
 		WHERE ($1 = '' OR sp.normalized_text_ar ILIKE '%' || $1 || '%' OR sp.text_ar ILIKE '%' || $1 || '%')
 		  AND s.visibility = 'public'
@@ -377,10 +378,12 @@ func (s *Service) searchPassages(ctx context.Context, query string, input Input)
 	for rows.Next() {
 		var item Result
 		var locator pgtype.Text
-		if err := rows.Scan(&item.ID, &item.Title, &item.Body, &locator, &item.Score); err != nil {
+		if err := rows.Scan(&item.ID, &item.SourceID, &item.Title, &item.Body, &locator, &item.Score); err != nil {
 			return nil, err
 		}
 		item.Kind = "passage"
+		item.PassageID = item.ID
+		item.LocatorAR = textValue(locator)
 		item.Subtitle = textValue(locator)
 		item.Route = "/sources"
 		items = append(items, item)

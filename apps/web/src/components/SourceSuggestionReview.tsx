@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../lib/api";
+import type { SuggestionCropGeometry } from "../lib/api";
+import { SourceSpotMarker } from "./SourceSpotMarker";
 import {
   decideSourceTreeSuggestion,
   fetchNameJudgeConfig,
@@ -84,6 +86,8 @@ interface SourceSuggestionReviewProps {
   fileId: string;
   sourceTitle?: string;
   onClose: () => void;
+  onContinue?: () => void;
+  initialQueueMode?: "pending" | "deferred" | "history";
 }
 
 type QueueFilter = "all" | "unreadable" | "uncertain" | "page";
@@ -119,11 +123,12 @@ const EVENT_LABELS: Record<string, string> = {
   region_revised: "تعديل حدود",
   split: "تقسيم",
   merge: "دمج",
+  redetected: "تجديد مواضع الأسماء",
 };
 
 const QUEUE_LIMIT = 200;
 const MAX_QUEUE_LIMIT = 200;
-const ZOOM_STEPS = [1, 1.5, 2, 3, 4];
+const ZOOM_STEPS = [.25, .5, .75, 1, 1.5, 2, 3, 4];
 const JUDGE_DEBOUNCE_MS = 600;
 const OFF_JUDGE_CONFIG: NameJudgeConfig = { mode: "off", imageEnabled: false, available: false, sample: 0 };
 
@@ -156,13 +161,13 @@ const SOURCE_LABELS: Record<NameCandidateSource, string> = {
 // alternatives, and records the reviewer's decision. The machine reading is never
 // replaced: it stays in the decision record so the two can be compared later.
 // That comparison is the accuracy measurement, not a claim made by this screen.
-export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceSuggestionReviewProps) {
+export function SourceSuggestionReview({ fileId, sourceTitle, onClose, onContinue, initialQueueMode = "pending" }: SourceSuggestionReviewProps) {
   const [suggestions, setSuggestions] = useState<SourceTreeSuggestion[]>([]);
   const [accuracy, setAccuracy] = useState<SourceSuggestionAccuracy | null>(null);
   const [activeID, setActiveID] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [filter, setFilter] = useState<QueueFilter>("all");
-  const [queueMode, setQueueMode] = useState<QueueMode>("pending");
+  const [queueMode, setQueueMode] = useState<QueueMode>(initialQueueMode);
   const [summary, setSummary] = useState<NameReviewSummary | null>(null);
   const [sessionCounts, setSessionCounts] = useState<SessionCounts>(EMPTY_SESSION);
   const [history, setHistory] = useState<SourceSuggestionHistory | null>(null);
@@ -186,13 +191,17 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [tightURL, setTightURL] = useState("");
   const [contextURL, setContextURL] = useState("");
+  const [cropGeometry, setCropGeometry] = useState<SuggestionCropGeometry>();
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [cropState, setCropState] = useState<CropState>("idle");
   const [cropError, setCropError] = useState("");
   const [cropAttempt, setCropAttempt] = useState(0);
   const [cropViewportSize, setCropViewportSize] = useState({ width: 0, height: 0 });
   const [cropNaturalSize, setCropNaturalSize] = useState({ width: 0, height: 0 });
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState<number | null>(null);
   const [mapZoom, setMapZoom] = useState(1);
+  const [mapLocateTick, setMapLocateTick] = useState(0);
+  const mapDragRef = useRef<{ x: number; y: number } | null>(null);
   const [enhance, setEnhance] = useState(false);
   const [knownNames, setKnownNames] = useState<CountedFileName[]>([]);
  const [reviewPreparation,setReviewPreparation]=useState<{suggestionId:string;context:NamePreparationContext|null;preparation?:NameCandidatePreparation}|null>(null);
@@ -229,7 +238,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const judgeCandidatesRef = useRef<ReturnType<typeof judgeCandidatesFromSnapshot>>([]);
   const judgeSnapshotRef = useRef<ReturnType<typeof buildCandidateSnapshot>>([]);
   const cropFileRef = useRef(fileId);
-  const cropCacheRef = useRef(new Map<string, { tight: Blob; context: Blob }>());
+  const cropCacheRef = useRef(new Map<string, Awaited<ReturnType<typeof fetchSourceSuggestionCrop>>>());
   const localRereadButtonRef = useRef<HTMLButtonElement>(null);
   // The origin is what the reviewer did, not what the final text happens to
   // equal. Typing a candidate's spelling is still manual entry; clicking it is
@@ -423,6 +432,8 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   useEffect(() => {
     setTightURL("");
     setContextURL("");
+    setCropGeometry(undefined);
+    setZoom(null);
     setCropError("");
     if (cropFileRef.current !== fileId) { cropFileRef.current = fileId; cropCacheRef.current.clear(); setCropState("idle"); return; }
     if (!activeID) {
@@ -436,12 +447,13 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     setCropNaturalSize({ width: 0, height: 0 });
     setCropState("loading");
     const cached = cropCacheRef.current.get(activeID);
-    void (cached ? Promise.resolve(cached) : fetchSourceSuggestionCrop(activeID, abort.signal)).then(({ tight, context }) => {
-      tightObjectURL = URL.createObjectURL(tight);
+    void (cached ? Promise.resolve(cached) : fetchSourceSuggestionCrop(activeID, abort.signal)).then(({ tight, context, review, geometry }) => {
+      tightObjectURL = URL.createObjectURL(review ?? tight);
       contextObjectURL = URL.createObjectURL(context);
       if (live) {
         setTightURL(tightObjectURL);
         setContextURL(contextObjectURL);
+        setCropGeometry(geometry);
         setCropState("ready");
       } else {
         URL.revokeObjectURL(tightObjectURL);
@@ -474,9 +486,8 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     return () => abort.abort();
   }, [activeID, cropState, suggestions]);
 
-  // The crop's "100%" is a fit-to-stage view, capped at twice the source pixels so
-  // a tiny name is not blown up into a blur. Zoom then grows it from that fitted
-  // size, and the stage scrolls instead of stretching the image to the column.
+  // Fit never enlarges source pixels. Explicit percentages are native-pixel
+  // scale, and each new selection returns to fit rather than inheriting zoom.
   useEffect(() => {
     if (cropState !== "ready") return undefined;
     const node = cropViewportRef.current;
@@ -647,7 +658,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     if (boxRect.left < viewportRect.left || boxRect.right > viewportRect.right) {
       viewport.scrollLeft += boxRect.left - viewportRect.left - (viewport.clientWidth - boxRect.width) / 2;
     }
-  }, [current?.id, mapZoom, previewLoaded, previewURL]);
+  }, [current?.id, mapZoom, mapLocateTick, previewLoaded, previewURL, previewSize]);
 
   const readerNames = useMemo(() => {
     if (!current) return [];
@@ -905,6 +916,8 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const openRegionEditor = useCallback(() => {
     if (!current || readOnly) return;
     setRegionDraft(regionToPercent(current.region));
+    setMapZoom(4);
+    setMapLocateTick((value) => value + 1);
     setRegionPreview(null);
     setRegionError("");
     setSplitOpen(false);
@@ -1107,9 +1120,17 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
     }
   }, [current, loadInitial, mergeBusy, mergeCandidates, mergeSelection, refreshSummary, reload]);
 
-  const assistance = current && !readOnly
-    ? readerAssistance(current, cropState, readingCapabilities, localReadings)
-    : null;
+  const assistance = useMemo<ReaderAssistance | null>(() => {
+    if (!current || readOnly) return null;
+    if (cropGeometry?.fragment) return {
+      tone: "caution",
+      title: "موضع يحتاج تصحيحاً",
+      detail: "الحدود تلتقط جزءاً صغيراً جداً. حدّد الاسم كاملاً على الخريطة أو ارفض الموضع إن كان رسماً.",
+      action: "region",
+      actionLabel: "عدّل الحدود",
+    };
+    return readerAssistance(current, cropState, readingCapabilities, localReadings);
+  }, [current, readOnly, cropGeometry?.fragment, cropState, readingCapabilities, localReadings]);
   const runAssistance = useCallback(() => {
     if (!assistance) return;
     if (assistance.action === "region") {
@@ -1205,14 +1226,29 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
   const confidenceLevel = confidencePercent >= 80 ? "high" : confidencePercent >= 45 ? "medium" : "low";
   const pagePosition = current ? Math.max(1, pages.indexOf(current.pageNumber) + 1) : 0;
   const cropFitScale = cropNaturalSize.width > 0 && cropNaturalSize.height > 0 && cropViewportSize.width > 0 && cropViewportSize.height > 0
-    ? Math.min(2, cropViewportSize.width / cropNaturalSize.width, cropViewportSize.height / cropNaturalSize.height)
+    ? Math.min(1, cropViewportSize.width / cropNaturalSize.width, cropViewportSize.height / cropNaturalSize.height)
     : 1;
+  const cropScale = zoom ?? cropFitScale;
   const cropDisplayWidth = cropNaturalSize.width > 0
-    ? Math.max(1, Math.round(cropNaturalSize.width * cropFitScale * zoom))
+    ? Math.max(1, Math.round(cropNaturalSize.width * cropScale))
     : 0;
   const cropFitsViewport = cropNaturalSize.width > 0
-    && cropNaturalSize.width * cropFitScale * zoom <= cropViewportSize.width
-    && cropNaturalSize.height * cropFitScale * zoom <= cropViewportSize.height;
+    && cropNaturalSize.width * cropScale <= cropViewportSize.width
+    && cropNaturalSize.height * cropScale <= cropViewportSize.height;
+
+  useEffect(() => {
+    const viewport = cropViewportRef.current;
+    const frame = viewport?.querySelector(".name-bench-crop-frame");
+    if (!viewport || !frame || !cropNaturalSize.width) return;
+    if (cropFitsViewport) { viewport.scrollLeft = 0; viewport.scrollTop = 0; return; }
+    const region = cropGeometry?.reviewRegion ?? cropGeometry?.tightRegion;
+    const x = region ? region.x + region.width / 2 : .5;
+    const y = region ? region.y + region.height / 2 : .5;
+    const bounds = frame.getBoundingClientRect();
+    const view = viewport.getBoundingClientRect();
+    viewport.scrollLeft += bounds.left + x * bounds.width - view.left - viewport.clientWidth / 2;
+    viewport.scrollTop += bounds.top + y * bounds.height - view.top - viewport.clientHeight / 2;
+  }, [cropScale, cropFitsViewport, cropGeometry, cropNaturalSize, cropViewportSize]);
 
   return (
     <div className="name-bench-backdrop" role="presentation" onClick={onClose}>
@@ -1232,6 +1268,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
             <p>اقرأ الاسم من الأصل، واختر أو اكتب. قرارك هو السجل، وقراءة الآلة تبقى بجانبه.</p>
           </div>
           <div className="name-bench-head-side">
+            {onContinue ? <button className="secondary-button" type="button" onClick={onContinue}>الوصلات والشجرة</button> : null}
             <div className="name-bench-stats" aria-label="حالة المراجعة">
               <div>
                 <strong>{accuracy?.total ?? 0}</strong>
@@ -1341,7 +1378,10 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
           <span>تأجيل <strong>{sessionCounts.deferred}</strong></span>
           <span>رفض <strong>{sessionCounts.rejected}</strong></span>
           <span className="name-bench-session-remaining">المتبقي <strong>{pendingRemaining ?? "—"}</strong></span>
+        {hasMore ? <div className="name-bench-load-more"><span>المعروض {suggestions.length.toLocaleString("ar-SA")} من {modeCount(queueMode)?.toLocaleString("ar-SA") ?? "المزيد من"} الأسماء. التصفية تخص الأسماء المحمّلة.</span><button className="secondary-button" type="button" disabled={loadingMore || loading} onClick={() => void loadMore()}>{loadingMore ? "جارٍ تحميل المزيد…" : "تحميل المزيد من الأسماء"}</button></div> : null}
         </div>
+
+
 
         {allUnread && !loading && queueMode === "pending" ? (
           <div className="name-bench-banner" role="status">
@@ -1409,22 +1449,23 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                     <button
                       type="button"
                       className="name-bench-tool"
-                      onClick={() => setZoom((value) => ZOOM_STEPS[Math.max(0, ZOOM_STEPS.indexOf(value) - 1)])}
-                      disabled={zoom <= ZOOM_STEPS[0]}
+                      onClick={() => setZoom([...ZOOM_STEPS].reverse().find((value) => value < cropScale) ?? ZOOM_STEPS[0])}
+                      disabled={cropScale <= ZOOM_STEPS[0]}
                       aria-label="تصغير القصاصة"
                     >
                       <Minus size={14} />
                     </button>
-                    <span className="name-bench-zoom">{Math.round(zoom * 100)}٪</span>
+                    <span className="name-bench-zoom" aria-live="polite">{Math.round(cropScale * 100)}٪</span>
                     <button
                       type="button"
                       className="name-bench-tool"
-                      onClick={() => setZoom((value) => ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, ZOOM_STEPS.indexOf(value) + 1)])}
-                      disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                      onClick={() => setZoom(ZOOM_STEPS.find((value) => value > cropScale) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1])}
+                      disabled={cropScale >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
                       aria-label="تكبير القصاصة"
                     >
                       <Plus size={14} />
                     </button>
+                    <button type="button" className="name-bench-tool" onClick={() => setZoom(null)} aria-pressed={zoom === null}>ملاءمة</button>
                   </div>
                 </div>
 
@@ -1432,17 +1473,19 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                   <figure className={cropState === "ready" ? "name-bench-crop" : "name-bench-crop is-placeholder"}>
                     {!preparingReview && cropState === "ready" && tightURL ? (
                       <div className={cropDisplayWidth > 0 && !cropFitsViewport ? "name-bench-crop-viewport is-scrollable" : "name-bench-crop-viewport"} ref={cropViewportRef}>
-                        <img
+                        <div className="name-bench-crop-frame" style={cropDisplayWidth > 0 ? { width: `${cropDisplayWidth}px` } : undefined}><img
                           src={tightURL}
                           alt={`قصاصة الاسم من صفحة ${current.pageNumber}`}
                           className={enhance ? "name-bench-crop-image is-enhanced" : "name-bench-crop-image"}
-                          style={cropDisplayWidth > 0 ? { width: `${cropDisplayWidth}px` } : undefined}
+                          style={{ width: "100%" }}
                           onLoad={(event) => setCropNaturalSize({
                             width: event.currentTarget.naturalWidth,
                             height: event.currentTarget.naturalHeight,
                           })}
                           draggable={false}
                         />
+                        {cropGeometry ? <SourceSpotMarker region={cropGeometry.reviewRegion ?? cropGeometry.tightRegion} /> : null}
+                        </div>
                       </div>
                     ) : cropState === "error" ? (
                       <div className="name-bench-crop-fallback">
@@ -1472,24 +1515,26 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                       </div>
                     )}
                     <figcaption>
-                      <span>القصاصة المكبرة من المصدر</span>
-                      <span>لا نضيف تفاصيل غير موجودة</span>
+                      <span>{cropGeometry?.fragment ? "جوار الموضع · الحدود الأصلية بالبرتقالي" : "القصاصة من المصدر"}</span>
+                      <span>{cropGeometry ? `${Math.round(current.region.width * cropGeometry.pageWidth)} × ${Math.round(current.region.height * cropGeometry.pageHeight)} بكسل` : "التكبير لا يضيف تفاصيل"}</span>
                     </figcaption>
                   </figure>
 
                   <div className="name-bench-source-side">
                     <figure className="name-bench-context">
                       {!preparingReview && contextURL ? (
-                        <img src={contextURL} alt={`سياق الاسم في صفحة ${current.pageNumber}`} />
+                        <div className="name-bench-context-frame"><img src={contextURL} alt={`سياق الاسم في صفحة ${current.pageNumber}`} />
+                          {cropGeometry ? <SourceSpotMarker region={cropGeometry.contextRegion} target /> : null}
+                        </div>
                       ) : (
                         <div className="name-bench-context-placeholder">السياق حول الاسم</div>
                       )}
-                      <figcaption>السياق: الأسماء المجاورة تساعد على التمييز</figcaption>
+                      <figcaption>الموضع المحدد داخل السياق · الإطار البرتقالي</figcaption>
                     </figure>
                     <div className="name-bench-reading">
                       <span className="name-bench-kicker">ما قرأته الآلة</span>
                       <strong>{preparingReview ? "نجهّز مساحة القراءة…" : current.suggestedTextAr || "لم تقرأ اسماً هنا"}</strong>
-                      {current.readingMethod === "local_tesseract_crop" ? <small>{current.viewCount} قراءات محلية تجريبية · تحتاج مراجعتك من المصدر</small> : <div className="name-bench-confidence">
+                      {current.readingMethod?.includes("tesseract") ? <small>{current.viewCount} {current.viewCount === 1 ? "قراءة محلية تجريبية" : "قراءات محلية تجريبية"} · تحتاج مراجعتك من المصدر</small> : <div className="name-bench-confidence">
                         <div className="name-bench-confidence-track">
                           <span className={`is-${confidenceLevel}`} style={{ width: `${Math.max(2, confidencePercent)}%` }} />
                         </div>
@@ -1498,7 +1543,7 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                       <p>
                         {current.suggestedTextAr
                           ? "هذه فرضية قراءة، لا حكم على الاسم. صحّحها إن كانت قريبة."
-                          : "لم تتبيّن الآلة الاسم. اكتبه من الصورة، أو اختر اسماً شائعاً."}
+                          : "افحص الموضع في السياق أولاً. اكتب الاسم فقط إن ظهر كاملاً، أو عدّل الحدود أو ارفض الموضع."}
                       </p>
                       {current.alternatives && current.alternatives.length > 0 ? (
                         <div className="name-bench-alternatives">
@@ -1514,6 +1559,12 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                   </div>
                 </div>
 
+                {cropGeometry?.fragment ? <div className="name-bench-fragment-warning" role="status">
+                  <AlertTriangle size={18} />
+                  <span>الموضع صغير جداً؛ قد يكون جزءاً من رسم أو حرف. التكبير لن يُظهر اسماً كاملاً. وسّع الحدود أو ارفض الموضع.</span>
+                  {!readOnly ? <button type="button" className="name-bench-secondary" onClick={openRegionEditor}><Crop size={14} /> تعديل الحدود</button> : null}
+                </div> : null}
+
                 <div className="name-bench-map">
                   <div className="name-bench-map-head">
                     <div>
@@ -1521,15 +1572,34 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                       <h4>أين يقع هذا الاسم؟</h4>
                     </div>
                     <div className="name-bench-map-tools">
+                      <button type="button" className="name-bench-tool" onClick={() => { setMapZoom(4); setMapLocateTick((value) => value + 1); }}>إظهار الموضع</button>
+                      <button type="button" className="name-bench-tool" onClick={() => setMapZoom(1)}>الصفحة كاملة</button>
                       <button type="button" className="name-bench-tool" onClick={() => setMapZoom((value) => Math.max(1, value - 0.5))} disabled={mapZoom <= 1} aria-label="تصغير الخريطة"><Minus size={14} /></button>
                       <span>{Math.round(mapZoom * 100)}٪</span>
-                      <button type="button" className="name-bench-tool" onClick={() => setMapZoom((value) => Math.min(3, value + 0.5))} disabled={mapZoom >= 3} aria-label="تكبير الخريطة"><Plus size={14} /></button>
+                      <button type="button" className="name-bench-tool" onClick={() => setMapZoom((value) => Math.min(6, value + 0.5))} disabled={mapZoom >= 6} aria-label="تكبير الخريطة"><Plus size={14} /></button>
                     </div>
                   </div>
                   <div className="name-bench-map-viewport" ref={mapViewportRef}>
                     {!preparingReview && previewURL ? (
-                      <div className="name-bench-map-frame" style={{ width: `${mapZoom * 100}%` }}>
-                        <img src={previewURL} alt={`معاينة صفحة ${current.pageNumber}`} onLoad={() => setPreviewLoaded(true)} />
+                      <div className={`name-bench-map-frame${regionDraft ? " is-drawing" : ""}`} style={{ width: previewSize.height > 0 ? `calc(var(--name-map-fit-height, 260px) * ${previewSize.width / previewSize.height * mapZoom})` : "100%", maxWidth: mapZoom === 1 ? "100%" : undefined }}
+                        onPointerDown={(event) => {
+                          if (!regionDraft || regionBusy || readOnly || event.button !== 0) return;
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          mapDragRef.current = { x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height };
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={(event) => {
+                          const start = mapDragRef.current;
+                          if (!start || !regionDraft) return;
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+                          const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+                          setRegionDraft({ x: Math.min(start.x, x) * 100, y: Math.min(start.y, y) * 100, width: Math.abs(x - start.x) * 100, height: Math.abs(y - start.y) * 100 });
+                          setRegionPreview(null);
+                        }}
+                        onPointerUp={() => { mapDragRef.current = null; }}
+                        onPointerCancel={() => { mapDragRef.current = null; }}>
+                        <img src={previewURL} alt={`معاينة صفحة ${current.pageNumber}`} draggable={false} onLoad={(event) => { setPreviewSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }); setPreviewLoaded(true); }} />
                         <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
                           {pageSuggestions.map((suggestion) => (
                             <rect
@@ -1544,12 +1614,65 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                             />
                           ))}
                         </svg>
+                        <SourceSpotMarker region={regionDraft ? percentToRegion(regionDraft) : current.region} target />
                       </div>
                     ) : (
                       <div className="name-bench-map-empty">لم تُحمّل معاينة الصفحة بعد.</div>
                     )}
                   </div>
-                  <p>انقر على مربع للانتقال إلى اسم آخر في الصفحة. المربع البرتقالي هو الاسم الحالي.</p>
+                  <p>{regionDraft ? "اسحب حول الاسم على الخريطة لتغيير الحدود، ثم اضغط «معاينة» قبل الحفظ." : "الإطار والهدف البرتقالي يحددان الموضع الحالي. انقر مربعاً آخر للانتقال إليه."}</p>
+                {regionDraft ? (
+                  <div className="name-bench-repair" role="group" aria-label="تعديل حدود القراءة">
+                    <div className="name-bench-section-label">
+                      <span><Crop size={15} /> حدود القراءة</span>
+                      <small>اسحب حول الاسم على الخريطة أو أدخل النسب</small>
+                    </div>
+                    <div className="name-bench-region-grid">
+                      {(["x", "y", "width", "height"] as const).map((field) => (
+                        <label key={field}>
+                          <span>{REGION_FIELD_LABELS[field]}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={Number(regionDraft[field].toFixed(2))}
+                            onChange={(event) => updateRegionField(field, Number(event.target.value))}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    {regionPreview ? (
+                      <div className="name-bench-region-preview">
+                        <figure>
+                          <img src={`data:image/png;base64,${regionPreview.tightPng}`} alt="معاينة الحد الضيق" />
+                          <figcaption>الحد الضيق</figcaption>
+                        </figure>
+                        <figure>
+                          <img src={`data:image/png;base64,${regionPreview.contextPng}`} alt="معاينة السياق" />
+                          <figcaption>السياق</figcaption>
+                        </figure>
+                        <p>
+                          ارتفاع الاسم {regionPreview.quality.nameHeightPx} بكسل
+                          {regionPreview.quality.clipped ? " · القصاصة تلامس حافة المصدر" : ""}
+                        </p>
+                      </div>
+                    ) : null}
+                    {regionError ? <p className="name-bench-error" role="alert">{regionError}</p> : null}
+                    <div className="name-bench-repair-actions">
+                      <button type="button" className="name-bench-secondary" onClick={() => void previewRegion()} disabled={regionBusy}>
+                        {regionBusy ? <Loader2 size={14} className="name-bench-spin" /> : <ScanText size={14} />} معاينة
+                      </button>
+                      <button type="button" className="name-bench-primary" onClick={() => void confirmRegion()} disabled={!regionPreview || regionBusy}>
+                        <Check size={14} /> حفظ الحدود
+                      </button>
+                      <button type="button" className="name-bench-text-button" onClick={() => { setRegionDraft(null); setRegionPreview(null); setRegionError(""); }} disabled={regionBusy}>
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 </div>
               </section>
 
@@ -1736,58 +1859,6 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose }: SourceS
                         {assistance.actionLabel}
                       </button>
                     ) : null}
-                  </div>
-                ) : null}
-
-                {regionDraft ? (
-                  <div className="name-bench-repair" role="group" aria-label="تعديل حدود القراءة">
-                    <div className="name-bench-section-label">
-                      <span><Crop size={15} /> حدود القراءة</span>
-                      <small>النسبة من صفحة المصدر</small>
-                    </div>
-                    <div className="name-bench-region-grid">
-                      {(["x", "y", "width", "height"] as const).map((field) => (
-                        <label key={field}>
-                          <span>{REGION_FIELD_LABELS[field]}</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={Number(regionDraft[field].toFixed(2))}
-                            onChange={(event) => updateRegionField(field, Number(event.target.value))}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                    {regionPreview ? (
-                      <div className="name-bench-region-preview">
-                        <figure>
-                          <img src={`data:image/png;base64,${regionPreview.tightPng}`} alt="معاينة الحد الضيق" />
-                          <figcaption>الحد الضيق</figcaption>
-                        </figure>
-                        <figure>
-                          <img src={`data:image/png;base64,${regionPreview.contextPng}`} alt="معاينة السياق" />
-                          <figcaption>السياق</figcaption>
-                        </figure>
-                        <p>
-                          ارتفاع الاسم {regionPreview.quality.nameHeightPx} بكسل
-                          {regionPreview.quality.clipped ? " · القصاصة تلامس حافة المصدر" : ""}
-                        </p>
-                      </div>
-                    ) : null}
-                    {regionError ? <p className="name-bench-error" role="alert">{regionError}</p> : null}
-                    <div className="name-bench-repair-actions">
-                      <button type="button" className="name-bench-secondary" onClick={() => void previewRegion()} disabled={regionBusy}>
-                        {regionBusy ? <Loader2 size={14} className="name-bench-spin" /> : <ScanText size={14} />} معاينة
-                      </button>
-                      <button type="button" className="name-bench-primary" onClick={() => void confirmRegion()} disabled={!regionPreview || regionBusy}>
-                        <Check size={14} /> حفظ الحدود
-                      </button>
-                      <button type="button" className="name-bench-text-button" onClick={() => { setRegionDraft(null); setRegionPreview(null); setRegionError(""); }} disabled={regionBusy}>
-                        إلغاء
-                      </button>
-                    </div>
                   </div>
                 ) : null}
 
@@ -2156,7 +2227,7 @@ function ReviewHistoryPanel({ history, loading, onReopen, reopening }: {
         <small>{history.suggestion.superseded ? "موضع مُستبدل" : history.suggestion.status === "suggested" ? "بانتظار المراجعة" : "مقرر"}</small>
       </div>
       {history.suggestion.superseded ? (
-        <p className="name-bench-history-note">استُبدل هذا الموضع بتقسيم أو دمج. قراءته وقراراته السابقة باقية للقراءة فقط.</p>
+        <p className="name-bench-history-note">استُبدل هذا الموضع بعد تجديد الكشف أو تعديل المواضع. قراءته وقراراته السابقة باقية للقراءة فقط.</p>
       ) : null}
       <div className="name-bench-history-original">
         <span>القراءة الأصلية</span>

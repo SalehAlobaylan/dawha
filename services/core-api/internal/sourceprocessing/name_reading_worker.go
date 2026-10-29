@@ -229,6 +229,9 @@ func (s *Service) ProcessNameReading(parent context.Context, claim Claim) (retur
 		work.page.Close()
 		work.page = nil
 	}
+	if err = s.publishNameLocalisation(ctx, work, run); err != nil {
+		return err
+	}
 	if err = s.nameTransaction(ctx, work, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE source_name_reading_runs SET stage='reading',updated_at=now() WHERE id=$1`, run.ID)
 		return err
@@ -387,6 +390,17 @@ func (s *Service) reuseOrDetectNameTile(ctx context.Context, run NameReadingRun,
 	detector := s.DetectNameTile
 	if detector == nil {
 		detector = DetectNameCarriers
+		// A durable run's detector version is immutable. Resuming a pre-upgrade
+		// run must not label v2 proposals as v1 evidence.
+		if run.Config.Localiser == legacyCarrierReadingModel {
+			detector = func(data []byte, config CarrierLocaliserConfig) ([]PageRegion, error) {
+				return detectNameCarriers(data, config, false)
+			}
+		} else if run.Config.Localiser == previousCarrierReadingModel {
+			detector = func(data []byte, config CarrierLocaliserConfig) ([]PageRegion, error) {
+				return detectNameCarriers(data, config, true)
+			}
+		}
 	}
 	config := nameReadingTileConfig(run.Config.LocaliserSettings, frame.Width, frame.Height, tile.Render.Width, tile.Render.Height, tiled)
 	regions, err := detector(data, config)
@@ -444,7 +458,7 @@ func (s *Service) persistNameDetection(ctx context.Context, work *nameReadingWor
 			}{frame.ID, region, NameGeometryVersion})
 			occurrence := fmt.Sprintf("name-p%04d-%s", frame.Page, fingerprint[:32])
 			var suggestionID string
-			err := tx.QueryRow(ctx, `INSERT INTO source_tree_suggestions(source_id,source_file_id,occurrence_id,page_number,region,reading_method,reading_model,name_reading_run_id) SELECT source_id,source_file_id,$2,$3,$4,'local_detection',$5,id FROM source_name_reading_runs WHERE id=$1 ON CONFLICT(source_file_id,occurrence_id) DO NOTHING RETURNING id::text`, run.ID, occurrence, frame.Page, mustJSON(region), run.Config.Localiser).Scan(&suggestionID)
+			err := tx.QueryRow(ctx, `INSERT INTO source_tree_suggestions(source_id,source_file_id,occurrence_id,page_number,region,reading_method,reading_model,name_reading_run_id,localisation_pending) SELECT source_id,source_file_id,$2,$3,$4,'local_detection',$5,id,$6 FROM source_name_reading_runs WHERE id=$1 ON CONFLICT(source_file_id,occurrence_id) DO NOTHING RETURNING id::text`, run.ID, occurrence, frame.Page, mustJSON(region), run.Config.Localiser, run.SuggestionID == "").Scan(&suggestionID)
 			if errors.Is(err, pgx.ErrNoRows) {
 				err = tx.QueryRow(ctx, `SELECT id::text FROM source_tree_suggestions WHERE source_file_id=$1 AND occurrence_id=$2`, run.FileID, occurrence).Scan(&suggestionID)
 			}
@@ -519,7 +533,7 @@ func (s *Service) persistLocalNameReading(ctx context.Context, work *nameReading
 		}
 
 		if reading.Outcome != "reading_unavailable" {
-			if _, err = tx.Exec(ctx, `UPDATE source_tree_suggestions SET suggested_text_ar=$2,alternatives=$3,confidence=$4,view_count=$5,reading_method='local_tesseract_crop',reading_model=$6,name_reading_run_id=$7,updated_at=now() WHERE id=$1 AND status='suggested' AND (name_reading_run_id=$7 OR reading_method='local_detection')`, unit.SuggestionID, boundCropText(reading.Text), mustJSON(alternatives), reading.Agreement, max(1, len(reading.Variants)), run.Config.Reader, run.ID); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE source_tree_suggestions SET suggested_text_ar=$2,alternatives=$3,confidence=$4,view_count=$5,reading_method='local_tesseract_crop',reading_model=$6,name_reading_run_id=$7,updated_at=now() WHERE id=$1 AND status='suggested' AND superseded_at IS NULL AND (name_reading_run_id=$7 OR reading_method='local_detection')`, unit.SuggestionID, boundCropText(reading.Text), mustJSON(alternatives), reading.Agreement, max(1, len(reading.Variants)), run.Config.Reader, run.ID); err != nil {
 				return err
 			}
 		}

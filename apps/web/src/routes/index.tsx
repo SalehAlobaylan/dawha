@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, GitBranch, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, GitBranch, MapPinned, Sparkles } from "lucide-react";
 import { demoDashboard, places } from "../data/demo";
 import { fetchDashboard } from "../lib/api";
 import { ActivityFeed, LayerStack, OpenQuestionsPreview } from "../components/ResearchPanels";
@@ -28,33 +28,10 @@ import { TreeWorkspace } from "../components/TreeWorkspace";
 export function HomePage() {
   const { data, isError, error, isPending } = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
 
-  if (isError) {
-    return (
-      <div className="page-stack">
-        <TopBar
-          eyebrow="الثلاثاء، ١٦ ربيع الآخر ١٤٤٨هـ"
-          title="صباح البحث، نجم"
-          description="من هنا تبدأ مساحة العمل التي تحفظ الأدلة، والخلافات، وما لم يُحسم بعد."
-        />
-        <section className="panel dashboard-unavailable" role="alert">
-          <div className="dashboard-unavailable-mark" aria-hidden="true">؟</div>
-          <h2>لوحة المساحة غير متاحة</h2>
-          <p>
-            لم نتمكن من قراءة بيانات المساحة، ولم نعرض بيانات توضيحية مكانها. رقم لا
-            يأتي من قاعدة البيانات ليس رقماً عن بحثك.
-          </p>
-          <p className="dashboard-unavailable-detail">
-            {error instanceof Error ? error.message : "تعذر الاتصال بالخدمة."}
-          </p>
-        </section>
-      </div>
-    );
-  }
-
   // Pending shows the demo only when there is no data at all yet, and it is
   // labelled exactly as the demo is everywhere else.
   const dashboard = data ?? demoDashboard;
-  const isDemo = isPending || dashboard.mode === "demo";
+  const isDemo = !isError && (isPending || dashboard.mode === "demo");
 
   return (
     <div className="page-stack">
@@ -68,8 +45,7 @@ export function HomePage() {
         <section className="demo-banner" role="status" data-testid="demo-banner">
           <strong>بيانات توضيحية</strong>
           <span>
-            هذه أرقام من مساحة نموذج، وليست من بحثك. اضبط <code>DEMO_MODE=false</code>{" "}
-            لإخفاءها.
+            هذه أمثلة من مساحة توضيحية، وليست أرقاماً عن بحثك.
           </span>
         </section>
       ) : null}
@@ -80,8 +56,8 @@ export function HomePage() {
           <h2>السلالةُ لا تُقرأ<br /><em>في سطر واحد.</em></h2>
           <p>تتبّع ما يقوله المصدر، وما يدّعيه الباحث، وما تمثله الشجرة، وما يبقى مفتوحاً — دون أن تُجبر التاريخ على جواب واحد.</p>
           <div className="hero-actions">
-            <Link to="/research" className="primary-button primary-button-large">ابدأ بحثاً <ArrowLeft size={17} /></Link>
-            <Link to="/tree" className="secondary-button secondary-button-large">استكشف شجرة <GitBranch size={16} /></Link>
+            <Link to="/tree" className="primary-button primary-button-large">افتح أشجاري <GitBranch size={17} /></Link>
+            <Link to="/places" className="secondary-button secondary-button-large">الخريطة الجغرافية <MapPinned size={16} /></Link>
           </div>
           <div className="hero-footnote"><Check size={14} /> مساحة آمنة للفصل بين المعرفة المؤكدة وادعاءات البحث.</div>
         </div>
@@ -106,6 +82,19 @@ export function HomePage() {
         </div>
       </section>
 
+      {isError ? (
+        <section className="panel dashboard-unavailable" role="alert">
+          <div className="dashboard-unavailable-mark" aria-hidden="true">؟</div>
+          <h2>لوحة المساحة غير متاحة</h2>
+          <p>
+            لم نتمكن من قراءة بيانات المساحة، ولم نعرض بيانات توضيحية مكانها. رقم لا
+            يأتي من قاعدة البيانات ليس رقماً عن بحثك.
+          </p>
+          <p className="dashboard-unavailable-detail">
+            {error instanceof Error ? error.message : "تعذر الاتصال بالخدمة."}
+          </p>
+        </section>
+      ) : <>
       <section className="metrics-grid" aria-label="مؤشرات المساحة">
         {dashboard.metrics.map((metric, index) => (
           <article className={`metric-card metric-card-${metric.tone}${index === 0 ? " metric-card-featured" : ""}`} key={metric.label}>
@@ -117,7 +106,7 @@ export function HomePage() {
       </section>
 
       <section className="home-grid home-grid-primary">
-        <div className="panel activity-panel">
+        <div className="panel activity-panel" id="workspace-activity">
           <SectionHeading eyebrow="نبض البحث" title="آخر ما يستحق النظر" description="مواد جديدة، أو قديمة، لكنها تفتح سؤالاً جديداً." action="كل النشاط" />
           <ActivityFeed activities={dashboard.activity} />
         </div>
@@ -129,6 +118,8 @@ export function HomePage() {
       <TreeWorkspace data={dashboard} />
 
       <MapPreview places={places} />
+
+      </>}
 
       <section className="research-invite" id="dictionary">
         <div className="research-invite-pattern" />
@@ -143,7 +134,7 @@ export function HomePage() {
         </div>
         <div className="research-invite-stats">
           <div><strong>٠٥</strong><span>طبقات معرفية</span></div>
-          <div><strong>١٧</strong><span>ادعاءً متنازعاً عليه</span></div>
+          <div><strong>{isError ? "—" : "١٧"}</strong><span>ادعاءً متنازعاً عليه</span></div>
           <div><strong>∞</strong><span>سؤال يستحق المتابعة</span></div>
         </div>
       </section>

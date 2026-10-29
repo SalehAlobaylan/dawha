@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { BookOpen, CircleHelp, FileSearch, Filter, GitBranch, Search, Sparkles, UserRound } from "lucide-react";
 import { FormEvent, useState } from "react";
-import { fetchSearch } from "../lib/api";
+import { fetchSearch, fetchClaim } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 import { TopBar } from "./TopBar";
 import type { SearchResult } from "../types";
@@ -17,11 +17,15 @@ const kinds = [
   { value: "questions", label: "الأسئلة" },
 ];
 
-export function SearchPage() {
-  const [input, setInput] = useState("");
-  const [submitted, setSubmitted] = useState("");
-  const [kind, setKind] = useState("all");
-  const [status, setStatus] = useState("");
+export function SearchPage({ embedded = false }: { embedded?: boolean }) {
+  const params = useSearch({ from: "/search" });
+  const navigate = useNavigate();
+  const [input, setInput] = useState(params.q ?? "");
+  const submitted = params.q ?? "";
+  const kind = kinds.some((item) => item.value === params.kind) ? params.kind! : "all";
+  const statuses = kind === "claims" ? [{ value: "unresolved", label: "غير محسوم" }, { value: "supported", label: "مدعوم" }, { value: "disputed", label: "متنازع عليه" }] : kind === "questions" ? [{ value: "open", label: "مفتوح" }, { value: "under_investigation", label: "قيد التحقيق" }, { value: "resolved", label: "محسوم مؤقتاً" }, { value: "reopened", label: "أُعيد فتحه" }, { value: "archived", label: "مؤرشف" }] : [];
+  const status = statuses.some((item) => item.value === params.status) ? params.status! : "";
+  const update = (next: typeof params) => { void navigate({ to: "/search", search: next, replace: true, resetScroll: false }); };
   const [personId, setPersonId] = useState("");
   const [placeId, setPlaceId] = useState("");
   const [sourceId, setSourceId] = useState("");
@@ -30,26 +34,19 @@ export function SearchPage() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = input.trim();
-    if (value) setSubmitted(value);
+    update({ q: value || undefined, kind: params.kind, status: params.status });
   };
-  const reset = () => {
-    setInput("");
-    setSubmitted("");
-    setKind("all");
-    setStatus("");
-    setPersonId("");
-    setPlaceId("");
-    setSourceId("");
-  };
+  const reset = () => { setInput(""); setPersonId(""); setPlaceId(""); setSourceId(""); update({}); };
 
   return (
-    <div className="page-stack">
-      <TopBar eyebrow="البحث / retrieval" title="ابحث في الذاكرة" description="البحث يجمع الأسماء والألقاب والمصادر والادعاءات والمقاطع، ويمكن اختيار التشابه الدلالي كإشارة ترتيب منفصلة." />
-      <section className="search-hero"><div className="search-hero-icon"><Search size={21} /></div><div><div className="eyebrow">بحث عربي موحّد</div><h2>اكتب الكلمة، واترك السياق يظهر</h2><p>نستخدم التطبيع العربي، الألقاب، والتشابه النصي داخل PostgreSQL — دون تحويل النص الأصلي إلى حقيقة.</p></div><Sparkles size={18} /></section>
-      <form className="search-form" onSubmit={submit}><label className="search-main-input"><Search size={18} /><input autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder="مثال: عبدالله، أبو بكر، رواية، أو عبارة من مصدر..." /><kbd>Enter</kbd></label><button className="primary-button" type="submit"><Search size={15} /> ابحث</button></form>
-      {submitted ? <section className="search-filter-bar"><div className="search-filter-label"><Filter size={14} /> تضييق النتائج</div><label>النوع<select value={kind} onChange={(event) => setKind(event.target.value)}>{kinds.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>{kind !== "semantic" ? <label>الحالة<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">الكل</option><option value="disputed">متنازع عليه</option><option value="supported">مدعوم</option><option value="under_investigation">قيد التحقيق</option><option value="open">مفتوح</option></select></label> : null}<details className="search-advanced"><summary>مرشحات معرفية</summary><label>شخص UUID<input value={personId} onChange={(event) => setPersonId(event.target.value)} placeholder="person_id" /></label><label>موضع UUID<input value={placeId} onChange={(event) => setPlaceId(event.target.value)} placeholder="place_id" /></label><label>مصدر UUID<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="source_id" /></label></details><button className="text-button" type="button" onClick={reset}>مسح</button></section> : null}
+    <div className={embedded ? "discovery-search-content" : "page-stack"}>
+      {!embedded ? <TopBar eyebrow="البحث / retrieval" title="ابحث في الذاكرة" description="البحث يجمع الأسماء والألقاب والمصادر والادعاءات والمقاطع، ويمكن اختيار التشابه الدلالي كإشارة ترتيب منفصلة." /> : null}
+      <section className="search-hero"><div className="search-hero-icon"><Search size={21} /></div><div><div className="eyebrow">بحث عربي موحّد</div><h2>اكتب الكلمة، واترك السياق يظهر</h2><p>ابحث باسم أو لقب أو عبارة من مصدر، ثم افتح السجل لقراءة سياقه وأدلته.</p></div><Sparkles size={18} /></section>
+      <form className="search-form" onSubmit={submit}><label className="search-main-input"><Search size={18} /><input aria-label="استعلام البحث" autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder="مثال: عبدالله، أبو بكر، رواية، أو عبارة من مصدر..." /><kbd>Enter</kbd></label><button className="primary-button" type="submit"><Search size={15} /> ابحث</button></form>
+      {submitted ? <section className="search-filter-bar"><div className="search-filter-label"><Filter size={14} /> تضييق النتائج</div><label>النوع<select value={kind} onChange={(event) => update({ ...params, kind: event.target.value, status: undefined })}>{kinds.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>{statuses.length > 0 ? <label>الحالة<select value={status} onChange={(event) => update({ ...params, status: event.target.value || undefined })}><option value="">الكل</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label> : null}<details className="search-advanced"><summary>معرّفات متقدمة (اختياري)</summary><label>شخص UUID<input value={personId} onChange={(event) => setPersonId(event.target.value)} placeholder="person_id" /></label><label>موضع UUID<input value={placeId} onChange={(event) => setPlaceId(event.target.value)} placeholder="place_id" /></label><label>مصدر UUID<input value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="source_id" /></label></details><button className="text-button" type="button" onClick={reset}>مسح</button></section> : null}
+      {params.claimId ? <ClaimRecord claimId={params.claimId} /> : null}
       {submitted && kind === "semantic" ? <div className="search-semantic-note"><Sparkles size={15} /><span>يرتّب المقاطع حسب التشابه فقط. لا يثبت صحةَ المصدر ولا تاريخه ولا استقلاله.</span></div> : null}
-      {submitted && searchQuery.isPending ? <div className="search-state">جارٍ ترتيب النتائج…</div> : searchQuery.error ? <div className="search-state search-error" role="alert">{searchError(searchQuery.error)}</div> : submitted && searchQuery.data ? <SearchResults response={searchQuery.data} /> : <div className="search-empty"><FileSearch size={23} /><strong>ابدأ باستعلام</strong><span>جرّب اسماً عربياً، لقباً، أو كلمة من نص مصدر. يمكنك بعد ذلك تضييق النتائج بالحالة أو المعرف.</span></div>}
+      {submitted && searchQuery.isPending ? <div className="search-state">جارٍ ترتيب النتائج…</div> : searchQuery.error ? <div className="search-state search-error" role="alert">{searchError(searchQuery.error)} <button className="inline-link" type="button" onClick={() => void searchQuery.refetch()}>إعادة المحاولة</button></div> : submitted && searchQuery.data ? <SearchResults response={searchQuery.data} /> : <div className="search-empty"><FileSearch size={23} /><strong>ابدأ باستعلام</strong><span>جرّب اسماً عربياً، لقباً، أو كلمة من نص مصدر. يمكنك بعد ذلك تضييق النتائج بالحالة أو المعرف.</span></div>}
     </div>
   );
 }
@@ -59,9 +56,8 @@ function SearchResults({ response }: { response: Awaited<ReturnType<typeof fetch
 }
 
 function SearchResultRow({ item }: { item: SearchResult }) {
-  const route = item.route === "/sources" || item.route === "/questions" || item.route === "/dictionary" ? item.route : "/research";
   const semantic = item.matchKind === "semantic";
-  return <Link to={route} className={`search-result-row${semantic ? " search-result-row-semantic" : ""}`}><span className={`search-result-icon search-result-icon-${item.kind}`}>{resultIcon(item.kind, semantic)}</span><span className="search-result-copy"><strong>{item.title}</strong>{item.subtitle ? <small>{item.subtitle}</small> : null}{item.body ? <p>{item.body}</p> : null}{semantic ? <small className="search-result-provenance">{semanticProvenance(item)}</small> : null}</span><span className="search-result-meta"><StatusBadge tone={semantic ? (item.reviewStatus === "accepted" ? "source" : "question") : item.status === "disputed" ? "disputed" : item.kind === "source" || item.kind === "passage" ? "source" : item.kind === "question" ? "question" : "claim"}>{semantic ? "تشابه دلالي" : kindLabel(item.kind)}</StatusBadge><b>{semantic ? `تشابه ${formatScore(item.score)}` : formatScore(item.score)}</b></span></Link>;
+  return <SearchResultLink item={item} className={`search-result-row${semantic ? " search-result-row-semantic" : ""}`}><span className={`search-result-icon search-result-icon-${item.kind}`}>{resultIcon(item.kind, semantic)}</span><span className="search-result-copy"><strong>{item.title}</strong>{item.subtitle ? <small>{item.subtitle}</small> : null}{item.body ? <p>{item.body}</p> : null}{semantic ? <small className="search-result-provenance">{semanticProvenance(item)}</small> : null}</span><span className="search-result-meta"><StatusBadge tone={semantic ? (item.reviewStatus === "accepted" ? "source" : "question") : item.status === "disputed" ? "disputed" : item.kind === "source" || item.kind === "passage" ? "source" : item.kind === "question" ? "question" : "claim"}>{semantic ? "تشابه دلالي" : kindLabel(item.kind)}</StatusBadge><b>{semantic ? `تشابه ${formatScore(item.score)}` : formatScore(item.score)}</b></span></SearchResultLink>;
 }
 
 function groupIcon(key: string) {
@@ -112,4 +108,22 @@ function formatScore(score: number): string {
 
 function searchError(error: unknown): string {
   return error instanceof Error ? error.message : "تعذر تنفيذ البحث.";
+}
+
+
+function SearchResultLink({ item, className, children }: { item: SearchResult; className: string; children: React.ReactNode }) {
+  if (item.kind === "source" || item.kind === "passage" || item.kind === "statement") return <Link className={className} to="/sources" search={{ sourceId: item.sourceId || (item.kind === "source" ? item.id : undefined) }}>{children}</Link>;
+  if (item.kind === "question") return <Link className={className} to="/research/$questionId" params={{ questionId: item.id }}>{children}</Link>;
+  if (item.kind === "claim") return <Link className={className} to="/search" search={{ q: item.title, kind: "claims", claimId: item.id }}>{children}</Link>;
+  const kind = ({ person: "people", family: "families", tribe: "tribes", place: "places" } as Record<string, string>)[item.kind];
+  if (kind) return <Link className={className} to="/search" search={{ view: "index", kind, id: item.id }}>{children}</Link>;
+  return <Link className={className} to="/research" search={{ view: "evidence", q: item.title, entityType: item.kind === "branch" ? "branch" : undefined, entityId: item.kind === "branch" ? item.id : undefined }}>{children}</Link>;
+}
+
+function ClaimRecord({ claimId }: { claimId: string }) {
+  const query = useQuery({ queryKey: ["claim", claimId], queryFn: () => fetchClaim(claimId) });
+  if (query.isPending) return <p role="status">جارٍ فتح الادعاء…</p>;
+  if (query.error || !query.data) return <p role="alert">تعذر فتح الادعاء. <button className="inline-link" type="button" onClick={() => void query.refetch()}>إعادة المحاولة</button></p>;
+  const claim = query.data;
+  return <section className="search-claim-record"><h2>{claim.notesAr || claim.predicate}</h2><p>{claim.predicate} · {claim.status}</p><Link className="inline-link" to="/research" search={{ view: "evidence", entityType: claim.subjectType === "family" ? "family" : "person", entityId: claim.subjectId }}>افتح سياق الادعاء في البحث</Link><h3>أدلة الادعاء</h3>{claim.evidence.length ? claim.evidence.map((evidence) => <p key={evidence.id}>{evidence.evidenceNoteAr || evidence.relation} {evidence.sourceId ? <Link className="inline-link" to="/sources" search={{ sourceId: evidence.sourceId }}>فتح المصدر</Link> : null}</p>) : <p>لا يوجد دليل مرتبط بهذا الادعاء.</p>}</section>;
 }

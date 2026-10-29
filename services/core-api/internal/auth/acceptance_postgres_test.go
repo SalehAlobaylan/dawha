@@ -1,11 +1,62 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
 )
+
+func TestMeReportsCurrentRolesWithoutChangingThem(t *testing.T) {
+	fixture := testsupport.New(t)
+	service := NewService(fixture.Pool())
+	password := fixture.Unique("password")
+	user, err := service.Register(fixture.Ctx(), fixture.Email(), "قارئ الصلاحيات", password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := service.Login(fixture.Ctx(), user.Email, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() []Role {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		request.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+		recorder := httptest.NewRecorder()
+		(Handler{Service: service}).Me(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("me = %d: %s", recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			User  User   `json:"user"`
+			Roles []Role `json:"roles"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.User.ID != user.ID {
+			t.Fatal("session user changed")
+		}
+		if recorder.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatal("role response must not be cached")
+		}
+		return payload.Roles
+	}
+	if roles := read(); len(roles) != 1 || roles[0] != RoleRegistered {
+		t.Fatalf("registered roles = %v", roles)
+	}
+	fixture.Exec(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'researcher')`, user.ID)
+	if roles := read(); len(roles) != 2 || roles[1] != RoleResearcher {
+		t.Fatalf("updated roles = %v", roles)
+	}
+	if count := fixture.Count(`SELECT count(*) FROM user_roles WHERE user_id = $1`, user.ID); count != 2 {
+		t.Fatal("reading session changed roles")
+	}
+}
 
 // The register -> login -> session -> revoke journey, against real
 // PostgreSQL.

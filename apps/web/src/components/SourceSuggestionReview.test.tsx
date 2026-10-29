@@ -280,3 +280,99 @@ it("merges selected pending occurrences with their revisions", async () => {
   const mergeRegion = vi.mocked(api.mergeSourceTreeSuggestions).mock.calls[0][1].region;
   expect(mergeRegion.height).toBeCloseTo(0.3, 9);
 });
+
+it("lets a researcher browse names beyond the first 200 without making decisions", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.mocked(api.fetchNameJudgeConfig).mockResolvedValue({ mode: "off", available: false, sample: 0, imageEnabled: false });
+  const firstPage = Array.from({ length: 200 }, (_, index) => ({ ...baseSuggestion, id: `page-one-${index}` }));
+  vi.mocked(api.fetchSourceTreeSuggestions).mockImplementation(async (_file, status, _limit, offset = 0) => status === "suggested" ? offset === 0 ? firstPage as never : [{ ...baseSuggestion, id: "page-two-1" }] as never : []);
+  vi.mocked(api.fetchNameReviewSummary).mockResolvedValue({ total: 201, pending: 201, deferred: 0, accepted: 0, corrected: 0, rejected: 0, decided: 0, superseded: 0, decisionEvents: 0 });
+  vi.mocked(api.fetchSourceSuggestionAccuracy).mockResolvedValue({ total: 0, measurable: false } as never);
+  vi.mocked(api.fetchSourcePagePreview).mockRejectedValue(new Error("no preview"));
+  vi.mocked(api.fetchSourceSuggestionCrop).mockRejectedValue(new Error("no crop"));
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  await act(async () => root!.render(<SourceSuggestionReview fileId="many-names" onClose={() => {}} />));
+  const loadMore = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("تحميل المزيد من الأسماء"));
+  expect(loadMore).toBeDefined();
+  const decisionsBefore = vi.mocked(api.decideSourceTreeSuggestion).mock.calls.length;
+  await act(async () => loadMore!.click());
+  expect(api.fetchSourceTreeSuggestions).toHaveBeenCalledWith("many-names", "suggested", 200, 200);
+  expect(host.querySelector(".name-bench-stats")?.textContent).toContain("201");
+  expect(vi.mocked(api.decideSourceTreeSuggestion).mock.calls.length).toBe(decisionsBefore);
+});
+
+async function mountCropReview() {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  vi.stubGlobal("ResizeObserver", class {
+    callback: () => void;
+    constructor(callback: () => void) { this.callback = callback; }
+    observe(node: HTMLElement) { Object.defineProperties(node, { clientWidth: { value: 324, configurable: true }, clientHeight: { value: 224, configurable: true } }); this.callback(); }
+    disconnect() {}
+  });
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:fixture", revokeObjectURL: () => {} });
+  vi.mocked(api.fetchNameJudgeConfig).mockResolvedValue({ mode: "off", available: false, sample: 0, imageEnabled: false });
+  vi.mocked(api.fetchSourceTreeSuggestions).mockImplementation(async (_file, status) => status === "suggested" ? [{ ...baseSuggestion, id: "crop-first" }, { ...baseSuggestion, id: "crop-next" }] as never : []);
+  vi.mocked(api.fetchSourceSuggestionAccuracy).mockResolvedValue({ total: 0, measurable: false } as never);
+  vi.mocked(api.fetchSourcePagePreview).mockResolvedValue(new Blob());
+  vi.mocked(api.fetchSourceSuggestionCrop).mockResolvedValue({ tight: new Blob(), context: new Blob(), review: new Blob(), geometry: { pageWidth: 768, pageHeight: 1138, tightRegion: { x: .3, y: .3, width: .2, height: .1 }, contextRegion: { x: .7, y: .4, width: .01, height: .02 }, reviewRegion: { x: .4, y: .5, width: .02, height: .04 }, fragment: true } });
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  await act(async () => root!.render(<SourceSuggestionReview fileId="crop-review" onClose={() => {}} />));
+}
+
+it("fits at source scale, permits zooming out, and resets zoom for the next name", async () => {
+  await mountCropReview();
+  const loadImage = async (width: number, height: number) => {
+    const image = host.querySelector<HTMLImageElement>(".name-bench-crop-image")!;
+    Object.defineProperties(image, { naturalWidth: { value: width, configurable: true }, naturalHeight: { value: height, configurable: true } });
+    await act(async () => image.dispatchEvent(new Event("load")));
+  };
+  await loadImage(600, 300);
+  expect(host.querySelector(".name-bench-crop-frame")?.getAttribute("style")).toContain("300px");
+  expect(host.querySelector(".name-bench-zoom")?.textContent).toContain("50");
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="تصغير القصاصة"]')!.click());
+  expect(host.querySelector(".name-bench-crop-frame")?.getAttribute("style")).toContain("150px");
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="تكبير القصاصة"]')!.click());
+  const next = [...host.querySelectorAll("button")].find((button) => button.textContent?.trim() === "التالي")!;
+  await act(async () => next.click());
+  await loadImage(100, 50);
+  expect(host.querySelector(".name-bench-crop-frame")?.getAttribute("style")).toContain("100px");
+  expect(host.querySelector(".name-bench-zoom")?.textContent).toContain("100");
+});
+
+it("marks the crop-local context and draws repair bounds without saving a decision", async () => {
+  await mountCropReview();
+  const contextRect = host.querySelector('.name-bench-context .source-spot-marker rect:not(.source-spot-halo)')!;
+  expect(contextRect.getAttribute("x")).toBe("0.7");
+  expect(host.querySelector(".name-bench-fragment-warning")?.textContent).toContain("الموضع صغير جداً");
+  expect(host.querySelector(".name-bench-assist")?.textContent ?? host.textContent).toContain("موضع يحتاج تصحيحاً");
+  const button = [...host.querySelectorAll(".name-bench-fragment-warning button")][0] as HTMLButtonElement;
+  await act(async () => button.click());
+  const frame = host.querySelector<HTMLDivElement>(".name-bench-map-frame")!;
+  frame.setPointerCapture = vi.fn();
+  vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 20, top: 40, width: 200, height: 300 } as DOMRect);
+  const decisionsBefore = vi.mocked(api.decideSourceTreeSuggestion).mock.calls.length;
+  await act(async () => { frame.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 70 })); frame.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 80, clientY: 130 })); frame.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); });
+  const fields = [...host.querySelectorAll<HTMLInputElement>(".name-bench-region-grid input")];
+  expect(fields.map((field) => Number(field.value))).toEqual([10, 10, 20, 20]);
+  const save = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "حفظ الحدود")!;
+  expect(save.disabled).toBe(true);
+  expect(vi.mocked(api.decideSourceTreeSuggestion).mock.calls.length).toBe(decisionsBefore);
+});
+
+it("opens a deferred-work shortcut in the deferred queue on the first request", async () => {
+ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+ vi.stubGlobal("matchMedia", () => ({ matches: true }));
+ vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+ vi.mocked(api.fetchSourceTreeSuggestions).mockClear().mockResolvedValue([]);
+ vi.mocked(api.fetchSourceSuggestionAccuracy).mockResolvedValue({ total: 0, measurable: false } as never);
+ vi.mocked(api.fetchNameJudgeConfig).mockResolvedValue({ mode: "off", available: false, sample: 0, imageEnabled: false });
+ vi.mocked(api.fetchReadingCapabilities).mockRejectedValue(new Error("unavailable"));
+ host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+ await act(async () => root!.render(<SourceSuggestionReview fileId="deferred-chart" initialQueueMode="deferred" onClose={() => {}} />));
+ expect(api.fetchSourceTreeSuggestions).toHaveBeenCalledWith("deferred-chart", "deferred", 200, 0);
+ expect(api.fetchSourceTreeSuggestions).not.toHaveBeenCalledWith("deferred-chart", "suggested", expect.any(Number), expect.any(Number));
+ expect(host.textContent).toContain("لا توجد مواضع مؤجلة");
+});

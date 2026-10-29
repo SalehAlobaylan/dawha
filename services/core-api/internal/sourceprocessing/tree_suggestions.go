@@ -341,7 +341,7 @@ func (s *Service) ListSuggestions(ctx context.Context, sourceFileID string, acto
 		       COALESCE(sg.source_page_evidence_id::text, ''),
 		       sg.review_revision, sg.geometry_revision, sg.superseded_at IS NOT NULL
 		FROM source_tree_suggestions sg
-		WHERE sg.source_file_id = $1 AND sg.status = ANY($2)
+		WHERE sg.source_file_id = $1 AND sg.status = ANY($2) AND NOT sg.localisation_pending
 	`
 	if historyOnly {
 		query += ` AND (sg.status <> 'suggested' OR sg.superseded_at IS NOT NULL)`
@@ -903,7 +903,7 @@ func (s *Service) getSuggestion(ctx context.Context, suggestionID uuid.UUID) (Su
 		       COALESCE(sg.source_page_evidence_id::text, ''),
 		       sg.review_revision, sg.geometry_revision, sg.superseded_at IS NOT NULL
 		FROM source_tree_suggestions sg
-		WHERE sg.id = $1
+		WHERE sg.id = $1 AND NOT sg.localisation_pending
 	`, suggestionID).Scan(&view.ID, &view.OccurrenceID, &view.PageNumber, &view.Kind,
 		&view.SuggestedTextAR, &view.DecidedTextAR, &regionBytes, &alternativesBytes, &view.Confidence, &view.ViewCount,
 		&view.ReadingMethod, &view.ReadingModel, &view.Status, &view.DecidedBy, &view.DecidedAt,

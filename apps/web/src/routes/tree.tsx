@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Focus, GitCompareArrows, GitFork, History, Link2, LoaderCircle, LockKeyhole, Maximize2, Plus, Send, Share2, SlidersHorizontal, Tag, Trash2, UserPlus } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { addPerson, addPersonAlias, addRelationship, ApiError, createTree, deletePersonAlias, demoTreeDetail, fetchPublicTrees, fetchTree, fetchTreeVersion, listPersonAliases, publishTree, updateRelationship } from "../lib/api";
+import { addPerson, addPersonAlias, addRelationship, ApiError, createTree, deletePersonAlias, demoTreeDetail, fetchPublishedTrees, fetchWorkspaceTrees, fetchTree, fetchTreeVersion, listPersonAliases, publishTree, updateRelationship } from "../lib/api";
 import { filterUnresolvedRelationships, focusLineage } from "../lib/tree-view";
 import { EvidenceMiniList, ResearchGraph } from "../components/ResearchGraph";
 import { CollaborationPanel } from "../components/CollaborationPanel";
@@ -15,9 +15,10 @@ import type { AddPersonInput, AddRelationshipInput, PersonAlias, PersonAliasInpu
 export type TreePageProps = {
   routeTreeId?: string;
   routeVersionId?: string;
+  browseMode?: boolean;
 };
 
-export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
+export function TreePage({ routeTreeId, routeVersionId, browseMode = false }: TreePageProps = {}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [selectedPersonId, setSelectedPersonId] = useState("");
@@ -48,7 +49,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   const [aliasReason, setAliasReason] = useState("");
   const [message, setMessage] = useState("");
 
-  const treesQuery = useQuery({ queryKey: ["trees"], queryFn: fetchPublicTrees });
+  const treesQuery = useQuery({ queryKey: ["trees", browseMode ? "public" : "workspace"], queryFn: browseMode ? fetchPublishedTrees : fetchWorkspaceTrees });
   const availableTrees = treesQuery.data ?? [];
   const treeId = routeTreeId ?? availableTrees[0]?.id ?? "";
   const latestQuery = useQuery({
@@ -114,7 +115,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
   }, [selectedVersion.id, treeId]);
 
   const navigateToTreeVersion = (nextTreeId: string, nextVersionId: string) => {
-    void navigate({ to: "/tree/$treeId/versions/$versionId", params: { treeId: nextTreeId, versionId: nextVersionId } });
+    void navigate({ to: "/tree/$treeId/versions/$versionId", params: { treeId: nextTreeId, versionId: nextVersionId }, search: { from: browseMode ? "explore" : undefined } });
   };
 
   const updateDetail = async (updated: TreeDetail) => {
@@ -294,7 +295,9 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
     setSelectedPersonId("");
     setFocusedPersonId(null);
     setMessage("");
-    void navigate({ to: "/tree/$treeId", params: { treeId: nextTreeId } });
+    const published = browseMode ? availableTrees.find((tree) => tree.id === nextTreeId) : undefined;
+    if (published) navigateToTreeVersion(nextTreeId, published.latestVersionId);
+    else void navigate({ to: "/tree/$treeId", params: { treeId: nextTreeId } });
   };
 
   return (
@@ -304,12 +307,14 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
         title={loadedDetail?.tree.name ?? (resourcePending ? "جارٍ فتح الشجرة" : "شجرة بحث")}
         description={loadedDetail?.tree.description || "افتح علاقة لترى من أين جاءت، وما الذي ما زال غير محسوم."}
       />
+      <Link className="tree-library-back inline-link" to={browseMode ? "/explore" : "/tree"}><ArrowLeft size={15} /> {browseMode ? "تصفح الأشجار" : "أشجاري"}</Link>
       <div className="tree-page-toolbar">
-        <div className="toolbar-breadcrumb"><span>الأشجار</span><b>/</b><strong>{loadedDetail?.tree.name ?? (resourcePending ? "جارٍ الفتح" : "شجرة بحث")}</strong></div>
+        <div className="toolbar-breadcrumb"><span>{browseMode ? "تصفح الأشجار" : "أشجاري"}</span><b>/</b><strong>{loadedDetail?.tree.name ?? (resourcePending ? "جارٍ الفتح" : "شجرة بحث")}</strong></div>
         <label className="tree-selector-label">الملف الحالي<select className="tree-selector" aria-label="اختيار الشجرة" value={treeId} onChange={(event) => selectTree(event.target.value)}>
           {availableTrees.length > 0 ? availableTrees.map((tree) => <option key={tree.id} value={tree.id}>{tree.name} · {tree.latestState === "published" ? "منشورة" : "مسودة"}</option>) : <option value={treeId}>{loadedDetail?.tree.name ?? "شجرة بحث"}</option>}
         </select></label>
         <div className="toolbar-button-group">
+          <Link className="primary-button" to="/import"><Plus size={15} /> استيراد مشجر</Link>
           <button className="secondary-button" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> شجرة جديدة</button>
           <button className="secondary-button" type="button" onClick={() => setEditOpen((open) => !open)} disabled={!canEdit}><UserPlus size={15} /> تحرير المسودة</button>
           <button className="secondary-button" type="button" onClick={() => setCollaborationOpen((open) => !open)} disabled={detail.tree.id === "tree-demo"}><Share2 size={15} /> مشاركة</button>
@@ -457,7 +462,7 @@ export function TreePage({ routeTreeId, routeVersionId }: TreePageProps = {}) {
             {detail.versions.map((version) => {
               const current = version.id === selectedVersion.id;
               const latest = version.id === detail.tree.latestVersionId;
-              return <Link to="/tree/$treeId/versions/$versionId" params={{ treeId, versionId: version.id }} className={`version-item${current ? " version-item-current" : ""}`} key={version.id} onClick={() => { setEditOpen(false); setMessage(""); }} aria-current={current ? "true" : undefined} role="listitem">
+              return <Link to="/tree/$treeId/versions/$versionId" params={{ treeId, versionId: version.id }} search={{ from: browseMode ? "explore" : undefined }} className={`version-item${current ? " version-item-current" : ""}`} key={version.id} onClick={() => { setEditOpen(false); setMessage(""); }} aria-current={current ? "true" : undefined} role="listitem">
                 <span>v{version.number}</span><div><strong>{version.state === "draft" ? "مسودة حالية" : current ? "نسخة معاينة" : latest ? "النشر الحالي" : "نسخة منشورة"}</strong><small>{version.publicationNote || "دون ملاحظة نشر"}</small></div>
               </Link>;
             })}

@@ -1,20 +1,21 @@
-import { createRootRoute, createRoute } from "@tanstack/react-router";
+import { createRootRoute, createRoute, redirect } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
-import { ContradictionsPage } from "./routes/contradictions";
-import { DictionaryPage } from "./components/DictionaryPage";
-import { EntityResolutionPage } from "./routes/entity-resolution";
-import { JobsPage } from "./components/JobsPage";
-import { SearchPage } from "./components/SearchPage";
+import { DiscoveryPage } from "./routes/discovery";
 import { HomePage } from "./routes/index";
 import { InvitationPage } from "./routes/invitation";
 import { LoginPage } from "./routes/login";
 import { PlacesPage } from "./routes/places";
-import { QuestionsPage } from "./routes/questions";
-import { ResearchPage } from "./routes/research";
+import { ResearchHubPage } from "./routes/research-hub";
+import { parseResearchSearch, parseDiscoverySearch } from "./lib/research-navigation";
 import { ResearchWorkspacePage } from "./routes/research-workspace";
 import { SourcesPage } from "./routes/sources";
-import { TreePage } from "./routes/tree";
 import { TreeByIdRoute, TreeVersionRoute } from "./routes/tree-route";
+import { ChartImportPage } from "./routes/chart-import";
+import { TreeLibraryPage } from "./routes/tree-library";
+import { parseLibrarySearch, parseNameReviewSearch } from "./lib/library-search";
+import { NameReviewPage } from "./routes/name-review";
+import { ExplorePage } from "./routes/explore";
+import { ChartOverviewPage } from "./routes/chart-overview";
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -29,42 +30,49 @@ const indexRoute = createRoute({
 const treeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tree",
-  component: TreePage,
+  validateSearch: parseLibrarySearch,
+  component: TreeLibraryPage,
 });
+
+const exploreRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/explore",
+  validateSearch: (search: Record<string, unknown>): { q?: string } => ({ q: typeof search.q === "string" ? search.q || undefined : undefined }),
+  component: ExplorePage,
+});
+
+const parseTreeOrigin = (search: Record<string, unknown>): { from?: "explore" } => ({ from: search.from === "explore" ? "explore" : undefined });
+
+const namesRoute = createRoute({
+  getParentRoute: () => rootRoute, path: "/names", validateSearch: parseLibrarySearch,
+  beforeLoad: ({ search }) => { throw redirect({ to: "/tree", search: { q: search.q, view: "review", queue: search.queue }, replace: true }); },
+});
+const legacyNameReviewRoute = createRoute({
+  getParentRoute: () => rootRoute, path: "/names/$fileId", validateSearch: parseNameReviewSearch,
+  beforeLoad: ({ params, search }) => { throw redirect({ to: "/tree/charts/$fileId/names", params, search, replace: true }); },
+});
+const chartOverviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tree/charts/$fileId", component: ChartOverviewPage });
+const nameReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tree/charts/$fileId/names", validateSearch: parseNameReviewSearch, component: NameReviewPage });
 
 const treeByIdRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tree/$treeId",
+  validateSearch: parseTreeOrigin,
   component: TreeByIdRoute,
 });
 
 const treeVersionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/tree/$treeId/versions/$versionId",
+  validateSearch: parseTreeOrigin,
   component: TreeVersionRoute,
 });
-
-type ResearchSearch = {
-  entityType?: "person" | "family" | "branch";
-  entityId?: string;
-  treeId?: string;
-  treeVersionId?: string;
-};
-
-function parseResearchSearch(search: Record<string, unknown>): ResearchSearch {
-  const result: ResearchSearch = {};
-  if (search.entityType === "person" || search.entityType === "family" || search.entityType === "branch") result.entityType = search.entityType;
-  if (typeof search.entityId === "string") result.entityId = search.entityId;
-  if (typeof search.treeId === "string") result.treeId = search.treeId;
-  if (typeof search.treeVersionId === "string") result.treeVersionId = search.treeVersionId;
-  return result;
-}
 
 const researchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/research",
   validateSearch: parseResearchSearch,
-  component: ResearchPage,
+  component: ResearchHubPage,
 });
 
 const researchWorkspaceRoute = createRoute({
@@ -77,19 +85,36 @@ const researchWorkspaceRoute = createRoute({
 const entityResolutionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/entity-resolution",
-  component: EntityResolutionPage,
+  validateSearch: parseResearchSearch,
+  beforeLoad: ({ search }) => { throw redirect({ to: "/research", search: { ...search, view: "review", review: "identity" }, replace: true }); },
 });
 
 const contradictionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/contradictions",
-  component: ContradictionsPage,
+  validateSearch: parseResearchSearch,
+  beforeLoad: ({ search }) => { throw redirect({ to: "/research", search: { ...search, view: "review", review: "contradictions" }, replace: true }); },
 });
 
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sources",
+  validateSearch: (search: Record<string, unknown>): { sourceId?: string; view?: "processing" } => ({ sourceId: typeof search.sourceId === "string" ? search.sourceId : undefined, view: search.view === "processing" ? "processing" : undefined }),
   component: SourcesPage,
+});
+
+const chartImportRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/import",
+  validateSearch: (search: Record<string, unknown>): { sourceId?: string; fileId?: string; draftId?: string } => {
+    const sourceId = typeof search.sourceId === "string" && search.sourceId ? search.sourceId : undefined;
+    return {
+      sourceId,
+      fileId: sourceId && typeof search.fileId === "string" && search.fileId ? search.fileId : undefined,
+      draftId: sourceId && typeof search.draftId === "string" && search.draftId ? search.draftId : undefined,
+    };
+  },
+  component: ChartImportPage,
 });
 
 const placesRoute = createRoute({
@@ -101,25 +126,28 @@ const placesRoute = createRoute({
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/questions",
-  component: QuestionsPage,
+  validateSearch: parseResearchSearch,
+  beforeLoad: ({ search }) => { throw redirect({ to: "/research", search: { ...search, view: undefined }, replace: true }); },
 });
 
 const dictionaryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dictionary",
-  component: DictionaryPage,
+  validateSearch: parseDiscoverySearch,
+  beforeLoad: ({ search }) => { throw redirect({ to: "/search", search: { ...search, view: "index" }, replace: true }); },
 });
 
 const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/search",
-  component: SearchPage,
+  validateSearch: parseDiscoverySearch,
+  component: DiscoveryPage,
 });
 
 const jobsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/jobs",
-  component: JobsPage,
+  beforeLoad: () => { throw redirect({ to: "/sources", search: { view: "processing" }, replace: true }); },
 });
 
 const loginRoute = createRoute({
@@ -137,6 +165,7 @@ const invitationRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   treeRoute,
+  exploreRoute,
   treeByIdRoute,
   treeVersionRoute,
   researchRoute,
@@ -144,6 +173,11 @@ export const routeTree = rootRoute.addChildren([
   entityResolutionRoute,
   contradictionsRoute,
   sourcesRoute,
+  chartImportRoute,
+  namesRoute,
+  legacyNameReviewRoute,
+  chartOverviewRoute,
+  nameReviewRoute,
   placesRoute,
   questionsRoute,
   dictionaryRoute,

@@ -21,6 +21,22 @@ type createSourceTreeDraftRequest struct {
 	TitleAR string `json:"titleAr"`
 }
 
+func (h sourceProcessingHandler) chartLibrary(w http.ResponseWriter, r *http.Request) {
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	items, err := h.Service.ListChartLibrary(r.Context(), actorID)
+	if err != nil {
+		writeSourceProcessingError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 type judgeSourceSuggestionRequest struct {
 	Candidates []sourceprocessing.JudgeCandidate `json:"candidates"`
 }
