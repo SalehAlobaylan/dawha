@@ -287,7 +287,7 @@ the file to copy to `.env`.
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | compose, the migration runner, `make` | which database |
 | `DATABASE_URL` | the API, every worker, the Go suite | overrides the URL derived from the three above |
 | `COMPOSE_PROJECT_NAME` | every `make` target that touches Docker | which container to reuse |
-| `VITE_API_URL` | the web build | the API the browser talks to |
+| `VITE_API_URL` | the web build | the API the browser talks to. In dev, unset means the app falls back to `http://localhost:8080`, the documented local default; in the production bundle, unset means same-origin (e.g. `vite preview` proxies `/api` to `localhost:8080`, or your own reverse proxy) — the bundle never invents an API host |
 | `WEB_ORIGIN` | the API | the exact origin allowed to send the session cookie |
 | `CORE_API_PORT`, `AI_RESEARCH_PORT` | the API, the E2E stack | listen ports |
 | `AI_RESEARCH_URL` | the API, the workers | where the AI service is |

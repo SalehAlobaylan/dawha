@@ -2,6 +2,7 @@ package geography
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -51,6 +52,53 @@ func TestValidateInput(t *testing.T) {
 	}
 	if _, err := validateInput(MapInput{Viewport: &Viewport{MinLongitude: 10, MaxLongitude: 30, MinLatitude: 0, MaxLatitude: 10}}); err != nil {
 		t.Fatalf("a well-formed viewport was refused: %v", err)
+	}
+}
+
+// A region is an area the platform drew, so its outline has to survive the trip
+// from PostGIS as a closed ring. The cap exists because a ring finer than the
+// record's precision is payload the bounded response cannot justify; the test
+// pins that the cap is a uniform sample of the whole outline rather than a
+// truncation that would silently cut the region in half.
+func TestDecodeRegionRingKeepsAClosedCappedOutline(t *testing.T) {
+	ring := make([][]float64, 0, 301)
+	for index := 0; index < 300; index++ {
+		ring = append(ring, []float64{float64(index), float64(index % 7)})
+	}
+	ring = append(ring, ring[0])
+	raw, err := json.Marshal(map[string]any{"type": "Polygon", "coordinates": [][][]float64{ring}})
+	if err != nil {
+		t.Fatalf("marshal polygon: %v", err)
+	}
+	points := decodeRegionRing(string(raw))
+	if len(points) != MaxRegionRingVertices {
+		t.Fatalf("capped ring = %d vertices, want %d", len(points), MaxRegionRingVertices)
+	}
+	if points[0] != points[len(points)-1] {
+		t.Fatal("the capped ring is not closed")
+	}
+	// A uniform sample keeps the far end of the outline; a head-only truncation
+	// would stop near vertex 159 and make the region look smaller than it is.
+	if points[len(points)-2][0] < 280 {
+		t.Fatalf("the cap dropped the end of the ring: penultimate longitude = %v", points[len(points)-2][0])
+	}
+
+	if got := decodeRegionRing(""); got != nil {
+		t.Fatalf("an empty geometry produced %v, want nil", got)
+	}
+	if got := decodeRegionRing("{"); got != nil {
+		t.Fatalf("malformed JSON produced %v, want nil", got)
+	}
+	if got := decodeRegionRing(`{"type":"Polygon","coordinates":[[[1,2],[3,4]]]}`); got != nil {
+		t.Fatalf("a two-vertex ring produced %v, want nil", got)
+	}
+	open := decodeRegionRing(`{"type":"Polygon","coordinates":[[[1,2],[3,4],[5,6]]]}`)
+	if len(open) != 4 || open[0] != open[3] {
+		t.Fatalf("an open ring was not closed: %v", open)
+	}
+	multi := decodeRegionRing(`{"type":"MultiPolygon","coordinates":[[[[10,20],[11,20],[11,21],[10,20]]]]}`)
+	if len(multi) != 4 || multi[0] != [2]float64{10, 20} {
+		t.Fatalf("a multipolygon outer ring was not read: %v", multi)
 	}
 }
 

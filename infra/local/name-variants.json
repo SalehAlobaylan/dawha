@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "source": "Wikidata SPARQL skos:altLabel (query.wikidata.org), Arabic alternates only",
+    "license": "CC0 — all Wikidata structured data is released to the public domain",
+    "endpoint": "https://query.wikidata.org/sparql",
+    "fetchedAt": "2026-11-08",
+    "provenance": "live",
+    "generator": "infra/local/build-name-variants.py",
+    "checksumSha256": "d14b143d47c74129cf238500c4328927f5255295d010334351673401891c6654",
+    "note": "Descriptive altLabels (عاصمة السعودية…) are excluded; see DESCRIPTIVE in the generator. GeoNames SA.zip + alternateNamesv2 (CC-BY-4.0, isHistoric → name_type) is the documented fallback, not fetched here."
+  },
+  "variants": [
+    {
+      "canonical": "الأحساء",
+      "qid": "Q27136",
+      "name_ar": "هفوف",
+      "normalized": "هفوف",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "الرياض",
+      "qid": "Q3692",
+      "name_ar": "اليمامة",
+      "normalized": "اليمامه",
+      "name_type": "historical"
+    },
+    {
+      "canonical": "الرياض",
+      "qid": "Q3692",
+      "name_ar": "رياض",
+      "normalized": "رياض",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "الطائف",
+      "qid": "Q182640",
+      "name_ar": "طائف",
+      "normalized": "طائف",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "العلا",
+      "qid": "Q27242",
+      "name_ar": "محافظه العلا",
+      "normalized": "محافظه العلا",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "العلا",
+      "qid": "Q27242",
+      "name_ar": "مدينة العلا",
+      "normalized": "مدينه العلا",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "المدينة المنورة",
+      "qid": "Q35484",
+      "name_ar": "المدينة",
+      "normalized": "المدينه",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "المدينة المنورة",
+      "qid": "Q35484",
+      "name_ar": "طيبة",
+      "normalized": "طيبه",
+      "name_type": "historical"
+    },
+    {
+      "canonical": "المدينة المنورة",
+      "qid": "Q35484",
+      "name_ar": "مدينة الرسول",
+      "normalized": "مدينه الرسول",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "المدينة المنورة",
+      "qid": "Q35484",
+      "name_ar": "مدينة رسول الله",
+      "normalized": "مدينه رسول الله",
+      "name_type": "alternative"
+    },
+    {
+      "canonical": "المدينة المنورة",
+      "qid": "Q35484",
+      "name_ar": "يثرب",
+      "normalized": "يثرب",
+      "name_type": "historical"
+    },
+    {
+      "canonical": "مكة المكرمة",
+      "qid": "Q5806",
+      "name_ar": "البلد الأمين",
+      "normalized": "البلد الامين",
+      "name_type": "historical"
+    },
+    {
+      "canonical": "مكة المكرمة",
+      "qid": "Q5806",
+      "name_ar": "أم القرى",
+      "normalized": "ام القري",
+      "name_type": "historical"
+    },
+    {
+      "canonical": "مكة المكرمة",
+      "qid": "Q5806",
+      "name_ar": "بكة",
+      "normalized": "بكه",
+      "name_type": "historical"
+    }
+  ]
+}

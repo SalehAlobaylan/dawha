@@ -30,13 +30,19 @@ describe("fetchDashboard", () => {
     vi.resetModules();
   });
 
-  it("returns the bundled demo when no API is configured at all", async () => {
-    // No API base URL is the static-preview case: there is nothing to fail, and
-    // the demo is the honest answer rather than a substitute for one.
+  it("throws rather than showing the demo when no API answers at all", async () => {
+    // Same-origin is a supported base: the module always attempts a fetch, and a
+    // network failure or an unroutable relative URL throws rather than turning
+    // into an invented dashboard. The demo appears only when the API says so,
+    // with mode: "demo" on the payload it answered.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to parse URL");
+      }),
+    );
     const { fetchDashboard } = await loadApi("");
-    const result = await fetchDashboard();
-    expect(result.mode).toBe("demo");
-    expect(result.demo).toBe(true);
+    await expect(fetchDashboard()).rejects.toThrow();
   });
 
   it("throws rather than substituting the demo when the request fails", async () => {

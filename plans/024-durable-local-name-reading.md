@@ -44,7 +44,8 @@ Do not add another model call merely to make the pipeline longer.
 - `internal/httpapi/source_processing_handler.go:438–449` calls
   `h.Service.ReadSuggestions(...)` and waits before returning 201.
 - `cmd/api/main.go:118–121` sets `WriteTimeout: 15 * time.Second`.
-  `apps/web/src/lib/api.ts:2308` waits 300 seconds for this operation;
+  `apps/web/src/lib/api.ts` (`fetchSourceSuggestionCandidates`) waits 120
+  seconds for this on-demand candidates call;
   `chart_vision_client.go:106` permits 115 seconds per provider call.
 - `tree_suggestions.go:746` loops over all pages and saves suggestions only
   after `ReadNamesOnPage` succeeds. In `name_reading.go:203–211`, a non-nil reader

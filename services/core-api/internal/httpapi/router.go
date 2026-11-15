@@ -11,6 +11,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/contradiction"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/datahygiene"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/evidence"
@@ -19,6 +20,7 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/health"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/identity"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/pairing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/researchagent"
@@ -104,6 +106,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	entityResolutionHandler := entityResolutionHandler{Service: entityResolutionService, Auth: authService}
 	geographyService := geography.NewService(dependencies.DB)
 	geographyHandler := geographyHandler{Service: geographyService, Auth: authService}
+	dataHygieneService := datahygiene.NewService(dependencies.DB)
+	dataHygieneHandler := dataHygieneHandler{Service: dataHygieneService, Auth: authService}
+	pairingService := pairing.NewService(dependencies.DB)
+	pairingHandler := pairingHandler{Service: pairingService, Auth: authService}
 	searchService := search.NewService(dependencies.DB, dependencies.AI)
 	searchHandler := searchHandler{Service: searchService, Auth: authService}
 	researchService := research.NewService(dependencies.DB, dependencies.AI).WithMetrics(dependencies.Metrics)
@@ -362,8 +368,24 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/places", identityHandler.listPlaces)
 	mux.HandleFunc("POST /api/v1/places", identityHandler.createPlace)
 	mux.HandleFunc("GET /api/v1/places/{placeID}", identityHandler.getPlace)
+	// The dossier is read through the same policy the marker layer answers: the
+	// route is a place read, and the readable-place rule is in the service.
+	mux.HandleFunc("GET /api/v1/places/{placeID}/evidence", geographyHandler.placeEvidence)
+	// The subject layer's read: one person's documented مسالِك, policy-scoped
+	// exactly like the map layers they overlay.
+	mux.HandleFunc("GET /api/v1/persons/{personID}/movement", geographyHandler.personMovement)
 	mux.HandleFunc("PATCH /api/v1/places/{placeID}", identityHandler.updatePlace)
 	mux.HandleFunc("DELETE /api/v1/places/{placeID}", identityHandler.deletePlace)
+	// The license dashboard sits beside the places it audits: its licenseless
+	// rows are the same external imports that landed on the map.
+	mux.HandleFunc("GET /api/v1/admin/data-hygiene", dataHygieneHandler.report)
+	// The pairing lane: proposals are moderator-readable, decisions are
+	// moderator-only, and the crosswalk is a plain policy read (see service).
+	mux.HandleFunc("GET /api/v1/admin/place-pairings", pairingHandler.listCandidates)
+	mux.HandleFunc("POST /api/v1/admin/place-pairings/{candidateID}/decide", pairingHandler.decideCandidate)
+	mux.HandleFunc("POST /api/v1/admin/place-pairings/{candidateID}/reopen", pairingHandler.reopenCandidate)
+	mux.HandleFunc("GET /api/v1/admin/place-pairings/{candidateID}/history", pairingHandler.history)
+	mux.HandleFunc("GET /api/v1/places/{placeID}/external-ids", pairingHandler.externalIDs)
 	mux.HandleFunc("GET /api/v1/entity-relationships", identityHandler.listRelationships)
 	mux.HandleFunc("POST /api/v1/entity-relationships", identityHandler.createRelationship)
 	mux.HandleFunc("GET /api/v1/entity-relationships/{relationshipID}", identityHandler.getRelationship)

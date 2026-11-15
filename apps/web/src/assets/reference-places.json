@@ -1,0 +1,38 @@
+{
+  "meta": {
+    "source": "Wikidata SPARQL + sitelinks disambiguation (query.wikidata.org)",
+    "license": "CC0 — all Wikidata structured data is released to the public domain",
+    "fetchedAt": "2026-11-07",
+    "generator": "infra/local/build-reference-layer.py",
+    "disambiguation": "candidate items ranked by wikibase:sitelinks; namesakes were dropped",
+    "namingNotes": [
+      {
+        "caption": "الخليج العربي",
+        "qid": "Q34675",
+        "sourceLabelAr": "الخليج الفارسي"
+      }
+    ],
+    "unresolved": [
+      "جبل شار"
+    ]
+  },
+  "entries": [
+    { "label": "البحر الأحمر", "kind": "sea", "qid": "Q23406", "longitude": 38.0, "latitude": 22.0, "placement": "wikidata" },
+    { "label": "الخليج العربي", "kind": "sea", "qid": "Q34675", "longitude": 52.0, "latitude": 26.0, "placement": "wikidata" },
+    { "label": "بحر العرب", "kind": "sea", "qid": "Q58705", "longitude": 56.3, "latitude": 15.1, "placement": "editorial" },
+    { "label": "جبل أحد", "kind": "mountain", "qid": "Q1436040", "longitude": 39.614, "latitude": 24.51, "placement": "wikidata" },
+    { "label": "جبل طويق", "kind": "mountain", "qid": "Q3071063", "longitude": 45.252, "latitude": 19.914, "placement": "wikidata" },
+    { "label": "جبال السروات", "kind": "mountain", "qid": "Q2466169", "longitude": 42.368, "latitude": 18.267, "placement": "wikidata" },
+    { "label": "مكة", "kind": "city", "qid": "Q5806", "longitude": 39.826, "latitude": 21.423, "placement": "wikidata" },
+    { "label": "المدينة", "kind": "city", "qid": "Q35484", "longitude": 39.61, "latitude": 24.47, "placement": "wikidata" },
+    { "label": "الطائف", "kind": "city", "qid": "Q182640", "longitude": 40.417, "latitude": 21.267, "placement": "wikidata" },
+    { "label": "تبوك", "kind": "city", "qid": "Q244232", "longitude": 36.579, "latitude": 28.397, "placement": "wikidata" },
+    { "label": "الدمام", "kind": "city", "qid": "Q160320", "longitude": 50.1, "latitude": 26.433, "placement": "wikidata" },
+    { "label": "حائل", "kind": "city", "qid": "Q675568", "longitude": 41.683, "latitude": 27.517, "placement": "wikidata" },
+    { "label": "نجران", "kind": "city", "qid": "Q27174", "longitude": 44.132, "latitude": 17.492, "placement": "wikidata" },
+    { "label": "الهفوف", "kind": "city", "qid": "Q27136", "longitude": 49.6, "latitude": 25.361, "placement": "wikidata" },
+    { "label": "الرس", "kind": "city", "qid": "Q1878991", "longitude": 43.5, "latitude": 25.867, "placement": "wikidata" },
+    { "label": "البصرة", "kind": "city", "qid": "Q48195", "longitude": 47.81, "latitude": 30.515, "placement": "wikidata" },
+    { "label": "الكوفة", "kind": "city", "qid": "Q186234", "longitude": 44.4, "latitude": 32.03, "placement": "wikidata" }
+  ]
+}

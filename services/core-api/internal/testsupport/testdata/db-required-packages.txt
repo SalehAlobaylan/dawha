@@ -2,6 +2,7 @@ github.com/SalehAlobaylan/dawha/services/core-api/cmd/name-eval
 github.com/SalehAlobaylan/dawha/services/core-api/internal/analysisworker
 github.com/SalehAlobaylan/dawha/services/core-api/internal/auth
 github.com/SalehAlobaylan/dawha/services/core-api/internal/collaboration
+github.com/SalehAlobaylan/dawha/services/core-api/internal/datahygiene
 github.com/SalehAlobaylan/dawha/services/core-api/internal/dictionary
 github.com/SalehAlobaylan/dawha/services/core-api/internal/embeddingbackfill
 github.com/SalehAlobaylan/dawha/services/core-api/internal/entityresolution
@@ -13,6 +14,7 @@ github.com/SalehAlobaylan/dawha/services/core-api/internal/identity
 github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs
 github.com/SalehAlobaylan/dawha/services/core-api/internal/jobworker
 github.com/SalehAlobaylan/dawha/services/core-api/internal/questions
+github.com/SalehAlobaylan/dawha/services/core-api/internal/pairing
 github.com/SalehAlobaylan/dawha/services/core-api/internal/research
 github.com/SalehAlobaylan/dawha/services/core-api/internal/researchagent
 github.com/SalehAlobaylan/dawha/services/core-api/internal/search

@@ -9,10 +9,12 @@ import { ResearchHubPage } from "./routes/research-hub";
 import { parseResearchSearch, parseDiscoverySearch } from "./lib/research-navigation";
 import { ResearchWorkspacePage } from "./routes/research-workspace";
 import { SourcesPage } from "./routes/sources";
+import { DataHygienePage } from "./routes/data-hygiene";
 import { TreeByIdRoute, TreeVersionRoute } from "./routes/tree-route";
 import { ChartImportPage } from "./routes/chart-import";
 import { TreeLibraryPage } from "./routes/tree-library";
 import { parseLibrarySearch, parseNameReviewSearch } from "./lib/library-search";
+import { parseAtlasSearch } from "./lib/atlas";
 import { NameReviewPage } from "./routes/name-review";
 import { ExplorePage } from "./routes/explore";
 import { ChartOverviewPage } from "./routes/chart-overview";
@@ -103,6 +105,12 @@ const sourcesRoute = createRoute({
   component: SourcesPage,
 });
 
+const dataHygieneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/data-hygiene",
+  component: DataHygienePage,
+});
+
 const chartImportRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/import",
@@ -120,6 +128,7 @@ const chartImportRoute = createRoute({
 const placesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/places",
+  validateSearch: parseAtlasSearch,
   component: PlacesPage,
 });
 
@@ -173,6 +182,7 @@ export const routeTree = rootRoute.addChildren([
   entityResolutionRoute,
   contradictionsRoute,
   sourcesRoute,
+  dataHygieneRoute,
   chartImportRoute,
   namesRoute,
   legacyNameReviewRoute,

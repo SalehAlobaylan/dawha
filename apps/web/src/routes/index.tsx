@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check, GitBranch, MapPinned, Sparkles } from "lucide-react";
-import { demoDashboard, places } from "../data/demo";
+import { demoDashboard } from "../data/demo";
 import { fetchDashboard } from "../lib/api";
 import { ActivityFeed, LayerStack, OpenQuestionsPreview } from "../components/ResearchPanels";
 import { MapPreview } from "../components/MapPreview";
@@ -117,7 +117,7 @@ export function HomePage() {
 
       <TreeWorkspace data={dashboard} />
 
-      <MapPreview places={places} />
+      <MapPreview />
 
       </>}
 

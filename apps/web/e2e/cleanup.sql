@@ -85,13 +85,16 @@ CREATE TEMP TABLE synthetic_disputes ON COMMIT DROP AS
 -- 1. Rows that hang off a source, a claim or a person through a foreign key with
 --    no ON DELETE CASCADE, so they have to go before their parent does.
 DELETE FROM spatial_evidence
- WHERE source_passage_id IN (SELECT id FROM source_passages WHERE source_id IN (SELECT id FROM synthetic_sources));
+ WHERE source_passage_id IN (SELECT id FROM source_passages WHERE source_id IN (SELECT id FROM synthetic_sources))
+    OR created_by IN (SELECT id FROM synthetic_users);
 DELETE FROM geographic_associations
  WHERE source_id IN (SELECT id FROM synthetic_sources)
-    OR claim_id IN (SELECT id FROM synthetic_claims);
+    OR claim_id IN (SELECT id FROM synthetic_claims)
+    OR created_by IN (SELECT id FROM synthetic_users);
 DELETE FROM migration_events
  WHERE source_id IN (SELECT id FROM synthetic_sources)
-    OR claim_id IN (SELECT id FROM synthetic_claims);
+    OR claim_id IN (SELECT id FROM synthetic_claims)
+    OR created_by IN (SELECT id FROM synthetic_users);
 DELETE FROM person_aliases WHERE person_id IN (SELECT id FROM synthetic_people);
 DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM synthetic_claims);
 -- suggestion_reviews.suggestion_id cascades, but a review by a synthetic

@@ -522,17 +522,60 @@ func loadMigrations(ctx context.Context, q queryer, input RunInput, limit int) (
 }
 
 func loadSpatialEdges(ctx context.Context, q queryer, radiusMeters float64, limit int) ([]spatialEdge, error) {
+	// Two corrections live in this query. The columns are geometry (SRID 4326), so
+	// a bare ST_DWithin measures degrees, and a "meters" argument would silently
+	// pass for every pair of points on Earth: the predicate casts both sides to
+	// geography, where the unit is metres. And the pair enumeration starts from
+	// distinct places, not associations, so the radius prunes before the
+	// association join can multiply a pair of places into a cross product.
+	//
+	// ST_Expand is only a GiST-indexed pre-test. It is widened by latitude before
+	// the exact geography predicate runs, because one degree of longitude is
+	// shorter than one degree of latitude away from the equator; a fixed
+	// metres/111320 expansion would clip valid pairs in the north.
+	//
+	// The association pairs are unordered here: the place-pair enumeration runs
+	// in place-id order, which is not the same order as association ids, so a
+	// `first_association.id < second_association.id` filter drops the edge
+	// whenever the association ids order opposite to their places. The edge
+	// itself does not care which endpoint is first — buildClusters matches edges
+	// against a byID set — so the ids are written with LEAST/GREATEST and
+	// deduplicated with DISTINCT instead.
+	//
+	// Both endpoints carry the same eligibility loadAssociations applies (the
+	// status list, a public independent source, no live dependency). Edges
+	// whose endpoints no caller can load were pure cost: buildClusters would
+	// have intersected them away, after the database had built them from the
+	// whole association table.
 	rows, err := q.Query(ctx, `
-		SELECT first_association.id::text, second_association.id::text,
-		       ST_DistanceSphere(first_place.geometry, second_place.geometry) / 1000.0
-		FROM geographic_associations first_association
-		JOIN places first_place ON first_place.id = first_association.place_id
-		JOIN geographic_associations second_association ON second_association.id > first_association.id
-		JOIN places second_place ON second_place.id = second_association.place_id
-		WHERE first_place.geometry IS NOT NULL
-		  AND second_place.geometry IS NOT NULL
-		  AND ST_DWithin(first_place.geometry, second_place.geometry, $1)
-		ORDER BY first_association.id, second_association.id
+		WITH place_pairs AS (
+			SELECT first_place.id AS first_place_id, second_place.id AS second_place_id
+			FROM places first_place
+			JOIN places second_place ON second_place.id >= first_place.id
+			WHERE first_place.geometry IS NOT NULL
+			  AND second_place.geometry IS NOT NULL
+			  AND first_place.geometry && ST_Expand(
+			      second_place.geometry,
+			      LEAST($1 / 111320.0 / GREATEST(cos(radians(ST_Y(second_place.geometry))), 0.01), 180.0) + LEAST($1 / 111320.0, 0.5)
+			  )
+			  AND ST_DWithin(first_place.geometry::geography, second_place.geometry::geography, $1)
+		)
+		SELECT DISTINCT LEAST(first_association.id, second_association.id)::text,
+		       GREATEST(first_association.id, second_association.id)::text,
+		       ST_DistanceSphere(first_place.geometry, second_place.geometry) / 1000.0 AS distance_km
+		FROM place_pairs
+		JOIN geographic_associations first_association ON first_association.place_id = place_pairs.first_place_id
+		JOIN geographic_associations second_association ON second_association.place_id = place_pairs.second_place_id
+		JOIN places first_place ON first_place.id = place_pairs.first_place_id
+		JOIN places second_place ON second_place.id = place_pairs.second_place_id
+		WHERE first_association.id <> second_association.id
+		  AND first_association.status IN ('documented', 'interpreted', 'platform_inferred')
+		  AND second_association.status IN ('documented', 'interpreted', 'platform_inferred')
+		  AND EXISTS (SELECT 1 FROM sources s1 WHERE s1.id = first_association.source_id AND s1.visibility = 'public' AND s1.dependency_status = 'independent'
+		              AND NOT EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.status IN ('needs_review', 'confirmed') AND (sd.source_id = s1.id OR sd.depends_on_source_id = s1.id)))
+		  AND EXISTS (SELECT 1 FROM sources s2 WHERE s2.id = second_association.source_id AND s2.visibility = 'public' AND s2.dependency_status = 'independent'
+		              AND NOT EXISTS (SELECT 1 FROM source_dependencies sd WHERE sd.status IN ('needs_review', 'confirmed') AND (sd.source_id = s2.id OR sd.depends_on_source_id = s2.id)))
+		ORDER BY distance_km, LEAST(first_association.id, second_association.id)::text, GREATEST(first_association.id, second_association.id)::text
 		LIMIT $2
 	`, radiusMeters, limit)
 	if err != nil {

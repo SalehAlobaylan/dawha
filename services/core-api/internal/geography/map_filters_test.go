@@ -2,7 +2,9 @@ package geography
 
 import (
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport"
@@ -312,6 +314,49 @@ func TestMapFiltersExcludeBeforeTheResponse(t *testing.T) {
 			name:  "viewport",
 			input: MapInput{Viewport: &Viewport{MinLongitude: 10, MinLatitude: 10, MaxLongitude: 15, MaxLatitude: 12}},
 			keep: func(feature Feature) bool {
+				// A region is an area, not its centroid: the viewport keeps it when
+				// the polygon intersects the box (PostGIS ST_Intersects), so a
+				// region whose centroid lies outside but whose ring crosses the
+				// box is returned. Its bbox-overlap is the exact expectation for a
+				// filled polygon against an axis-aligned box.
+				if feature.Kind == "region" && len(feature.Ring) > 0 {
+					minLon, maxLon := feature.Ring[0][0], feature.Ring[0][0]
+					minLat, maxLat := feature.Ring[0][1], feature.Ring[0][1]
+					for _, vertex := range feature.Ring {
+						if vertex[0] < minLon {
+							minLon = vertex[0]
+						}
+						if vertex[0] > maxLon {
+							maxLon = vertex[0]
+						}
+						if vertex[1] < minLat {
+							minLat = vertex[1]
+						}
+						if vertex[1] > maxLat {
+							maxLat = vertex[1]
+						}
+					}
+					return maxLon >= 10 && minLon <= 15 && maxLat >= 10 && minLat <= 12
+				}
+				// A migration is a route, not its anchor point (plan 029-B3): the
+				// viewport keeps it when the route's own line meets the box, so a
+				// route whose endpoints lie outside but whose segment crosses the
+				// box is returned. The endpoint-bbox-overlap below is exact *on this
+				// fixture*, not in general: the places tile a 0.1° lattice, the
+				// segment spans at most 0.2°, and the box edges sit on lattice
+				// coordinates, so a segment whose bounding box meets the box always
+				// crosses it, and one whose box misses can never. The geometric
+				// truth itself — a mid-route box keeps a route with both endpoints
+				// elsewhere — is TestMigrationViewportKeepsARouteTheBoxOnlyCrosses.
+				if feature.Kind == "migration" &&
+					feature.FromLongitude != nil && feature.FromLatitude != nil &&
+					feature.ToLongitude != nil && feature.ToLatitude != nil {
+					lonMin := math.Min(*feature.FromLongitude, *feature.ToLongitude)
+					lonMax := math.Max(*feature.FromLongitude, *feature.ToLongitude)
+					latMin := math.Min(*feature.FromLatitude, *feature.ToLatitude)
+					latMax := math.Max(*feature.FromLatitude, *feature.ToLatitude)
+					return lonMax >= 10 && lonMin <= 15 && latMax >= 10 && latMin <= 12
+				}
 				if feature.Longitude == nil || feature.Latitude == nil {
 					return false
 				}
@@ -497,6 +542,13 @@ func TestMapResponseIsBoundedAndSaysSo(t *testing.T) {
 	if rows := counter.Rows(); rows > 12 {
 		t.Fatalf("a 10-feature map cost the database %d rows, so the bound did not reach the query", rows)
 	}
+	// Plan 027 D: the perf budget this map holds. Recorded next to the queries/rows
+	// plan 007 recorded. A 10-feature bound is what the payload looks like when the
+	// map behaves: the database is asked for the bound, a small number of queries, and
+	// a payload small enough to fit the inspector's first frame. If any of the three
+	// grows unexplainably, the map is no longer an honest bounded read.
+	t.Logf("PERF027 bounded10 queries=%d rowsFromDatabase=%d featuresReturned=%d payloadBytes=%d",
+		counter.Count(), counter.Rows(), len(bounded.Features), testsupport.PayloadBytes(t, bounded))
 }
 
 // TestMapKeepsTheEvidenceLayersDistinct is the phase-23 requirement: everything the
@@ -577,8 +629,39 @@ func TestMapKeepsTheEvidenceLayersDistinct(t *testing.T) {
 	if interpretedRegions == 0 {
 		t.Fatal("no interpreted region on a map that has them")
 	}
-	if disputedRegions+interpretedRegions != len(seeded.regionID) {
-		t.Fatalf("the region layers cover %d of %d regions", disputedRegions+interpretedRegions, len(seeded.regionID))
+	// The floor under the counts is what the reader can see, not what this test
+	// seeded: the demo seed carries regions of its own, so the derivation is
+	// hand-written over the same rule the query announces (geometry present, a
+	// source that is absent or public, a certainty the layer maps), in the same
+	// schema this test built, instead of an assumption that only this test's
+	// regions exist.
+	var disputedDerived, interpretedDerived int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM historical_regions r LEFT JOIN sources s ON s.id = r.source_id
+		WHERE r.geometry IS NOT NULL AND r.certainty = 'disputed' AND (s.id IS NULL OR s.visibility = 'public')`).Scan(&disputedDerived); err != nil {
+		t.Fatalf("hand-derive the disputed layer: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM historical_regions r LEFT JOIN sources s ON s.id = r.source_id
+		WHERE r.geometry IS NOT NULL AND r.certainty IN ('approximate', 'precise') AND (s.id IS NULL OR s.visibility = 'public')`).Scan(&interpretedDerived); err != nil {
+		t.Fatalf("hand-derive the interpreted layer: %v", err)
+	}
+	if disputedRegions != disputedDerived {
+		t.Fatalf("the disputed layer holds %d regions, want the derived %d", disputedRegions, disputedDerived)
+	}
+	if interpretedRegions != interpretedDerived {
+		t.Fatalf("the interpreted layer holds %d regions, want the derived %d", interpretedRegions, interpretedDerived)
+	}
+	// And the fixture's own regions are all covered by the two layers together.
+	seen := map[string]bool{}
+	for _, feature := range disputed.Features {
+		seen[feature.ID] = true
+	}
+	for _, feature := range interpreted.Features {
+		seen[feature.ID] = true
+	}
+	for _, regionID := range seeded.regionID {
+		if !seen[regionID.String()] {
+			t.Fatalf("seeded region %q is on neither layer", regionID)
+		}
 	}
 }
 
@@ -681,4 +764,306 @@ func layerRank(kind string) int {
 
 func insideBox(longitude, latitude, west, south, east, north float64) bool {
 	return longitude >= west && longitude <= east && latitude >= south && latitude <= north
+}
+
+// TestMapCarriesClaimAndRegionGeometry pins the two fields the atlas needs that
+// are not a coordinate: the claim a spatial row serves and the outline of a
+// region. They are separate because they fail separately - a lost claim removes
+// the handoff into the claim surface, and a lost ring turns an area into a dot
+// while the status still claims the area exists.
+func TestMapCarriesClaimAndRegionGeometry(t *testing.T) {
+	fixture := testsupport.New(t)
+	seeded := seedScaledMap(t, fixture, 2, 1, 1, 1)
+	service := NewService(fixture.Pool())
+
+	subjectID := uuid.New()
+	objectID := seeded.placeID[0]
+	associationClaim := uuid.New()
+	migrationClaim := uuid.New()
+	for _, claim := range []uuid.UUID{associationClaim, migrationClaim} {
+		fixture.Exec(`INSERT INTO claims (id, subject_type, subject_id, predicate, object_type, object_id, status, created_by)
+			VALUES ($1, 'person', $2, 'documented_in', 'place', $3, 'documented', $4)`,
+			claim, subjectID, objectID, seeded.actorID)
+	}
+	fixture.Exec(`UPDATE geographic_associations SET claim_id = $1 WHERE id = $2`, associationClaim, seeded.associationID[0])
+	fixture.Exec(`UPDATE migration_events SET claim_id = $1 WHERE id = $2`, migrationClaim, seeded.migrationID[0])
+
+	response, err := service.List(fixture.Ctx(), MapInput{ActorID: seeded.actorID})
+	if err != nil {
+		t.Fatalf("read the map: %v", err)
+	}
+
+	byID := mapIDs(response)
+	association, found := byID[seeded.associationID[0].String()]
+	if !found {
+		t.Fatal("the association with a claim is missing from the map")
+	}
+	if association.ClaimID != associationClaim.String() {
+		t.Fatalf("association claimId = %q, want %q", association.ClaimID, associationClaim)
+	}
+	migration, found := byID[seeded.migrationID[0].String()]
+	if !found {
+		t.Fatal("the migration with a claim is missing from the map")
+	}
+	if migration.ClaimID != migrationClaim.String() {
+		t.Fatalf("migration claimId = %q, want %q", migration.ClaimID, migrationClaim)
+	}
+
+	region, found := byID[seeded.regionID[0].String()]
+	if !found {
+		t.Fatal("the historical region is missing from the map")
+	}
+	if len(region.Ring) != 5 {
+		t.Fatalf("region ring = %d vertices, want the closed five-vertex fixture ring", len(region.Ring))
+	}
+	if region.Ring[0] != region.Ring[len(region.Ring)-1] {
+		t.Fatal("the region ring was not closed")
+	}
+	// The fixture polygon's south-west corner is the region's seed point; the
+	// response has to carry the drawn outline, not only its centroid.
+	if math.Abs(region.Ring[0][0]-(seeded.regionLongitude[0]-0.25)) > 1e-9 || math.Abs(region.Ring[0][1]-(seeded.regionLatitude[0]-0.25)) > 1e-9 {
+		t.Fatalf("region ring starts at %v, want the fixture's south-west corner", region.Ring[0])
+	}
+}
+
+// The region layer carries placeCount: how many of the reader's own visible place
+// records fall inside the ring. A count a client could compute by counting marker
+// hardware would be wrong in exactly the places that matter - a private place the
+// reader may not see is a silent row - so the number is asked wherever the place
+// layer is asked, through the same policy, and this test holds the two answers
+// together. The two readers also hold the two answers apart: a researcher sees
+// every place row, a plain registered reader sees the public one only, and the
+// count they are each told must match the places each of them can act on.
+func TestRegionPlaceCountCountsOnlyWhatTheReaderMaySee(t *testing.T) {
+	fixture := testsupport.New(t)
+	owner := actor.Register(t, fixture, "مالك مواضع العد")
+	fixture.GrantRole(owner.User.ID, "researcher")
+	reader := actor.Register(t, fixture, "قارئ المناطق")
+
+	// Two places inside the ring - public, and private (owner's own) - and one
+	// public place far outside it. The vocabulary is 0039's two-value one:
+	// public and private, where a private row is readable by its author alone.
+	insidePublic := uuid.New()
+	insidePrivate := uuid.New()
+	outsidePublic := uuid.New()
+	fixture.Exec(`INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, visibility, created_by)
+		VALUES
+		($1, 'داخل عمومي', 'داخل عمومي', 'city', ST_SetSRID(ST_MakePoint(11.0, 11.0), 4326), 'public', $4),
+		($2, 'داخل خاص', 'داخل خاص', 'city', ST_SetSRID(ST_MakePoint(11.2, 11.2), 4326), 'private', $4),
+		($3, 'خارج عمومي', 'خارج عمومي', 'city', ST_SetSRID(ST_MakePoint(40.0, 40.0), 4326), 'public', $4)`,
+		insidePublic, insidePrivate, outsidePublic, owner.User.ID)
+
+	regionID := uuid.New()
+	fixture.Exec(`INSERT INTO historical_regions (id, name_ar, normalized_name_ar, geometry, certainty, created_by)
+		VALUES ($1, 'إقليم العد', 'إقليم العد', ST_GeomFromText('POLYGON((10 10, 12 10, 12 12, 10 12, 10 10))', 4326), 'approximate', $2)`,
+		regionID, owner.User.ID)
+
+	pool, _ := fixture.CountingFixturePool(t)
+	service := NewService(pool)
+
+	visibleInside := func(actorID string) int {
+		response, err := service.List(fixture.Ctx(), MapInput{ActorID: actorID})
+		if err != nil {
+			t.Fatalf("read the map for %q: %v", actorID, err)
+		}
+		regions := 0
+		for _, feature := range response.Features {
+			if feature.Kind != "region" || feature.ID != regionID.String() {
+				continue
+			}
+			regions++
+			onLayer := 0
+			for _, place := range response.Features {
+				if place.Kind != "place" {
+					continue
+				}
+				if place.Longitude != nil && place.Latitude != nil &&
+					*place.Longitude >= 10 && *place.Longitude <= 12 &&
+					*place.Latitude >= 10 && *place.Latitude <= 12 {
+					onLayer++
+				}
+			}
+			if feature.PlaceCount != onLayer {
+				t.Fatalf("region placeCount = %d, want the %d visible places the place layer itself drew inside the ring", feature.PlaceCount, onLayer)
+			}
+		}
+		if regions != 1 {
+			t.Fatalf("found %d test regions on the map, want exactly one", regions)
+		}
+		returnCount := 0
+		for _, feature := range response.Features {
+			if feature.Kind == "region" && feature.ID == regionID.String() {
+				returnCount = feature.PlaceCount
+			}
+		}
+		return returnCount
+	}
+
+	// The researcher sees every place row the role admits, so their count
+	// includes the private row the author owns.
+	if count := visibleInside(owner.User.ID); count != 2 {
+		t.Fatalf("researcher region placeCount = %d, want 2 (public + owned private)", count)
+	}
+	// A plain registered reader sees the public row only, and the count says so:
+	// it is scoped by the same policy the marker layer answers to, never by the
+	// geometry alone.
+	if count := visibleInside(reader.User.ID); count != 1 {
+		t.Fatalf("registered reader region placeCount = %d, want 1 (public only)", count)
+	}
+}
+
+// TestRegionEraCountsMatchAnIndependentDerivation is the windowed sibling of the
+// placeCount test above: the era counters (associationCount, personCount) must
+// equal what a hand-written query over the same fixture yields for the same
+// reader and the same window. The comparator is written out here with literals
+// and the fixture's known grants, not with the policy helpers — reusing them
+// would mean the test asks the code under test to explain itself.
+//
+// The fixture carries the semantics the era narrative depends on: documented and
+// disputed rows count while interpreted rows never do; a window keeps undated
+// and partially dated rows out where its rule keeps them (the same rule the
+// layers answer to), drops rows dated wholly outside it, and keeps rows whose
+// dated span merely touches the window edges; a hidden person's association
+// raises the era count without raising the person count for a caller that may
+// not read that person. And personCount is a count of *persons*, not of their
+// associations: one notables row per distinct person in the era, which is what
+// the inspector's «أعيان موثَّقون» label promises (plan 029-A3).
+func TestRegionEraCountsMatchAnIndependentDerivation(t *testing.T) {
+	fixture := testsupport.New(t)
+	owner := actor.Register(t, fixture, "مالك عهد الأمثال")
+	fixture.GrantRole(owner.User.ID, "researcher")
+	reader := actor.Register(t, fixture, "قارئ عهد الأمثال")
+
+	// One person published to a public tree (a reader grant) and one kept
+	// unpublished (invisible to the anonymous reader, owned by the author).
+	treeID := uuid.New()
+	versionID := uuid.New()
+	fixture.Exec(`INSERT INTO trees (id, name_ar, visibility, owner_id) VALUES ($1, 'شجرة عهد الأمثال', 'public', $2)`, treeID, owner.User.ID)
+	fixture.Exec(`INSERT INTO tree_versions (id, tree_id, version_number, state, published_by, published_at) VALUES ($1, $2, 1, 'published', $3, now())`, versionID, treeID, owner.User.ID)
+	readPerson := uuid.New()
+	fixture.Exec(`INSERT INTO people (id, canonical_name_ar, normalized_name_ar, identity_status, created_by) VALUES ($1, 'شخص عامّ العهد', 'شخص عامّ العهد', 'reviewed', $2)`,
+		readPerson, owner.User.ID)
+	fixture.Exec(`INSERT INTO tree_nodes (id, tree_version_id, person_id, display_name_ar, sort_order) VALUES ($1, $2, $3, 'شخص', 0)`,
+		uuid.New(), versionID, readPerson)
+	hiddenPerson := uuid.New()
+	fixture.Exec(`INSERT INTO people (id, canonical_name_ar, normalized_name_ar, identity_status, created_by) VALUES ($1, 'شخص محجوب العهد', 'شخص محجوب العهد', 'reviewed', $2)`,
+		hiddenPerson, owner.User.ID)
+
+	insidePublic := uuid.New()
+	insidePrivate := uuid.New()
+	outsidePublic := uuid.New()
+	fixture.Exec(`INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, visibility, created_by)
+		VALUES
+		($1, 'داخل عام العهد', 'داخل عام العهد', 'city', ST_SetSRID(ST_MakePoint(11.0, 11.0), 4326), 'public', $4),
+		($2, 'داخل خاص العهد', 'داخل خاص العهد', 'city', ST_SetSRID(ST_MakePoint(11.2, 11.2), 4326), 'private', $4),
+		($3, 'خارج عام العهد', 'خارج عام العهد', 'city', ST_SetSRID(ST_MakePoint(40.0, 40.0), 4326), 'public', $4)`,
+		insidePublic, insidePrivate, outsidePublic, owner.User.ID)
+
+	regionID := uuid.New()
+	fixture.Exec(`INSERT INTO historical_regions (id, name_ar, normalized_name_ar, geometry, certainty, created_by)
+		VALUES ($1, 'إقليم العهود', 'إقليم العهود', ST_GeomFromText('POLYGON((10 10, 12 10, 12 12, 10 12, 10 10))', 4326), 'approximate', $2)`,
+		regionID, owner.User.ID)
+
+	type row struct {
+		person    uuid.UUID
+		place     uuid.UUID
+		status    string
+		timeFrom  string
+		timeTo    string
+		createdBy string
+	}
+	for _, item := range []row{
+		{readPerson, insidePublic, "documented", "0900-01-01", "0950-01-01", owner.User.ID},   // inside the window
+		{readPerson, insidePublic, "documented", "1400-01-01", "1450-01-01", owner.User.ID},   // dated wholly outside
+		{readPerson, insidePublic, "disputed", "NULL", "NULL", owner.User.ID},                 // undated: kept wherever the rule keeps undated rows
+		{readPerson, insidePublic, "documented", "0790-01-01", "1010-01-01", owner.User.ID},   // merely touches the window's edges
+		{readPerson, insidePublic, "interpreted", "0900-01-01", "0950-01-01", owner.User.ID},  // never counted, whatever the year
+		{readPerson, insidePrivate, "documented", "0900-01-01", "0950-01-01", owner.User.ID},  // ring+window yes; the anonymous reader's place grant no
+		{hiddenPerson, insidePublic, "documented", "0900-01-01", "0950-01-01", owner.User.ID}, // era yes for the author; person no for the anonymous reader
+	} {
+		fixture.Exec(`INSERT INTO geographic_associations (id, entity_type, entity_id, place_id, relation_type, status, certainty, time_from, time_to, created_by)
+			VALUES ($1, 'person', $2, $3, 'documented_in', $4, 'approximate', `+quoteLiteral(item.timeFrom)+`::date, `+quoteLiteral(item.timeTo)+`::date, $5)`,
+			uuid.New(), item.person, item.place, item.status, item.createdBy)
+	}
+
+	pool, _ := fixture.CountingFixturePool(t)
+	service := NewService(pool)
+
+	// The independent derivations, hand-written for this fixture's grants.
+	// The window is the literals (800, 1000); the keep rule for undated and
+	// edge-touching spans is spelled out the way the predicate answers it.
+	datedRule := "(COALESCE(EXTRACT(YEAR FROM ga.time_from), 0) = 0 AND COALESCE(EXTRACT(YEAR FROM ga.time_to), 0) = 0" +
+		" OR COALESCE(EXTRACT(YEAR FROM ga.time_from), 0) <= 1000 AND COALESCE(EXTRACT(YEAR FROM ga.time_to), 0) = 0" +
+		" OR COALESCE(EXTRACT(YEAR FROM ga.time_from), 0) <= 1000 AND COALESCE(EXTRACT(YEAR FROM ga.time_to), 0) >= 800)"
+	placeRule := "pc.visibility = 'public'" // anonymous grant
+	placeRuleOwner := "pc.created_by = $2"  // the author's grant over the fixture
+	personRule := "EXISTS (SELECT 1 FROM tree_nodes tn JOIN tree_versions tv ON tv.id = tn.tree_version_id AND tv.state = 'published'" +
+		" JOIN trees tr ON tr.id = tv.tree_id WHERE tn.person_id = ga.entity_id AND tr.visibility = 'public')"
+	personRuleOwner := "EXISTS (SELECT 1 FROM people po WHERE po.id = ga.entity_id AND po.created_by = $2)"
+	sharedRule := "ga.entity_type = 'person' AND ga.status IN ('documented', 'disputed')" +
+		" AND ST_Intersects((SELECT geometry FROM historical_regions WHERE id = $1), pc.geometry)"
+
+	derive := func(t *testing.T, placeGrant, personGrant, datedGrant string, readerID string) (associations, persons int) {
+		t.Helper()
+		// The person half is count(DISTINCT entity_id): the counter promises
+		// notables, and one notables row per person is the whole difference
+		// between a census and a count of testimonies (plan 029-A3).
+		statement := "SELECT count(*), count(DISTINCT ga.entity_id) FILTER (WHERE " + personGrant + ") FROM geographic_associations ga" +
+			" JOIN places pc ON pc.id = ga.place_id WHERE " + placeGrant + " AND " + sharedRule +
+			" AND (" + datedGrant + ")"
+		args := make([]any, 0, 2)
+		args = append(args, regionID)
+		// Only the author's rules reference the second argument; pgx counts the
+		// placeholders a statement actually carries.
+		if strings.Contains(placeGrant, "$2") || strings.Contains(personGrant, "$2") {
+			args = append(args, readerID)
+		}
+		if err := pool.QueryRow(fixture.Ctx(), statement, args...).Scan(&associations, &persons); err != nil {
+			t.Fatalf("independent derivation: %v", err)
+		}
+		return associations, persons
+	}
+
+	readCounters := func(t *testing.T, actorID string, fromYear, toYear int) (associations, persons int) {
+		t.Helper()
+		response, err := service.List(fixture.Ctx(), MapInput{ActorID: actorID, FromYear: fromYear, ToYear: toYear})
+		if err != nil {
+			t.Fatalf("read the map for %q: %v", actorID, err)
+		}
+		for _, feature := range response.Features {
+			if feature.Kind != "region" || feature.ID != regionID.String() {
+				continue
+			}
+			return feature.AssociationCount, feature.PersonCount
+		}
+		t.Fatalf("the seeded region did not answer the map read for %q", actorID)
+		return -1, -1
+	}
+
+	// Windowed reads, per reader, against the matching hand-written derivation.
+	expectedAssociations, expectedPersons := derive(t, placeRule, personRule, datedRule, reader.User.ID)
+	associations, persons := readCounters(t, reader.User.ID, 800, 1000)
+	if associations != expectedAssociations || persons != expectedPersons {
+		t.Fatalf("anonymous windowed counters = (%d, %d), want the derived (%d, %d)", associations, persons, expectedAssociations, expectedPersons)
+	}
+	expectedAssociations, expectedPersons = derive(t, placeRuleOwner, personRuleOwner, datedRule, owner.User.ID)
+	associations, persons = readCounters(t, owner.User.ID, 800, 1000)
+	if associations != expectedAssociations || persons != expectedPersons {
+		t.Fatalf("researcher windowed counters = (%d, %d), want the derived (%d, %d)", associations, persons, expectedAssociations, expectedPersons)
+	}
+
+	// Without a window the keep-all rule answers: undated rows pass and every
+	// dated row is inside an absent window. The hand rule collapses away, and
+	// the counts answer the layered read, not the era's. The person count is
+	// distinct persons: four of the anonymous reader's counted rows are one
+	// notables' associations, and the count says one.
+	if associations, persons = readCounters(t, reader.User.ID, 0, 0); associations != 5 {
+		t.Fatalf("anonymous unwindowed associationCount = %d, want 5 (every in-ring visible documented/disputed row)", associations)
+	}
+	if associations, persons = readCounters(t, reader.User.ID, 0, 0); persons != 1 {
+		t.Fatalf("anonymous unwindowed personCount = %d, want 1 (four existing associations are one visible notables; the hidden person's association raises era, not persons)", persons)
+	}
+	if associations, persons = readCounters(t, owner.User.ID, 0, 0); associations != 6 || persons != 2 {
+		t.Fatalf("researcher unwindowed counters = (%d, %d), want (6, 2): six in-ring rows from exactly two persons", associations, persons)
+	}
 }

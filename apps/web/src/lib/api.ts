@@ -35,9 +35,17 @@ import type {
   InvitationCreated,
   JobView,
   MapResponse,
+  PlaceEvidenceResponse,
+  PersonMovementResponse,
+  PairingListParams,
+  PairingListResponse,
+  PairingHistoryResponse,
+  PairingDecideResponse,
+  PlaceExternalIDsResponse,
   OpenQuestionRecord,
   PersonAlias,
   PersonAliasInput,
+  PlaceView,
   QuestionClaimInput,
   QuestionDetail,
   QuestionDisputeInput,
@@ -137,7 +145,15 @@ import type {
   SourceSuggestionSplitResult,
 } from "../types";
 
-const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
+// A fresh clone has to serve the Atlas on first try. In dev, the documented
+// local pairing is web :5173 ↔ core-api :8080 (`.env.example`:
+// CORE_API_PORT=8080), so fall back to that when VITE_API_URL is not set —
+// without this, every API call goes to the vite origin, which 404s, and the
+// whole app, Atlas included, renders its error states and looks broken. In
+// production the app never guesses: a wrong guess would silently point every
+// reader at somebody else's API, so a production build without VITE_API_URL
+// keeps the honest empty base.
+const apiBaseUrl = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8080" : "");
 const demoTreeId = "tree-demo";
 
 export const demoTreeDetail: TreeDetail = {
@@ -236,10 +252,12 @@ export class ApiError extends Error {
  *
  * Two rules, and the second one is the reason this function changed:
  *
- *  1. With no API configured at all - `npm run dev` in the web workspace on its
- *     own, or a static preview - the bundled demo IS the answer, and it is
- *     returned with `mode: "demo"` so the shell can label it.
- *  2. With an API configured, a failure is a FAILURE. It is thrown, not turned
+ *  1. A same-origin API (or the one the dev server points at) answers like it
+ *     answers; the payload's own mode label decides what the shell shows. A
+ *     payload missing the mode label is treated as demo rather than as api,
+ *     because the safe misreading of an unlabelled payload is the one that
+ *     shows the warning.
+ *  2. A failure is a FAILURE. It is thrown, not turned
  *     into demo data. The API answers this route with a 503 unless DEMO_MODE is
  *     on, and returning the demo instead would turn a deployment whose dashboard
  *     is unavailable into a deployment showing confident numbers nobody can tell
@@ -248,10 +266,6 @@ export class ApiError extends Error {
  *     error state, and the state says the data is missing.
  */
 export async function fetchDashboard(): Promise<DashboardData> {
-  if (!apiBaseUrl) {
-    return demoDashboard;
-  }
-
   const response = await fetch(`${apiBaseUrl}/api/v1/dashboard`, { signal: AbortSignal.timeout(2500) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -263,10 +277,48 @@ export async function fetchDashboard(): Promise<DashboardData> {
   return { ...payload, mode: payload.mode === "api" ? "api" : "demo" };
 }
 
-export async function queryResearch(input: ResearchQueryInput): Promise<ResearchQueryResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API وخدمة البحث لتفعيل الاستعلام.", 503);
+/**
+ * DataHygieneReport is the moderator license dashboard's payload: what it is,
+ * plus the license posture of each source and the dependent counts that make
+ * the missing licenses actionable rather than decorative.
+ */
+export interface DataHygieneSource {
+  id: string;
+  title_ar: string;
+  author_ar: string | null;
+  source_type: string;
+  dependency_status: string;
+  has_license: boolean;
+  license: string | null;
+  license_note: string | null;
+  file_count: number;
+  passage_count: number;
+  association_count: number;
+}
+
+export interface DataHygieneReport {
+  total_sources: number;
+  missing_license_count: number;
+  sources: DataHygieneSource[];
+  limit: number;
+  truncated: boolean;
+}
+
+/**
+ * The dashboard is a live read of the sources table, gated by the moderator
+ * role owned by the service, so its refusals are real: a 403 is the role, not
+ * out-of-date data, and a failure is thrown rather than papered over — an
+ * unavailable dashboard must not be redeemed by invented numbers.
+ */
+export async function fetchDataHygieneReport(): Promise<DataHygieneReport> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/data-hygiene`, { credentials: "include", signal: AbortSignal.timeout(6000) });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
   }
+  return (await response.json()) as DataHygieneReport;
+}
+
+export async function queryResearch(input: ResearchQueryInput): Promise<ResearchQueryResult> {
   const response = await fetch(`${apiBaseUrl}/api/v1/research/query`, {
     method: "POST",
     credentials: "include",
@@ -281,9 +333,6 @@ export async function queryResearch(input: ResearchQueryInput): Promise<Research
 }
 
 export async function queryGraphRelationshipImpact(input: GraphRelationshipImpactInput): Promise<GraphRelationshipImpactResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لتفعيل تحليل أثر العلاقة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/relationship-impact`, {
     method: "POST",
     credentials: "include",
@@ -298,9 +347,6 @@ export async function queryGraphRelationshipImpact(input: GraphRelationshipImpac
 }
 
 export async function queryGraphBranchStructureComparison(input: GraphBranchStructureComparisonInput): Promise<GraphBranchStructureComparisonResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لتفعيل مقارنة بنية الفروع.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/branch-structure-comparison`, {
     method: "POST",
     credentials: "include",
@@ -315,9 +361,6 @@ export async function queryGraphBranchStructureComparison(input: GraphBranchStru
 }
 
 export async function queryGraphAncestorFrontier(input: GraphAncestorFrontierInput): Promise<GraphAncestorFrontierResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لتفعيل إطار الأسلاف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/ancestor-frontier`, {
     method: "POST",
     credentials: "include",
@@ -332,9 +375,6 @@ export async function queryGraphAncestorFrontier(input: GraphAncestorFrontierInp
 }
 
 export async function queryGraphSourceDependencyNeighborhood(input: GraphSourceDependencyNeighborhoodInput): Promise<GraphSourceDependencyNeighborhoodResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لتفعيل حيّز اعتماد المصادر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/source-dependency-neighborhood`, {
     method: "POST",
     credentials: "include",
@@ -349,9 +389,6 @@ export async function queryGraphSourceDependencyNeighborhood(input: GraphSourceD
 }
 
 export async function queryGraphSourceDependencyCommunities(input: GraphSourceDependencyCommunitiesInput): Promise<GraphSourceDependencyCommunitiesResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لتفعيل مجتمعات اعتماد المصادر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/graph/source-dependency-communities`, {
     method: "POST",
     credentials: "include",
@@ -366,9 +403,6 @@ export async function queryGraphSourceDependencyCommunities(input: GraphSourceDe
 }
 
 export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Promise<ResearchWorkspaceSnapshot> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض مساحة البحث.", 503);
-  }
   const params = new URLSearchParams();
   if (input.entityType) params.set("entity_type", input.entityType);
   if (input.entityId) params.set("entity_id", input.entityId);
@@ -383,9 +417,6 @@ export async function fetchResearchWorkspace(input: ResearchWorkspaceInput): Pro
 }
 
 export async function fetchResearchRuns(questionId: string): Promise<ResearchRunSummary[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض سجل التحقيقات.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/questions/${encodeURIComponent(questionId)}/runs`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -395,9 +426,6 @@ export async function fetchResearchRuns(questionId: string): Promise<ResearchRun
 }
 
 export async function fetchResearchRun(runId: string): Promise<ResearchRunDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض تفاصيل التحقيق.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -406,9 +434,6 @@ export async function fetchResearchRun(runId: string): Promise<ResearchRunDetail
 }
 
 export async function runEntityResolution(entityType: EntityResolutionEntityType): Promise<EntityResolutionRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API وخدمة مطابقة الهوية.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/runs`, {
     method: "POST",
     credentials: "include",
@@ -423,9 +448,6 @@ export async function runEntityResolution(entityType: EntityResolutionEntityType
 }
 
 export async function fetchEntityResolutionRun(runId: string): Promise<EntityResolutionRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -434,9 +456,6 @@ export async function fetchEntityResolutionRun(runId: string): Promise<EntityRes
 }
 
 export async function fetchEntityResolutionCandidates(status?: string, entityType?: string): Promise<EntityResolutionCandidate[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   if (entityType) params.set("entity_type", entityType);
@@ -450,9 +469,6 @@ export async function fetchEntityResolutionCandidates(status?: string, entityTyp
 }
 
 export async function fetchEntityResolutionMerges(): Promise<EntityResolutionMerge[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/merges`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -462,9 +478,6 @@ export async function fetchEntityResolutionMerges(): Promise<EntityResolutionMer
 }
 
 export async function reviewEntityResolutionCandidate(candidateId: string, input: EntityResolutionReviewInput): Promise<EntityResolutionCandidate> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/candidates/${candidateId}/review`, {
     method: "POST",
     credentials: "include",
@@ -478,9 +491,6 @@ export async function reviewEntityResolutionCandidate(candidateId: string, input
 }
 
 export async function mergeEntityResolutionCandidate(candidateId: string, input: EntityResolutionMergeInput): Promise<EntityResolutionMerge> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/candidates/${candidateId}/merge`, {
     method: "POST",
     credentials: "include",
@@ -494,9 +504,6 @@ export async function mergeEntityResolutionCandidate(candidateId: string, input:
 }
 
 export async function reverseEntityResolutionMerge(mergeId: string, reasonAr: string): Promise<EntityResolutionMerge> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/entity-resolution/merges/${mergeId}/reverse`, {
     method: "POST",
     credentials: "include",
@@ -510,9 +517,6 @@ export async function reverseEntityResolutionMerge(mergeId: string, reasonAr: st
 }
 
 export async function startContradictionRun(): Promise<ContradictionRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API وخدمة فحص التعارضات.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/runs`, { method: "POST", credentials: "include" });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -521,9 +525,6 @@ export async function startContradictionRun(): Promise<ContradictionRun> {
 }
 
 export async function fetchContradictionRun(runId: string): Promise<ContradictionRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -532,9 +533,6 @@ export async function fetchContradictionRun(runId: string): Promise<Contradictio
 }
 
 export async function fetchContradictionFindings(runId?: string, status?: string): Promise<ContradictionFinding[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   if (runId) params.set("run_id", runId);
   if (status) params.set("status", status);
@@ -548,9 +546,6 @@ export async function fetchContradictionFindings(runId?: string, status?: string
 }
 
 export async function reviewContradictionFinding(findingId: string, input: ContradictionReviewInput): Promise<ContradictionFinding> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/contradictions/findings/${findingId}/review`, {
     method: "POST",
     credentials: "include",
@@ -564,9 +559,6 @@ export async function reviewContradictionFinding(findingId: string, input: Contr
 }
 
 export async function startTemporalAnalysis(input: StartTemporalAnalysisInput): Promise<TemporalAnalysisRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتشغيل التحليل الزمني.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs`, {
     method: "POST",
     credentials: "include",
@@ -581,9 +573,6 @@ export async function startTemporalAnalysis(input: StartTemporalAnalysisInput): 
 }
 
 export async function fetchTemporalAnalysisRun(runId: string): Promise<TemporalAnalysisRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/runs/${runId}`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -592,9 +581,6 @@ export async function fetchTemporalAnalysisRun(runId: string): Promise<TemporalA
 }
 
 export async function fetchLatestTemporalAnalysisRun(query: TemporalAnalysisRunQuery): Promise<TemporalAnalysisRun | null> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value) params.set(key, value);
@@ -611,9 +597,6 @@ export async function fetchLatestTemporalAnalysisRun(query: TemporalAnalysisRunQ
 }
 
 export async function fetchTemporalFindings(runId?: string, status?: string): Promise<TemporalFinding[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   if (runId) params.set("run_id", runId);
   if (status) params.set("status", status);
@@ -627,9 +610,6 @@ export async function fetchTemporalFindings(runId?: string, status?: string): Pr
 }
 
 export async function reviewTemporalFinding(findingId: string, input: ReviewTemporalFindingInput): Promise<TemporalFinding> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/temporal-analysis/findings/${findingId}/review`, {
     method: "POST",
     credentials: "include",
@@ -644,9 +624,6 @@ export async function reviewTemporalFinding(findingId: string, input: ReviewTemp
 }
 
 export async function fetchPublicTrees(): Promise<TreeSummary[]> {
-  if (!apiBaseUrl) {
-    return [demoTreeDetail.tree];
-  }
 
   try {
     const response = await fetch(`${apiBaseUrl}/api/v1/trees`, {
@@ -667,7 +644,6 @@ export async function fetchPublicTrees(): Promise<TreeSummary[]> {
 }
 
 async function fetchScopedTrees(scope: "workspace" | "public"): Promise<TreeSummary[]> {
-  if (!apiBaseUrl) throw new ApiError("شغّل خدمة الأشجار لعرض القائمة المحفوظة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/trees?scope=${scope}`, {
     credentials: "include",
     cache: "no-store",
@@ -682,7 +658,6 @@ export const fetchWorkspaceTrees = () => fetchScopedTrees("workspace");
 export const fetchPublishedTrees = () => fetchScopedTrees("public");
 
 export async function fetchChartLibrary(): Promise<import("../types").ChartLibraryItem[]> {
-  if (!apiBaseUrl) throw new ApiError("شغّل خدمة المصادر لعرض مشجراتك المحفوظة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/chart-library`, { credentials: "include", signal: AbortSignal.timeout(10000), cache: "no-store" });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   const payload = await response.json() as { items?: import("../types").ChartLibraryItem[] };
@@ -692,9 +667,6 @@ export async function fetchChartLibrary(): Promise<import("../types").ChartLibra
 export async function fetchTree(treeId: string): Promise<TreeDetail> {
   if (treeId === demoTreeId) {
     return demoTreeDetail;
-  }
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لفتح هذه الشجرة.", 503);
   }
 
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}`, {
@@ -725,9 +697,6 @@ export async function fetchTreeVersion(treeId: string, versionId: string): Promi
       relationships,
     };
   }
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لفتح هذه النسخة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/versions/${versionId}`, {
     credentials: "include",
     signal: AbortSignal.timeout(3000),
@@ -739,9 +708,6 @@ export async function fetchTreeVersion(treeId: string, versionId: string): Promi
 }
 
 export async function createTree(input: CreateTreeInput): Promise<TreeDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتفعيل إنشاء الشجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees`, {
     method: "POST",
     credentials: "include",
@@ -896,9 +862,6 @@ export async function fetchTreeDiff(treeId: string, params: { fromTreeId: string
 }
 
 export async function fetchJobs(status?: string): Promise<JobView[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض المهام.", 503);
-  }
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs${query}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
@@ -909,9 +872,6 @@ export async function fetchJobs(status?: string): Promise<JobView[]> {
 }
 
 export async function enqueueJob(input: EnqueueJobInput): Promise<{ job: JobView; created: boolean }> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإضافة المهمة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -920,37 +880,30 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<{ job: JobView
 }
 
 export async function claimJob(workerId: string): Promise<JobView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لالتقاط المهمة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs/claim`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId }) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as JobView;
 }
 
 export async function completeJob(jobId: string, workerId: string): Promise<JobView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لإكمال المهمة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs/${jobId}/complete`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId }) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as JobView;
 }
 
 export async function failJob(jobId: string, workerId: string, error: string): Promise<JobView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لتسجيل فشل المهمة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs/${jobId}/fail`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: workerId, error }) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as JobView;
 }
 
 export async function recoverStaleJobs(olderThanSeconds = 900): Promise<{ recovered: number; jobs: JobView[] }> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API أولاً لاستعادة المهام العالقة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/jobs/recover-stale`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ older_than_seconds: olderThanSeconds }) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as { recovered: number; jobs: JobView[] };
 }
 
 export async function fetchSearch(filters: { q: string; kind?: string; status?: string; personId?: string; placeId?: string; sourceId?: string; entityId?: string; fromYear?: number; toYear?: number; limit?: number; signal?: AbortSignal }): Promise<SearchResponse> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لبدء البحث.", 503);
-  }
   const params = new URLSearchParams({ q: filters.q });
   if (filters.kind) params.set("kind", filters.kind);
   if (filters.status) params.set("status", filters.status);
@@ -970,36 +923,221 @@ export async function fetchSearch(filters: { q: string; kind?: string; status?: 
   return (await response.json()) as SearchResponse;
 }
 
-export async function fetchMapFeatures(filters: { fromYear?: number; toYear?: number; status?: string; placeId?: string } = {}): Promise<MapResponse> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض طبقات الخريطة.", 503);
-  }
+export interface MapFetchFilters {
+  fromYear?: number;
+  toYear?: number;
+  status?: string;
+  placeId?: string;
+  viewport?: { minLongitude: number; minLatitude: number; maxLongitude: number; maxLatitude: number };
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export async function fetchMapFeatures(filters: MapFetchFilters = {}): Promise<MapResponse> {
   const params = new URLSearchParams();
   if (filters.fromYear !== undefined) params.set("from_year", String(filters.fromYear));
   if (filters.toYear !== undefined) params.set("to_year", String(filters.toYear));
   if (filters.status) params.set("status", filters.status);
   if (filters.placeId) params.set("place_id", filters.placeId);
+  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+  if (filters.viewport) {
+    const { minLongitude, minLatitude, maxLongitude, maxLatitude } = filters.viewport;
+    params.set("min_longitude", String(minLongitude));
+    params.set("min_latitude", String(minLatitude));
+    params.set("max_longitude", String(maxLongitude));
+    params.set("max_latitude", String(maxLatitude));
+  }
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const response = await fetch(`${apiBaseUrl}/api/v1/map${suffix}`, { signal: AbortSignal.timeout(3000) });
+  const timeoutSignal = AbortSignal.timeout(5000);
+  const signal = filters.signal ? AbortSignal.any([timeoutSignal, filters.signal]) : timeoutSignal;
+  // credentials: a signed-in researcher's private places are on the map for them
+  // and for nobody else, and that read needs the session cookie. Without it the
+  // atlas would show the anonymous map even to the person who wrote the place.
+  const response = await fetch(`${apiBaseUrl}/api/v1/map${suffix}`, { credentials: "include", signal });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as MapResponse;
 }
 
-export async function startGeospatialIntelligence(input: StartGeospatialIntelligenceInput): Promise<GeospatialIntelligenceRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتشغيل التحليل الجغرافي.", 503);
+export interface PlaceEvidenceOptions {
+  /**
+   * Ask for the moderation lane (`needs_review` rows alongside accepted ones).
+   * The server re-checks the moderator role and answers 403 to anybody else,
+   * so this flag is a request, not authority.
+   */
+  includeNeedsReview?: boolean;
+  signal?: AbortSignal;
+}
+
+/**
+ * One place's evidence dossier: the passages citing that place, each with its
+ * source and review state, bounded server-side. Credentials are carried for
+ * the same reason the map fetch does — the dossier is a policy answer, and a
+ * signed-in reader must get their own answer, not the anonymous one.
+ */
+export async function fetchPlaceEvidence(placeID: string, options: PlaceEvidenceOptions = {}): Promise<PlaceEvidenceResponse> {
+  const params = new URLSearchParams();
+  if (options.includeNeedsReview) params.set("include", "needs_review");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const signal = options.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/places/${encodeURIComponent(placeID)}/evidence${suffix}`, {
+    credentials: "include",
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
   }
+  return (await response.json()) as PlaceEvidenceResponse;
+}
+
+/**
+ * One person's documented مسالِك for the atlas subject layer (plan 028-D).
+ * Credentials are carried: the layer is a policy answer, and a private
+ * source's segments are invisible to everyone but its readers.
+ */
+export async function fetchPersonMovement(personID: string, signal?: AbortSignal): Promise<PersonMovementResponse> {
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const effectiveSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/persons/${encodeURIComponent(personID)}/movement`, {
+    credentials: "include",
+    signal: effectiveSignal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PersonMovementResponse;
+}
+
+/**
+ * The pairing lane's proposal list (plan 028-F). Moderator-only; a 403 is a
+ * role answer and is surfaced as such by the lane page. The optional `query`
+ * is a text scan across keys, readings, occurrence ids, source titles and our
+ * canonical place names — the fields a moderator actually scans for.
+ */
+export async function fetchPairingCandidates(params: PairingListParams = {}): Promise<PairingListResponse> {
+  const search = new URLSearchParams();
+  search.set("status", params.status ?? "suggested");
+  if (params.query?.trim()) search.set("q", params.query.trim());
+  if (params.placeId?.trim()) search.set("place_id", params.placeId.trim());
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/place-pairings?${search.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PairingListResponse;
+}
+
+/** A moderator's explicit decision for one candidate. */
+export async function decidePairingCandidate(candidateID: string, effect: "alias" | "link" | "reject" | "defer", noteAr = ""): Promise<PairingDecideResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/place-pairings/${encodeURIComponent(candidateID)}/decide`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ effect, noteAr }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PairingDecideResponse;
+}
+
+/**
+ * Reopens a no-effect decision (`rejected` or `deferred`) back to `suggested`.
+ * Fact-producing decisions (`accepted`, `alias_only`) deliberately cannot be
+ * reopened this way, because their alias/crosswalk rows would survive the
+ * reopen and the lane would no longer describe reality.
+ */
+export async function reopenPairingCandidate(candidateID: string, noteAr = ""): Promise<PairingDecideResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/place-pairings/${encodeURIComponent(candidateID)}/reopen`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ noteAr }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PairingDecideResponse;
+}
+
+/** The append-only decision trail for one candidate. Moderator-only. */
+export async function fetchPairingHistory(candidateID: string, signal?: AbortSignal): Promise<PairingHistoryResponse> {
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const effectiveSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/place-pairings/${encodeURIComponent(candidateID)}/history`, {
+    credentials: "include",
+    signal: effectiveSignal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PairingHistoryResponse;
+}
+
+/** The accepted crosswalk for one place, policy-filtered by readable sources. */
+export async function fetchPlaceExternalIDs(placeID: string, signal?: AbortSignal): Promise<PlaceExternalIDsResponse> {
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const effectiveSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/places/${encodeURIComponent(placeID)}/external-ids`, {
+    credentials: "include",
+    signal: effectiveSignal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PlaceExternalIDsResponse;
+}
+
+export interface CreatePlaceRequest {
+  canonical_name_ar: string;
+  place_type: string;
+  notes_ar?: string;
+  longitude?: number;
+  latitude?: number;
+}
+
+export async function fetchPlaceIndex(query = "", signal?: AbortSignal): Promise<{ kind: string; query?: string; items: PlaceView[] }> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/places${suffix}`, { credentials: "include", signal });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { kind: string; query?: string; items: PlaceView[] };
+}
+
+/**
+ * Creates a place through the identity endpoint. The backend stores a new place
+ * as private, so the atlas must refetch with the session to see it; it is not
+ * silently promoted to the public map.
+ */
+export async function createPlace(input: CreatePlaceRequest): Promise<PlaceView> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/places`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as PlaceView;
+}
+
+export async function startGeospatialIntelligence(input: StartGeospatialIntelligenceInput): Promise<GeospatialIntelligenceRun> {
   const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/runs`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as GeospatialIntelligenceRun;
 }
 
 export async function fetchLatestGeospatialIntelligenceRun(query: { question_id?: string; entity_type?: string; entity_id?: string; tree_version_id?: string }): Promise<GeospatialIntelligenceRun | null> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
   const suffix = params.toString();
@@ -1010,9 +1148,6 @@ export async function fetchLatestGeospatialIntelligenceRun(query: { question_id?
 }
 
 export async function fetchGeospatialFindings(runId?: string, status?: string): Promise<GeospatialFinding[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   if (runId) params.set("run_id", runId);
   if (status) params.set("status", status);
@@ -1024,18 +1159,12 @@ export async function fetchGeospatialFindings(runId?: string, status?: string): 
 }
 
 export async function reviewGeospatialFinding(findingId: string, input: ReviewGeospatialFindingInput): Promise<GeospatialFinding> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/geospatial-intelligence/findings/${findingId}/review`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as GeospatialFinding;
 }
 
 export async function startResearchAgent(input: StartResearchAgentInput): Promise<ResearchAgentRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتشغيل وكيل البحث.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs`, {
     method: "POST",
     credentials: "include",
@@ -1048,18 +1177,12 @@ export async function startResearchAgent(input: StartResearchAgentInput): Promis
 }
 
 export async function fetchResearchAgentRun(runId: string): Promise<ResearchAgentRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as ResearchAgentRun;
 }
 
 export async function fetchLatestResearchAgentRun(query: ResearchAgentRunQuery): Promise<ResearchAgentRun | null> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
   const suffix = params.toString();
@@ -1070,9 +1193,6 @@ export async function fetchLatestResearchAgentRun(query: ResearchAgentRunQuery):
 }
 
 export async function generateResearchQuestionCandidates(runId: string): Promise<ResearchQuestionCandidate[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research-agent/runs/${encodeURIComponent(runId)}/question-candidates`, { method: "POST", credentials: "include", signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   const payload = (await response.json()) as { items?: ResearchQuestionCandidate[] };
@@ -1080,9 +1200,6 @@ export async function generateResearchQuestionCandidates(runId: string): Promise
 }
 
 export async function fetchResearchQuestionCandidates(runId: string, status?: string): Promise<ResearchQuestionCandidate[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   const suffix = params.toString();
@@ -1093,18 +1210,12 @@ export async function fetchResearchQuestionCandidates(runId: string, status?: st
 }
 
 export async function reviewResearchQuestionCandidate(candidateId: string, input: ReviewResearchQuestionCandidateInput): Promise<ResearchQuestionCandidate> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/research-question-candidates/${encodeURIComponent(candidateId)}`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
   return (await response.json()) as ResearchQuestionCandidate;
 }
 
 export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Promise<DictionaryIndexResponse> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الفهرس.", 503);
-  }
   const params = new URLSearchParams({ kind, q: query });
   const response = await fetch(`${apiBaseUrl}/api/v1/dictionary?${params.toString()}`, { signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
@@ -1114,9 +1225,6 @@ export async function fetchDictionaryIndex(kind: DictionaryKind, query = ""): Pr
 }
 
 export async function fetchDictionaryDetail(kind: "families" | "tribes" | "people" | "places", id: string): Promise<DictionaryDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض صفحة القاموس.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/dictionary/${kind}/${id}`, { signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1125,9 +1233,6 @@ export async function fetchDictionaryDetail(kind: "families" | "tribes" | "peopl
 }
 
 export async function submitSuggestion(input: SubmitSuggestionInput): Promise<SuggestionRecord> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإرسال المقترح.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/suggestions`, {
     method: "POST",
     credentials: "include",
@@ -1141,9 +1246,6 @@ export async function submitSuggestion(input: SubmitSuggestionInput): Promise<Su
 }
 
 export async function fetchSuggestions(treeId: string): Promise<SuggestionRecord[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض طابور المراجعة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/trees/${treeId}/suggestions`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1153,9 +1255,6 @@ export async function fetchSuggestions(treeId: string): Promise<SuggestionRecord
 }
 
 export async function reviewSuggestion(suggestionId: string, input: ReviewSuggestionInput): Promise<SuggestionRecord> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لحفظ قرار المراجعة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/suggestions/${suggestionId}`, {
     method: "PATCH",
     credentials: "include",
@@ -1171,9 +1270,6 @@ export async function reviewSuggestion(suggestionId: string, input: ReviewSugges
 }
 
 export async function fetchQuestions(): Promise<OpenQuestionRecord[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الأسئلة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1183,9 +1279,6 @@ export async function fetchQuestions(): Promise<OpenQuestionRecord[]> {
 }
 
 export async function fetchQuestion(questionId: string): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض السؤال.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1194,9 +1287,6 @@ export async function fetchQuestion(questionId: string): Promise<QuestionDetail>
 }
 
 export async function createQuestion(input: CreateQuestionInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لحفظ السؤال.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions`, {
     method: "POST",
     credentials: "include",
@@ -1210,9 +1300,6 @@ export async function createQuestion(input: CreateQuestionInput): Promise<Questi
 }
 
 export async function updateQuestion(questionId: string, input: UpdateQuestionInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتحديث السؤال.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}`, {
     method: "PATCH",
     credentials: "include",
@@ -1226,9 +1313,6 @@ export async function updateQuestion(questionId: string, input: UpdateQuestionIn
 }
 
 export async function addQuestionNote(questionId: string, input: QuestionNoteInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإضافة ملاحظة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/notes`, {
     method: "POST",
     credentials: "include",
@@ -1242,9 +1326,6 @@ export async function addQuestionNote(questionId: string, input: QuestionNoteInp
 }
 
 export async function linkQuestionClaim(questionId: string, input: QuestionClaimInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط الادعاء.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/claims`, {
     method: "POST",
     credentials: "include",
@@ -1258,9 +1339,6 @@ export async function linkQuestionClaim(questionId: string, input: QuestionClaim
 }
 
 export async function linkQuestionSource(questionId: string, input: QuestionSourceInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/sources`, {
     method: "POST",
     credentials: "include",
@@ -1274,9 +1352,6 @@ export async function linkQuestionSource(questionId: string, input: QuestionSour
 }
 
 export async function linkQuestionDispute(questionId: string, input: QuestionDisputeInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط الخلاف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/disputes`, {
     method: "POST",
     credentials: "include",
@@ -1290,9 +1365,6 @@ export async function linkQuestionDispute(questionId: string, input: QuestionDis
 }
 
 export async function linkQuestionEntity(questionId: string, input: QuestionEntityInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط الكيان.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/entities`, {
     method: "POST",
     credentials: "include",
@@ -1306,9 +1378,6 @@ export async function linkQuestionEntity(questionId: string, input: QuestionEnti
 }
 
 export async function linkQuestionFinding(questionId: string, input: QuestionFindingInput): Promise<QuestionDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط الملاحظة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/questions/${questionId}/findings`, {
     method: "POST",
     credentials: "include",
@@ -1322,9 +1391,6 @@ export async function linkQuestionFinding(questionId: string, input: QuestionFin
 }
 
 export async function fetchDisputes(): Promise<DisputeRecord[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الخلافات.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/disputes`, { signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1334,9 +1400,6 @@ export async function fetchDisputes(): Promise<DisputeRecord[]> {
 }
 
 export async function createDispute(input: CreateDisputeInput): Promise<DisputeDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإنشاء خلاف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/disputes`, {
     method: "POST",
     credentials: "include",
@@ -1350,9 +1413,6 @@ export async function createDispute(input: CreateDisputeInput): Promise<DisputeD
 }
 
 export async function updateDispute(disputeId: string, input: UpdateDisputeInput): Promise<DisputeDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتحديث الخلاف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${disputeId}`, {
     method: "PATCH",
     credentials: "include",
@@ -1366,9 +1426,6 @@ export async function updateDispute(disputeId: string, input: UpdateDisputeInput
 }
 
 export async function linkDisputeClaim(disputeId: string, input: DisputeClaimInput): Promise<DisputeDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط ادعاء بالخلاف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${disputeId}/claims`, {
     method: "POST",
     credentials: "include",
@@ -1382,9 +1439,6 @@ export async function linkDisputeClaim(disputeId: string, input: DisputeClaimInp
 }
 
 export async function fetchSources(): Promise<SourceMetadata[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض مكتبة المصادر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1394,9 +1448,6 @@ export async function fetchSources(): Promise<SourceMetadata[]> {
 }
 
 export async function fetchSource(sourceId: string): Promise<SourceDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1405,9 +1456,6 @@ export async function fetchSource(sourceId: string): Promise<SourceDetail> {
 }
 
 export async function fetchSourceDependencies(sourceId: string): Promise<SourceDependencyGraph> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض اعتماد المصادر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1416,9 +1464,6 @@ export async function fetchSourceDependencies(sourceId: string): Promise<SourceD
 }
 
 export async function createSourceDependency(sourceId: string, input: CreateSourceDependencyInput): Promise<SourceDependencyGraph> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإضافة اعتماد مصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies`, {
     method: "POST",
     credentials: "include",
@@ -1432,9 +1477,6 @@ export async function createSourceDependency(sourceId: string, input: CreateSour
 }
 
 export async function detectSourceDependencies(sourceId: string): Promise<SourceDependencyGraph> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لفحص اعتماد المصادر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/dependencies/detect`, {
     method: "POST",
     credentials: "include",
@@ -1446,9 +1488,6 @@ export async function detectSourceDependencies(sourceId: string): Promise<Source
 }
 
 export async function reviewSourceDependency(dependencyId: string, input: ReviewSourceDependencyInput): Promise<SourceDependencyGraph> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لمراجعة اعتماد المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-dependencies/${dependencyId}/review`, {
     method: "PATCH",
     credentials: "include",
@@ -1462,9 +1501,6 @@ export async function reviewSourceDependency(dependencyId: string, input: Review
 }
 
 export async function startSourceCharacterization(input: SourceCharacterizationInput): Promise<SourceCharacterizationRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتوصيف المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs`, {
     method: "POST",
     credentials: "include",
@@ -1479,9 +1515,6 @@ export async function startSourceCharacterization(input: SourceCharacterizationI
 }
 
 export async function fetchSourceCharacterizationRun(runId: string): Promise<SourceCharacterizationRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض توصيف المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs/${encodeURIComponent(runId)}`, { credentials: "include", signal: AbortSignal.timeout(7000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1490,9 +1523,6 @@ export async function fetchSourceCharacterizationRun(runId: string): Promise<Sou
 }
 
 export async function fetchLatestSourceCharacterization(input: SourceCharacterizationInput): Promise<SourceCharacterizationRun | null> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض آخر توصيف.", 503);
-  }
   const params = new URLSearchParams({ source_id: input.source_id });
   if (input.question_id) params.set("question_id", input.question_id);
   if (input.claim_id) params.set("claim_id", input.claim_id);
@@ -1506,9 +1536,6 @@ export async function fetchLatestSourceCharacterization(input: SourceCharacteriz
 }
 
 export async function reviewSourceCharacterization(runId: string, input: ReviewSourceCharacterizationInput): Promise<SourceCharacterizationRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لمراجعة التوصيف.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-characterization/runs/${encodeURIComponent(runId)}/review`, {
     method: "PATCH",
     credentials: "include",
@@ -1523,9 +1550,6 @@ export async function reviewSourceCharacterization(runId: string, input: ReviewS
 }
 
 export async function fetchSourceProcessing(sourceId: string): Promise<SourceProcessing> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض معالجة المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/processing`, {
     credentials: "include",
     signal: AbortSignal.timeout(5000),
@@ -1537,9 +1561,6 @@ export async function fetchSourceProcessing(sourceId: string): Promise<SourcePro
 }
 
 export async function fetchSourcePageEvidence(fileId: string, pageNumber: number): Promise<SourcePageEvidence> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لمراجعة صفحة المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}`, {
     credentials: "include",
     cache: "no-store",
@@ -1552,9 +1573,6 @@ export async function fetchSourcePageEvidence(fileId: string, pageNumber: number
 }
 
 export async function reviewSourcePage(fileId: string, pageNumber: number, input: SourcePageReviewInput): Promise<SourcePageReviewRevision> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لحفظ مراجعة صفحة المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/review`, {
     method: "POST",
     credentials: "include",
@@ -1569,9 +1587,6 @@ export async function reviewSourcePage(fileId: string, pageNumber: number, input
 }
 
 export async function reprocessSourceFile(fileId: string, renderDpi: 300 | 400 = 400): Promise<SourceProcessingRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لإعادة معالجة ملف المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/reprocess`, {
     method: "POST",
     credentials: "include",
@@ -1586,9 +1601,6 @@ export async function reprocessSourceFile(fileId: string, renderDpi: 300 | 400 =
 }
 
 export async function reextractReviewedPage(fileId: string, pageNumber: number, input: ReextractReviewedPageInput): Promise<SourceProcessingRun> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لإعادة استخراج النص المصحح.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/reextract-reviewed`, {
     method: "POST",
     credentials: "include",
@@ -1603,9 +1615,6 @@ export async function reextractReviewedPage(fileId: string, pageNumber: number, 
 }
 
 export async function fetchSourcePageEvidenceIndex(fileId: string): Promise<SourcePageEvidenceIndex> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض صفحات PDF الأصلية.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages`, {
     credentials: "include",
     signal: AbortSignal.timeout(10000),
@@ -1617,9 +1626,6 @@ export async function fetchSourcePageEvidenceIndex(fileId: string): Promise<Sour
 }
 
 export async function fetchSourcePagePreview(fileId: string, pageNumber: number): Promise<Blob> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لمعاينة صفحة المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/pages/${pageNumber}/preview`, {
     credentials: "include",
     cache: "no-store",
@@ -1632,7 +1638,6 @@ export async function fetchSourcePagePreview(fileId: string, pageNumber: number)
 }
 
 export async function startSourceChartAnalysis(fileId: string): Promise<ChartAnalysisView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لبدء تحليل الشجرة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/chart-analysis`, {
     method: "POST", credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
   });
@@ -1641,7 +1646,6 @@ export async function startSourceChartAnalysis(fileId: string): Promise<ChartAna
 }
 
 export async function fetchSourceChartAnalysis(fileId: string): Promise<ChartAnalysisView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض تحليل الشجرة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/chart-analysis`, {
     credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
   });
@@ -1650,7 +1654,6 @@ export async function fetchSourceChartAnalysis(fileId: string): Promise<ChartAna
 }
 
 export async function retrySourceChartAnalysis(runId: string): Promise<ChartAnalysisView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعادة المحاولة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-chart-analysis-runs/${encodeURIComponent(runId)}/retry`, {
     method: "POST", credentials: "include", cache: "no-store", signal: AbortSignal.timeout(15000),
   });
@@ -1659,7 +1662,6 @@ export async function retrySourceChartAnalysis(runId: string): Promise<ChartAnal
 }
 
 export async function saveSourceChartAnalysisReview(runId: string, input: ChartAnalysisReviewPayload): Promise<ChartAnalysisView> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لحفظ مراجعة الشجرة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-chart-analysis-runs/${encodeURIComponent(runId)}/review`, {
     method: "PUT", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
@@ -1669,9 +1671,6 @@ export async function saveSourceChartAnalysisReview(runId: string, input: ChartA
 }
 
 export async function createSourceTreeDraft(fileId: string, titleAr?: string): Promise<SourceTreeDraft> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لإنشاء مسودة شجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/tree-drafts`, {
     method: "POST",
     credentials: "include",
@@ -1687,9 +1686,6 @@ export async function createSourceTreeDraft(fileId: string, titleAr?: string): P
 }
 
 export async function fetchSourceTreeDraft(draftId: string): Promise<SourceTreeDraft> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لمراجعة مسودة الشجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}`, {
     credentials: "include",
     cache: "no-store",
@@ -1702,9 +1698,6 @@ export async function fetchSourceTreeDraft(draftId: string): Promise<SourceTreeD
 }
 
 export async function saveSourceTreeDraft(draftId: string, input: SaveSourceTreeDraftInput): Promise<SourceTreeDraft> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لحفظ مسودة الشجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}`, {
     method: "PUT",
     credentials: "include",
@@ -1723,9 +1716,6 @@ export async function saveSourceTreeDraft(draftId: string, input: SaveSourceTree
 // counts, the links and the candidates and writes nothing. The apply run
 // refuses to proceed without this report carried back.
 export async function previewSourceTreeDraftImport(draftId: string, expectedRevision: number): Promise<SourceTreeDraftImportPreview> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لفحص مسودة الشجرة قبل الاستيراد.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/import-preview`, {
     method: "POST",
     credentials: "include",
@@ -1742,9 +1732,6 @@ export async function previewSourceTreeDraftImport(draftId: string, expectedRevi
 }
 
 export async function importSourceTreeDraft(draftId: string, input: SourceTreeDraftImportInput): Promise<SourceTreeDraftImportResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لاستيراد مسودة الشجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/import`, {
     method: "POST",
     credentials: "include",
@@ -1760,9 +1747,6 @@ export async function importSourceTreeDraft(draftId: string, input: SourceTreeDr
 }
 
 export async function retractSourceTreeDraft(draftId: string): Promise<SourceTreeDraftRetractionResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API للتراجع عن استيراد الشجرة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-drafts/${encodeURIComponent(draftId)}/retract`, {
     method: "POST",
     credentials: "include",
@@ -1776,7 +1760,6 @@ export async function retractSourceTreeDraft(draftId: string): Promise<SourceTre
 }
 
 export async function createBookAssertion(fileId: string, input: BookAssertionInput): Promise<BookAssertion> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتسجيل عبارة من الكتاب.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/book-assertions`, {
     method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
@@ -1786,7 +1769,6 @@ export async function createBookAssertion(fileId: string, input: BookAssertionIn
 }
 
 export async function updateBookAssertion(assertionId: string, input: BookAssertionInput & { expectedRevision: number }): Promise<BookAssertion> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتعديل عبارة الكتاب.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-book-assertions/${encodeURIComponent(assertionId)}`, {
     method: "PUT", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
@@ -1796,7 +1778,6 @@ export async function updateBookAssertion(assertionId: string, input: BookAssert
 }
 
 export async function reviewBookAssertion(assertionId: string, input: ReviewBookAssertionInput): Promise<BookAssertion> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لمراجعة عبارة الكتاب.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-book-assertions/${encodeURIComponent(assertionId)}/review`, {
     method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input), signal: AbortSignal.timeout(30000),
@@ -1806,7 +1787,6 @@ export async function reviewBookAssertion(assertionId: string, input: ReviewBook
 }
 
 export async function fetchBookAssertions(fileId: string): Promise<BookAssertion[]> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض عبارات الكتاب.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/book-assertions`, {
     credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10000),
   });
@@ -1815,9 +1795,6 @@ export async function fetchBookAssertions(fileId: string): Promise<BookAssertion
 }
 
 export async function createSourceFileDownloadLink(fileId: string): Promise<SourceFileDownload> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض ملف المصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/download`, {
     credentials: "include",
     cache: "no-store",
@@ -1830,9 +1807,6 @@ export async function createSourceFileDownloadLink(fileId: string): Promise<Sour
 }
 
 export async function uploadSourceFile(sourceId: string, file: File): Promise<SourceFile> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لرفع الملف.", 503);
-  }
   const body = new FormData();
   body.append("file", file);
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/files`, {
@@ -1847,7 +1821,6 @@ export async function uploadSourceFile(sourceId: string, file: File): Promise<So
 }
 
 export async function fetchSessionStatus(): Promise<boolean> {
-  if (!apiBaseUrl) throw new ApiError("تعذر الاتصال بالخدمة. حاول مرة أخرى.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/auth/me`, { credentials: "include", signal: AbortSignal.timeout(5000) });
   if (response.status === 401) return false;
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
@@ -1855,7 +1828,6 @@ export async function fetchSessionStatus(): Promise<boolean> {
 }
 
 export async function fetchResearchAccess(): Promise<{ signedIn: boolean; canReview: boolean; canMerge: boolean }> {
-  if (!apiBaseUrl) throw new ApiError("تعذر الاتصال بالخدمة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/auth/me`, { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(5000) });
   if (response.status === 401) return { signedIn: false, canReview: false, canMerge: false };
   if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
@@ -1864,9 +1836,6 @@ export async function fetchResearchAccess(): Promise<{ signedIn: boolean; canRev
 }
 
 export async function reviewSourceCandidate(candidateId: string, decision: "accepted" | "rejected", noteAr?: string): Promise<SourceCandidate> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لمراجعة المرشح.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-candidates/${candidateId}/review`, {
     method: "PATCH",
     credentials: "include",
@@ -1880,9 +1849,6 @@ export async function reviewSourceCandidate(candidateId: string, decision: "acce
 }
 
 export async function createSource(input: CreateSourceInput): Promise<SourceDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإضافة مصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources`, {
     method: "POST",
     credentials: "include",
@@ -1896,9 +1862,6 @@ export async function createSource(input: CreateSourceInput): Promise<SourceDeta
 }
 
 export async function createSourcePassage(sourceId: string, input: CreatePassageInput): Promise<SourceDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لإضافة مقطع.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/passages`, {
     method: "POST",
     credentials: "include",
@@ -1912,9 +1875,6 @@ export async function createSourcePassage(sourceId: string, input: CreatePassage
 }
 
 export async function createSourceStatement(sourceId: string, input: CreateStatementInput): Promise<SourceDetail> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لتسجيل عبارة مصدر.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/sources/${sourceId}/statements`, {
     method: "POST",
     credentials: "include",
@@ -1928,9 +1888,6 @@ export async function createSourceStatement(sourceId: string, input: CreateState
 }
 
 export async function fetchClaims(): Promise<ClaimSummary[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الادعاءات.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/claims`, { signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1940,9 +1897,6 @@ export async function fetchClaims(): Promise<ClaimSummary[]> {
 }
 
 export async function fetchClaim(claimId: string): Promise<ResearchClaim> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الادعاء.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}`, { credentials: "include", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
@@ -1951,9 +1905,6 @@ export async function fetchClaim(claimId: string): Promise<ResearchClaim> {
 }
 
 export async function createClaim(input: CreateClaimInput): Promise<ResearchClaim> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لحفظ ادعاء.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/claims`, {
     method: "POST",
     credentials: "include",
@@ -1967,9 +1918,6 @@ export async function createClaim(input: CreateClaimInput): Promise<ResearchClai
 }
 
 export async function addClaimEvidence(claimId: string, input: AddEvidenceInput): Promise<ResearchClaim> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لربط الدليل.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/claims/${claimId}/evidence`, {
     method: "POST",
     credentials: "include",
@@ -2044,9 +1992,6 @@ export async function revokeInvitation(treeId: string, invitationId: string): Pr
 }
 
 export async function fetchInvitations(): Promise<TreeInvitation[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لعرض الدعوات.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/invitations`, {
     credentials: "include",
     signal: AbortSignal.timeout(3000),
@@ -2059,9 +2004,6 @@ export async function fetchInvitations(): Promise<TreeInvitation[]> {
 }
 
 export async function acceptInvitation(token: string): Promise<{ invitationId: string; treeId: string; treeName: string; permissionLevel: "view" | "edit" | "review" }> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API أولاً لقبول الدعوة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/invitations/${encodeURIComponent(token)}/accept`, {
     method: "POST",
     credentials: "include",
@@ -2119,9 +2061,6 @@ async function readApiError(response: Response): Promise<ApiError> {
 // first. The confidence orders the queue and decides nothing - every suggestion
 // waits for a person.
 export async function fetchSourceTreeSuggestions(fileId: string, status = "suggested", limit = 50, offset = 0): Promise<SourceTreeSuggestion[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لجلب اقتراحات القراءة.", 503);
-  }
   const query = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/review-queue?${query.toString()}`, {
     credentials: "include",
@@ -2137,7 +2076,6 @@ export async function fetchSourceTreeSuggestions(fileId: string, status = "sugge
 // The review bench asks for counts, not evidence. A summary is permission-
 // scoped on the server and carries no name, image, or judge result.
 export async function fetchNameReviewSummary(fileId: string): Promise<NameReviewSummary> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض ملخص المراجعة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/review-summary`, {
     credentials: "include",
     cache: "no-store",
@@ -2154,7 +2092,6 @@ export async function fetchNameReviewSummary(fileId: string): Promise<NameReview
 // History is read from the append-only ledger. It is not reconstructed from the
 // current queue row, so an earlier answer remains visible after a reopen.
 export async function fetchSourceSuggestionHistory(suggestionId: string, signal?: AbortSignal): Promise<SourceSuggestionHistory> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لعرض سجل المراجعة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/history`, {
     credentials: "include",
     cache: "no-store",
@@ -2171,7 +2108,6 @@ export async function fetchSourceSuggestionHistory(suggestionId: string, signal?
 // Reopening appends an event and returns the occurrence to pending work. It
 // never deletes the decision it supersedes, so expectedRevision is mandatory.
 export async function reopenSourceSuggestion(suggestionId: string, expectedRevision: number, noteAr = ""): Promise<SourceTreeSuggestion> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعادة فتح المراجعة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/reopen`, {
     method: "POST",
     credentials: "include",
@@ -2189,7 +2125,6 @@ export async function previewSourceSuggestionRegion(
   input: SourceSuggestionRegionInput,
   signal?: AbortSignal,
 ): Promise<SourceSuggestionRegionPreview> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لمعاينة حدود القراءة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/region-preview`, {
     method: "POST",
     credentials: "include",
@@ -2210,7 +2145,6 @@ export async function reviseSourceSuggestionRegion(
   suggestionId: string,
   input: SourceSuggestionRegionInput,
 ): Promise<SourceTreeSuggestion> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لحفظ حدود القراءة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/region`, {
     method: "POST",
     credentials: "include",
@@ -2227,7 +2161,6 @@ export async function splitSourceTreeSuggestion(
   suggestionId: string,
   input: SourceSuggestionSplitInput,
 ): Promise<SourceSuggestionSplitResult> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لتقسيم الموضع.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/split`, {
     method: "POST",
     credentials: "include",
@@ -2244,7 +2177,6 @@ export async function mergeSourceTreeSuggestions(
   suggestionId: string,
   input: SourceSuggestionMergeInput,
 ): Promise<SourceSuggestionMergeResult> {
-  if (!apiBaseUrl) throw new ApiError("شغّل Core API لدمج المواضع.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/merge`, {
     method: "POST",
     credentials: "include",
@@ -2270,9 +2202,6 @@ export interface SuggestionCropGeometry {
 }
 
 export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: AbortSignal): Promise<{ tight: Blob; context: Blob; review?: Blob; geometry?: SuggestionCropGeometry }> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لعرض صورة الاسم.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/crop`, {
     credentials: "include",
     cache: "no-store",
@@ -2292,9 +2221,6 @@ export async function fetchSourceSuggestionCrop(suggestionId: string, signal?: A
 // deliberately not automatic: every call is a paid model request and the answer
 // is only a list of hypotheses for the reviewer.
 export async function fetchSourceSuggestionCandidates(suggestionId: string): Promise<string[]> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لطلب اقتراحات الأسماء.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/candidates`, {
     method: "POST",
     credentials: "include",
@@ -2317,7 +2243,6 @@ export async function fetchSourceSuggestionCandidates(suggestionId: string): Pro
 }
 
 export async function fetchReadingCapabilities(fileId: string): Promise<ReadingCapabilities> {
-  if (!apiBaseUrl) throw new ApiError("خدمة القراءة غير متاحة.", 503);
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/reading-capabilities`, {
     credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10000),
   });
@@ -2334,18 +2259,23 @@ export async function fetchReadingCapabilities(fileId: string): Promise<ReadingC
 }
 
 // The review bench asks once for the judge posture. Off and unavailable are
-// normal states, not errors: the bench is fully usable without a judge.
+// normal states, not errors: the bench is fully usable without a judge. A judge the
+// platform cannot reach — no API configured, or one that refuses — is therefore
+// reported as "off", never thrown at the bench. An unparseable configuration is
+// still an error, because that is the platform misreporting itself.
 export async function fetchNameJudgeConfig(): Promise<NameJudgeConfig> {
-  if (!apiBaseUrl) {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}/api/v1/name-judge/config`, {
+      credentials: "include",
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
     return { mode: "off", imageEnabled: false, available: false, sample: 0 };
   }
-  const response = await fetch(`${apiBaseUrl}/api/v1/name-judge/config`, {
-    credentials: "include",
-    cache: "no-store",
-    signal: AbortSignal.timeout(10000),
-  });
   if (!response.ok) {
-    throw new ApiError(await readErrorMessage(response), response.status);
+    return { mode: "off", imageEnabled: false, available: false, sample: 0 };
   }
   const payload = (await response.json()) as Partial<NameJudgeConfig>;
   if (payload.mode !== "off" && payload.mode !== "shadow" && payload.mode !== "active") {
@@ -2366,9 +2296,6 @@ export async function judgeSourceTreeSuggestion(
   suggestionId: string,
   candidates: NameJudgeCandidateInput[],
 ): Promise<NameJudgeResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لطلب رأي النموذج.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/judge`, {
     method: "POST",
     credentials: "include",
@@ -2456,9 +2383,6 @@ export async function decideSourceTreeSuggestion(
   noteAr = "",
   evidence: SourceTreeSuggestionDecisionEvidence = {},
 ): Promise<SourceTreeSuggestionDecisionResult> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لحفظ قرار المراجعة.", 503);
-  }
   const post = (includeEvidence: boolean) => fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/decision`, {
     method: "POST",
     credentials: "include",
@@ -2495,9 +2419,6 @@ export async function decideSourceTreeSuggestion(
 // How often the reader was right without correction, from the decisions the
 // reviewers made.
 export async function fetchSourceSuggestionAccuracy(fileId: string): Promise<SourceSuggestionAccuracy> {
-  if (!apiBaseUrl) {
-    throw new ApiError("شغّل Core API لقياس دقة القراءة.", 503);
-  }
   const response = await fetch(`${apiBaseUrl}/api/v1/source-files/${encodeURIComponent(fileId)}/suggestions/accuracy`, {
     credentials: "include",
     cache: "no-store",
@@ -2515,7 +2436,6 @@ export function nameReadingSignal(signal?: AbortSignal, deadlineMs = 10000): Abo
 }
 
 async function nameRunRequest(path: string, method = "GET", signal?: AbortSignal): Promise<NameReadingRun> {
- if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعداد القراءة المحلية.", 503);
  const response = await fetch(`${apiBaseUrl}/api/v1/${path}`, { method, credentials: "include", cache: "no-store", signal: nameReadingSignal(signal) });
  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
  const result = await response.json() as NameReadingRun;
@@ -2539,7 +2459,6 @@ export function rereadSourceSuggestionLocally(suggestionId: string, signal?: Abo
  return nameRunRequest(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/local-reread`, "POST", signal);
 }
 export async function fetchLocalNameReadings(suggestionId: string, signal?: AbortSignal): Promise<LocalNameReading[]> {
- if (!apiBaseUrl) return [];
  const response = await fetch(`${apiBaseUrl}/api/v1/source-tree-suggestions/${encodeURIComponent(suggestionId)}/local-readings`, { credentials: "include", cache: "no-store", signal: nameReadingSignal(signal) });
  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
  return await response.json() as LocalNameReading[];
@@ -2552,7 +2471,6 @@ export async function fetchLatestLocalRereadRun(suggestionId: string, signal?: A
 
 
 async function nameReviewRequest<T>(path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
- if (!apiBaseUrl) throw new ApiError("شغّل Core API لإعداد المراجعة.", 503);
  const response = await fetch(`${apiBaseUrl}/api/v1/${path}`, { method, credentials: "include", cache: "no-store",
   headers: body === undefined ? undefined : { "Content-Type": "application/json" },
   body: body === undefined ? undefined : JSON.stringify(body), signal: nameReadingSignal(signal, 6000) });

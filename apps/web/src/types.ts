@@ -2179,6 +2179,36 @@ export interface MapFeature {
   evidenceId?: string;
   evidenceText?: string;
   evidenceStatus?: string;
+  /** The claim this geographic record serves; the inspector's exit into research. */
+  claimId?: string;
+  /** Outer ring of a region polygon, closed and vertex-capped by the API. */
+  ring?: [number, number][];
+  /**
+   * For regions: how many of this reader's visible place records fall inside the
+   * ring, derived server-side through the same policy as every other layer. The
+   * client never counts markers into a region, because that number would silently
+   * change answer with visibility.
+   */
+  placeCount?: number;
+  /**
+   * For regions under a year window: how many documented or disputed
+   * associations at caller-visible places inside the ring carry a dated window
+   * that intersects it, and how many of those attach to a person the caller may
+   * read. Derived server-side through the same predicates as the layers they
+   * count; absent unless a window was requested (the API omits them at zero).
+   */
+  associationCount?: number;
+  personCount?: number;
+  /**
+   * For regions under a year window: whether the region's own record carries
+   * dated validity at all. A region with no dates passes every window — the
+   * keep-all rule — but drawing it identically under every era would read as
+   * "this region existed in the era", which a NULL column never said. Under a
+   * window, `false` draws the region in the vocabulary's weakest voice and the
+   * inspector says so; absent when no window was asked, because with no
+   * window there is no era claim to evaluate.
+   */
+  datedInWindow?: boolean;
   longitude?: number;
   latitude?: number;
   fromLongitude?: number;
@@ -2226,6 +2256,166 @@ export interface MapResponse {
   toYear?: number;
   status?: string;
   features: MapFeature[];
+  /** The bound that was applied, so a short map can be told from a cut one. */
+  limit?: number;
+  /** True when the API held more features than the bound allowed. */
+  truncated?: boolean;
+}
+
+/**
+ * One line of a place's evidence dossier: the passage that was read, where it
+ * sits in its source, the source itself, and the association it evidences. A
+ * `needs_review` row is a different epistemic object from an accepted one and
+ * the folio never blurs them — the moderation band carries the lane.
+ */
+export interface PlaceEvidenceRow {
+  id: string;
+  status: string;
+  passageId?: string;
+  passageText?: string;
+  pageNumber?: number;
+  locator?: string;
+  sourceId?: string;
+  sourceTitle?: string;
+  sourceEdition?: string;
+  sourceCitation?: string;
+  associationId?: string;
+  associationEntity?: string;
+  associationRelation?: string;
+  associationStatus?: string;
+}
+
+/** The bounded dossier for one place, read through the caller's policy. */
+export interface PlaceEvidenceResponse {
+  placeId: string;
+  status: string;
+  evidence: PlaceEvidenceRow[];
+  limit?: number;
+  truncated?: boolean;
+}
+
+/** One documented segment of a person's subject layer (plan 028-D). */
+export interface PersonMovementPlace {
+  id?: string;
+  name?: string;
+  longitude?: number;
+  latitude?: number;
+}
+
+export interface PersonMovementEvent {
+  id: string;
+  status: string;
+  certainty?: string;
+  timeFrom?: string;
+  timeTo?: string;
+  period?: string;
+  notes?: string;
+  sourceId?: string;
+  sourceTitle?: string;
+  sourceCitation?: string;
+  fromPlace?: PersonMovementPlace;
+  toPlace?: PersonMovementPlace;
+}
+
+/** A person's documented مسالِك, bounded server-side. */
+export interface PersonMovementResponse {
+  personId: string;
+  personName?: string;
+  events: PersonMovementEvent[];
+  limit?: number;
+  truncated?: boolean;
+}
+
+/** One machine-proposed pairing awaiting adjudication (plan 028-F). */
+export interface PairingCandidate {
+  id: string;
+  sourceId: string;
+  sourceTitle?: string;
+  sourceLicense?: string;
+  externalKey: string;
+  occurrenceId: string;
+  ourPlaceId?: string;
+  ourPlaceName?: string;
+  normalizedCandidates: string;
+  longitude?: number;
+  latitude?: number;
+  nameSimilarity: number;
+  distanceKm?: number;
+  rank?: number;
+  coordinateDeltaKm?: number;
+  status: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNoteAr?: string;
+  createdAt?: string;
+}
+
+export interface PairingListParams {
+  status?: string;
+  query?: string;
+  placeId?: string;
+}
+
+export interface PairingHistoryEvent {
+  id: string;
+  candidateId: string;
+  reviewerId: string;
+  reviewerName?: string;
+  action: string;
+  fromStatus: string;
+  toStatus: string;
+  noteAr?: string;
+  createdAt?: string;
+}
+
+export interface PairingHistoryResponse {
+  candidateId: string;
+  history: PairingHistoryEvent[];
+  limit?: number;
+  truncated?: boolean;
+}
+
+export interface PairingListResponse {
+  candidates: PairingCandidate[];
+  status: string;
+  limit?: number;
+  truncated?: boolean;
+}
+
+export interface PairingDecideResponse {
+  candidate: PairingCandidate;
+  effect: string;
+}
+
+export interface PlaceExternalID {
+  placeId: string;
+  sourceId: string;
+  sourceTitle?: string;
+  externalKey: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNoteAr?: string;
+}
+
+export interface PlaceExternalIDsResponse {
+  placeId: string;
+  externalIds: PlaceExternalID[];
+  limit?: number;
+  truncated?: boolean;
+}
+
+/** A place as the identity CRUD endpoints expose it. */
+export interface PlaceView {
+  id: string;
+  kind: string;
+  nameAr: string;
+  placeType: string;
+  parentPlaceId?: string;
+  notesAr?: string;
+  longitude?: number;
+  latitude?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface GeospatialScope {

@@ -76,14 +76,14 @@ func TestGeospatialIntelligenceRunSeparatesSourceAndInferredLayers(t *testing.T)
 	}
 	defer pool.Exec(ctx, `DELETE FROM source_statements WHERE id = $1`, statementID)
 	associationIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
-	associationData := [][2]int{{0, 0}, {1, 1}, {2, 2}}
-	for index, pair := range associationData {
-		if _, err := pool.Exec(ctx, `INSERT INTO geographic_associations (id, entity_type, entity_id, place_id, relation_type, time_from, time_to, status, certainty, source_id, created_by) VALUES ($1, 'person', $2, $3, 'documented_in', '1200-01-01', '1205-12-31', 'interpreted', 'approximate', $4, $5)`, associationIDs[index], personID, placeIDs[pair[0]], sourceIDs[index%2], actorID); err != nil {
+	// All three associations cover the same years. Al-Hasa ↔ Al-Ula (882 km)
+	// and Riyadh ↔ Al-Ula (1150 km) overlap in time and exceed the 500 km
+	// radius → two contradiction findings; Riyadh ↔ Al-Hasa (300 km) is inside
+	// the radius → one spatial cluster.
+	for index, associationID := range associationIDs {
+		if _, err := pool.Exec(ctx, `INSERT INTO geographic_associations (id, entity_type, entity_id, place_id, relation_type, time_from, time_to, status, certainty, source_id, created_by) VALUES ($1, 'person', $2, $3, 'documented_in', '1200-01-01', '1210-12-31', 'interpreted', 'approximate', $4, $5)`, associationID, personID, placeIDs[index], sourceIDs[index%2], actorID); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := pool.Exec(ctx, `UPDATE geographic_associations SET time_from = '1206-01-01', time_to = '1209-12-31' WHERE id = $1`, associationIDs[1]); err != nil {
-		t.Fatal(err)
 	}
 	defer pool.Exec(ctx, `DELETE FROM geographic_associations WHERE id = ANY($1::uuid[])`, associationIDs)
 	evidenceIDs := make([]uuid.UUID, 0, len(associationIDs))
@@ -112,7 +112,7 @@ func TestGeospatialIntelligenceRunSeparatesSourceAndInferredLayers(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.ReportStatus != ReportStatusSucceeded || run.FindingCount != 1 || run.Report.PlaceResolution.ResolvedCount < 3 || len(run.Report.Clusters) != 1 || len(run.Report.MigrationHypotheses) < 1 {
+	if run.ReportStatus != ReportStatusSucceeded || run.FindingCount != 2 || run.Report.PlaceResolution.ResolvedCount < 3 || len(run.Report.Clusters) != 1 || len(run.Report.MigrationHypotheses) < 1 {
 		t.Fatalf("unexpected geospatial run: %+v", run)
 	}
 	if run.Report.MigrationHypotheses[0].Status != "platform_hypothesis" || run.Report.MigrationHypotheses[0].Layer != "platform_inferred" {
@@ -131,7 +131,7 @@ func TestGeospatialIntelligenceRunSeparatesSourceAndInferredLayers(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 1 || findings[0].Layer != "platform_inferred" {
+	if len(findings) != 2 || findings[0].Layer != "platform_inferred" {
 		t.Fatalf("unexpected geospatial findings: %+v", findings)
 	}
 	reviewed, err := service.ReviewFinding(ctx, actorID.String(), findings[0].ID, ReviewInput{Decision: "investigate", CreateQuestion: true, QuestionTitleAR: "مراجعة تعارض جغرافي"})
@@ -152,6 +152,105 @@ func TestGeospatialIntelligenceRunSeparatesSourceAndInferredLayers(t *testing.T)
 	}
 	if sourceRun.ReportStatus != ReportStatusSucceeded || len(sourceRun.Report.SourceGeography) != 1 || sourceRun.Report.SourceGeography[0].ResolvedMentions < 3 {
 		t.Fatalf("unexpected source geography report: %+v", sourceRun)
+	}
+}
+
+func TestGeospatialRadiusFilterRespectsMetricDistance(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	pool, err := db.NewPool(context.Background(), db.PoolConfig{URL: databaseURL})
+	if err != nil || pool == nil {
+		t.Fatal("database is unavailable")
+	}
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	actorID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name_ar) VALUES ($1, $2, 'باحث جغرافي')`, actorID, geospatialTestEmail(actorID)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testsupport.CleanupSyntheticActors(t, pool, actorID) })
+	personID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO people (id, canonical_name_ar, normalized_name_ar, identity_status, created_by) VALUES ($1, 'شخص جغرافي', 'شخص جغرافي', 'reviewed', $2)`, personID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM people WHERE id = $1`, personID)
+	// Two places ~280 km apart (Riyadh to Al-Hasa). A 100 km radius keeps no edge
+	// between them; a 400 km radius keeps exactly one, whose metric distance is
+	// the pair's own distance. The old degree/radian mismatch united any pair.
+	placeIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	placeNames := []string{"موضع قريب", "موضع بعيد"}
+	coordinates := [][2]float64{{46.6753, 24.7136}, {49.5658, 25.3647}}
+	for index, placeID := range placeIDs {
+		if _, err := pool.Exec(ctx, `INSERT INTO places (id, canonical_name_ar, normalized_name_ar, place_type, geometry, created_by) VALUES ($1, $2, $3, 'city', ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)`, placeID, placeNames[index], placeNames[index], coordinates[index][0], coordinates[index][1], actorID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer pool.Exec(ctx, `DELETE FROM places WHERE id = ANY($1::uuid[])`, placeIDs)
+	// The edges answer to the same eligibility loadAssociations applies
+	// (plan 029-B4), and a sourceless association is not one its loader can
+	// return — the LEFT JOIN demands a public independent source. The fixture
+	// therefore carries the source the eligibility gates require, so the
+	// radius being tested is the variable and not the source predicate.
+	sourceID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO sources (id, title_ar, source_type, dependency_status, visibility, created_by) VALUES ($1, 'مصدر القرب', 'book', 'independent', 'public', $2)`, sourceID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM sources WHERE id = $1`, sourceID)
+	associationIDs := []uuid.UUID{uuid.New(), uuid.New()}
+	for index, associationID := range associationIDs {
+		if _, err := pool.Exec(ctx, `INSERT INTO geographic_associations (id, entity_type, entity_id, place_id, relation_type, time_from, time_to, status, certainty, source_id, created_by) VALUES ($1, 'person', $2, $3, 'documented_in', '1200-01-01', '1205-12-31', 'interpreted', 'approximate', $4, $5)`, associationID, personID, placeIDs[index], sourceID, actorID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer pool.Exec(ctx, `DELETE FROM geographic_associations WHERE id = ANY($1::uuid[])`, associationIDs)
+	// Filter the returned edges to the pair this test created. The shared
+	// development database already holds seeded associations near those places;
+	// the production query intentionally returns everything within the radius it
+	// is asked for, so the test scopes to its own pair. Both association IDs and
+	// place IDs are compared because the production query enumerates place pairs
+	// and then joins associations onto them.
+	pairBetween := func(edges []spatialEdge, first, second string) []spatialEdge {
+		if first > second {
+			first, second = second, first
+		}
+		if second == "" {
+			second = first
+		}
+		out := make([]spatialEdge, 0, len(edges))
+		for _, edge := range edges {
+			if edge.FirstID == first && edge.SecondID == second {
+				out = append(out, edge)
+			}
+		}
+		return out
+	}
+	first, second := associationIDs[0].String(), associationIDs[1].String()
+	if first > second {
+		first, second = second, first
+	}
+	small, err := loadSpatialEdges(ctx, pool, 100000, 1000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(pairBetween(small, first, second)); got != 0 {
+		t.Fatalf("a 100 km radius should keep no edge between places ~280 km apart, got %d", got)
+	}
+	// The place-pair join must also see same-place pairs: two associations on one
+	// place are distance zero and must cluster. The production query below asserts
+	// the metric distance for the cross-place pair at 340 km (the seeded pair is
+	// 300 km apart).
+	large, err := loadSpatialEdges(ctx, pool, 340000, 1000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(pairBetween(large, first, second)); got != 1 {
+		t.Fatalf("a 340 km radius should keep exactly one edge for this pair (300 km apart), got %d (edges: %+v)", got, large)
+	}
+	edge := pairBetween(large, first, second)[0]
+	if edge.Distance < 200 || edge.Distance > 400 {
+		t.Fatalf("edge distance should be the pair's metric distance in kilometres, got %f", edge.Distance)
 	}
 }
 

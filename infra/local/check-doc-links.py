@@ -69,6 +69,7 @@ DOCUMENTS = (
     "plans/024-durable-local-name-reading.md",
     "plans/025-name-context-and-shadow-preparation.md",
     "plans/026-name-review-repair-and-verification.md",
+    "plans/027-geo-map-atlas.md",
     "apps/web/e2e/README.md",
     "infra/security/scanner-exceptions.md",
     "services/core-api/platform/ratelimit/ratelimit.go",

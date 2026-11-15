@@ -118,6 +118,27 @@ func mapViewport(w http.ResponseWriter, query url.Values) (*geography.Viewport, 
 	return viewport, true
 }
 
+func (h geographyHandler) placeEvidence(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	includeNeedsReview := r.URL.Query().Get("include") == "needs_review"
+	report, err := h.Service.PlaceEvidence(r.Context(), r.PathValue("placeID"), actorID, includeNeedsReview)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (h geographyHandler) personMovement(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	report, err := h.Service.PersonMovement(r.Context(), r.PathValue("personID"), actorID)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 // optionalUserID resolves the session when there is one. A caller without a session
 // is the anonymous reader, which is the map's default state.
 func (h geographyHandler) optionalUserID(r *http.Request) string {
@@ -137,6 +158,9 @@ func writeGeographyError(w http.ResponseWriter, err error) {
 	switch err {
 	case geography.ErrValidation:
 		status = http.StatusBadRequest
+		message = err.Error()
+	case geography.ErrPlaceEvidenceForbidden:
+		status = http.StatusForbidden
 		message = err.Error()
 	case geography.ErrNotFound:
 		status = http.StatusNotFound
