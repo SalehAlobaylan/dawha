@@ -56,15 +56,30 @@ type TreeReference struct {
 	VersionNum int    `json:"versionNumber"`
 }
 
+// ClaimReference is one claim row in a dossier, with the badge tallies beside
+// it (plan 031-B). The tallies are the badge semantics' interim rule (plan
+// 034 will replace them with the independence-weighted reading): each counts
+// DISTINCT sources rows behind the claim's evidence — never raw passage
+// counts, because two passages of one source are one receipt — and each is
+// recomputed per request over the sources THIS reader may open, so a reader's
+// badge is their own answer, never a global one.
 type ClaimReference struct {
-	ID            string `json:"id"`
-	SubjectType   string `json:"subjectType"`
-	SubjectID     string `json:"subjectId"`
-	Predicate     string `json:"predicate"`
-	ObjectType    string `json:"objectType"`
-	ObjectID      string `json:"objectId"`
-	Status        string `json:"status"`
-	EvidenceCount int    `json:"evidenceCount"`
+	ID          string `json:"id"`
+	SubjectType string `json:"subjectType"`
+	SubjectID   string `json:"subjectId"`
+	Predicate   string `json:"predicate"`
+	ObjectType  string `json:"objectType"`
+	ObjectID    string `json:"objectId"`
+	Status      string `json:"status"`
+	// ✓ يدعم — distinct sources with a supporting relation.
+	SupportingSources int `json:"supportingSources"`
+	// ✗ يناقض — distinct sources with contradicts/refutes.
+	ContradictingSources int `json:"contradictingSources"`
+	// Mention-only (سياق) — distinct sources whose relation contextualizes.
+	MentionOnlySources int `json:"mentionOnlySources"`
+	// ClaimNotes is the claim's own words: the row cites, never asserts
+	// (stipulation 4), and the cites include the claim's own sentence.
+	ClaimNotes string `json:"claimNotes,omitempty"`
 }
 
 type QuestionReference struct {
@@ -92,6 +107,15 @@ type Detail struct {
 	Sources         []ReferenceView     `json:"sources"`
 	Questions       []QuestionReference `json:"questions"`
 	Migrations      []ReferenceView     `json:"migrations"`
+	// BadgeCaption is the badge derivation caption (plan 031-B): the tallies'
+	// meaning travels beside the tallies, so a client can never render the
+	// badges without their reading.
+	BadgeCaption string `json:"badgeCaption"`
+	// TallySemantics is the tallies' own version (plan 034-B, stipulation 2):
+	// `independence_v1` says the counts are LINEAGE-aware (a reuse cluster's
+	// copies count once); the field rides every response so a semantics change
+	// is visible, never silent.
+	TallySemantics string `json:"tallySemantics"`
 }
 
 type Service struct {
@@ -230,6 +254,11 @@ func (s *Service) Get(ctx context.Context, kind, id, actorID string) (Detail, er
 	if result.Migrations == nil {
 		result.Migrations = []ReferenceView{}
 	}
+	// The badge caption travels with every dossier (plan 031-B): the tallies'
+	// derivation is the caption, so the numbers cannot render without their
+	// reading.
+	result.BadgeCaption = EvidenceBadgeCaption
+	result.TallySemantics = TallySemanticsIndependence
 	return result, nil
 }
 
@@ -275,7 +304,52 @@ func (s *Service) tribeDetail(ctx context.Context, policy visibility.Policy, id 
 	if item.Aliases, err = s.aliases(ctx, s.Pool, "tribe_aliases", "tribe_id", id); err != nil {
 		return Detail{}, err
 	}
+	// The dossier's association receipts (plan 031-A): the places the tribe's
+	// own associations name, the claims that speak of it, and the sources
+	// behind both — the same predicate discipline the person page keeps. A
+	// public tribe does not launder a private source, and an association with
+	// no source is a platform record, so it stays.
+	placeParams := visibility.NewParams()
+	tribeRef := placeParams.Add(id)
+	placeVisible := policy.ReferencePredicate(placeParams, "place", "p.id")
+	associationSource := policy.SourcePredicate(placeParams, "ga.source_id")
+	if item.Places, err = s.references(ctx, s.Pool, `
+		SELECT DISTINCT p.id, p.canonical_name_ar, p.place_type, ga.status
+		FROM places p JOIN geographic_associations ga ON ga.place_id = p.id
+		WHERE ga.entity_type = 'tribe' AND ga.entity_id = `+tribeRef+` AND `+placeVisible+` AND (ga.source_id IS NULL OR `+associationSource+`)
+		ORDER BY 2`, placeParams.Args()...); err != nil {
+		return Detail{}, err
+	}
+	if item.Claims, err = s.entityClaims(ctx, s.Pool, policy, "tribe", id); err != nil {
+		return Detail{}, err
+	}
+	if item.Sources, err = s.tribeSources(ctx, s.Pool, policy, id); err != nil {
+		return Detail{}, err
+	}
 	return item, nil
+}
+
+// tribeSources is the tribe dossier's distinct-source read (plan 031-A): the
+// sources behind the tribe's associations and behind its claims' evidence,
+// one row per source, policy-filtered. Bounded by the references helper.
+func (s *Service) tribeSources(ctx context.Context, q dbExecutor, policy visibility.Policy, tribeID uuid.UUID) ([]ReferenceView, error) {
+	params := visibility.NewParams()
+	tribeRef := params.Add(tribeID)
+	sourcePredicate := policy.SourcePredicate(params, "s.id")
+	claimPredicate := policy.ClaimPredicate(params, "c.id")
+	return s.references(ctx, q, `
+		SELECT DISTINCT s.id, s.title_ar, s.source_type, ga.status
+		FROM sources s JOIN geographic_associations ga ON ga.source_id = s.id
+		WHERE `+sourcePredicate+` AND ga.entity_type = 'tribe' AND ga.entity_id = `+tribeRef+`
+		UNION
+		SELECT DISTINCT s.id, s.title_ar, s.source_type, c.status
+		FROM sources s
+		JOIN source_statements ss ON ss.source_id = s.id
+		JOIN claim_evidence ce ON ce.source_statement_id = ss.id
+		JOIN claims c ON c.id = ce.claim_id
+		WHERE `+sourcePredicate+` AND `+claimPredicate+`
+		  AND ((c.subject_type = 'tribe' AND c.subject_id = `+tribeRef+`) OR (c.object_type = 'tribe' AND c.object_id = `+tribeRef+`))
+		ORDER BY 2`, params.Args()...)
 }
 
 func (s *Service) personDetail(ctx context.Context, policy visibility.Policy, id uuid.UUID) (Detail, error) {
@@ -318,7 +392,7 @@ func (s *Service) personDetail(ctx context.Context, policy visibility.Policy, id
 	if item.PublishedTrees, err = s.publishedTrees(ctx, s.Pool, id); err != nil {
 		return Detail{}, err
 	}
-	if item.Claims, err = s.claims(ctx, s.Pool, policy, id); err != nil {
+	if item.Claims, err = s.entityClaims(ctx, s.Pool, policy, "person", id); err != nil {
 		return Detail{}, err
 	}
 	if item.Sources, err = s.personSources(ctx, s.Pool, policy, id); err != nil {
@@ -582,18 +656,68 @@ func (s *Service) publishedTrees(ctx context.Context, q dbExecutor, personID uui
 	return items, rows.Err()
 }
 
-func (s *Service) claims(ctx context.Context, q dbExecutor, policy visibility.Policy, personID uuid.UUID) ([]ClaimReference, error) {
+// entityClaims is the shared subject/object receipt read for an identity
+// entity (person, family, tribe…): the same badge select and the same claim
+// policy, scoped by the entity type — a tribe's dossier reads its own claims,
+// not the person lens' shape.
+func (s *Service) entityClaims(ctx context.Context, q dbExecutor, policy visibility.Policy, entityType string, entityID uuid.UUID) ([]ClaimReference, error) {
 	params := visibility.NewParams()
-	personRef := params.Add(personID)
+	entityRef := params.Add(entityID)
 	predicate := policy.ClaimPredicate(params, "c.id")
-	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE `+predicate+` AND ((c.subject_type = 'person' AND c.subject_id = `+personRef+`) OR (c.object_type = 'person' AND c.object_id = `+personRef+`)) ORDER BY c.updated_at DESC`, params.Args()...)
+	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, COALESCE(c.notes_ar, ''), `+claimBadgeSelect(policy, params)+` FROM claims c WHERE `+predicate+` AND ((c.subject_type = '`+entityType+`' AND c.subject_id = `+entityRef+`) OR (c.object_type = '`+entityType+`' AND c.object_id = `+entityRef+`)) ORDER BY c.updated_at DESC`, params.Args()...)
+}
+
+// TallySemanticsIndependence is the tallies' version key (plan 034-B,
+// stipulation 2): the badges now count distinct textual LINEAGES — a reuse
+// cluster's own rows (the corpus's near-verbatim copies) count ONCE, and a
+// singleton passage counts as its own lineage. The version rides every
+// response so the tallies' change is never silent.
+const TallySemanticsIndependence = "independence_v1"
+
+// EvidenceBadgeCaption travels with every dossier so no consumer has to
+// remember what the numbers count: the derivation is the caption — the
+// COMPUTED one (plan 034-B's tallySemantics = independence_v1).
+const EvidenceBadgeCaption = "الشارات تُحسب حسب سلاسل النصوص المستقلة خلف شواهد الادعاء — تحليل الاستقلال v1"
+
+// claimBadgeSelect is the badge trio's SELECT fragment: three per-claim
+// tallies, each counting distinct INDEPENDENT lineages behind the claim's
+// evidence (plan 034-B, supersedes the 031-B sources-distinct read):
+//
+//   - the receipt's own source (its passage's, else its statement's);
+//   - a passage inside a reuse cluster carries its cluster's OWN lineage id,
+//     so near-verbatim copies across sources count ONCE (the classical
+//     sources' copying each other is NOT corroboration);
+//   - a passage in no cluster is its OWN lineage (the singleton rule);
+//   - each count runs only over rows THIS reader may open, so a badge stays
+//     the reader's own answer — and a private source hides its lineage with
+//     it (no laundering).
+func claimBadgeSelect(policy visibility.Policy, params *visibility.Params) string {
+	supporting := policy.SourcePredicate(params, "src.id")
+	contradicting := policy.SourcePredicate(params, "src.id")
+	mentionOnly := policy.SourcePredicate(params, "src.id")
+	lineage := func(relation string, srcPredicate string) string {
+		return `(
+		SELECT count(DISTINCT lineage) FROM (
+			SELECT COALESCE(trm.cluster_id, 'src:' || src.id::text) AS lineage
+			FROM claim_evidence ce
+			LEFT JOIN text_reuse_members trm ON trm.passage_id = ce.source_passage_id
+			LEFT JOIN source_passages sp ON sp.id = ce.source_passage_id
+			LEFT JOIN source_statements ss ON ss.id = ce.source_statement_id
+			LEFT JOIN sources src ON src.id = COALESCE(sp.source_id, ss.source_id)
+			WHERE ce.claim_id = c.id AND ` + relation + ` AND (src.id IS NULL OR ` + srcPredicate + `)
+		) lineages
+	)`
+	}
+	return lineage("ce.relation = 'supports'", supporting) + ` AS supporting_sources,
+	` + lineage("ce.relation IN ('contradicts', 'refutes')", contradicting) + ` AS contradicting_sources,
+	` + lineage("ce.relation = 'contextualizes'", mentionOnly) + ` AS mention_only_sources`
 }
 
 func (s *Service) placeClaims(ctx context.Context, q dbExecutor, policy visibility.Policy, placeID uuid.UUID) ([]ClaimReference, error) {
 	params := visibility.NewParams()
 	placeRef := params.Add(placeID)
 	predicate := policy.ClaimPredicate(params, "c.id")
-	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, (SELECT count(*) FROM claim_evidence ce WHERE ce.claim_id = c.id) FROM claims c WHERE `+predicate+` AND c.place_id = `+placeRef+` ORDER BY c.updated_at DESC`, params.Args()...)
+	return s.claimRefs(ctx, q, `SELECT c.id, c.subject_type, c.subject_id, c.predicate, c.object_type, c.object_id, c.status, COALESCE(c.notes_ar, ''), `+claimBadgeSelect(policy, params)+` FROM claims c WHERE `+predicate+` AND c.place_id = `+placeRef+` ORDER BY c.updated_at DESC`, params.Args()...)
 }
 
 func (s *Service) claimRefs(ctx context.Context, q dbExecutor, query string, args ...any) ([]ClaimReference, error) {
@@ -606,7 +730,8 @@ func (s *Service) claimRefs(ctx context.Context, q dbExecutor, query string, arg
 	for rows.Next() {
 		var item ClaimReference
 		var subjectID, objectID pgtype.UUID
-		if err := rows.Scan(&item.ID, &item.SubjectType, &subjectID, &item.Predicate, &item.ObjectType, &objectID, &item.Status, &item.EvidenceCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.SubjectType, &subjectID, &item.Predicate, &item.ObjectType, &objectID, &item.Status,
+			&item.ClaimNotes, &item.SupportingSources, &item.ContradictingSources, &item.MentionOnlySources); err != nil {
 			return nil, err
 		}
 		item.SubjectID = uuidString(subjectID)

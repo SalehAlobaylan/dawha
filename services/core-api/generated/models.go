@@ -219,6 +219,65 @@ type EntityResolutionRun struct {
 	CompletedAt          pgtype.Timestamptz
 }
 
+type ExternalPlaceCandidate struct {
+	ID                   pgtype.UUID
+	SourceID             pgtype.UUID
+	ExternalKey          string
+	OccurrenceID         string
+	OurPlaceID           pgtype.UUID
+	NormalizedCandidates string
+	Coordinates          interface{}
+	NameSimilarity       float64
+	DistanceKm           pgtype.Float8
+	Rank                 pgtype.Int4
+	CoordinateDeltaKm    pgtype.Float8
+	Status               string
+	DecidedBy            pgtype.UUID
+	DecidedAt            pgtype.Timestamptz
+	DecisionNoteAr       pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
+type ExternalRegionCandidate struct {
+	ID               pgtype.UUID
+	SourceID         pgtype.UUID
+	PlateKey         string
+	OccurrenceID     string
+	CropPx           []byte
+	Coordinates      interface{}
+	RegionGeometry   interface{}
+	LabelTextAr      string
+	LabelReadBy      pgtype.UUID
+	LabelReadAt      pgtype.Timestamptz
+	EraLabel         string
+	InkDensity       pgtype.Float8
+	ComponentCount   pgtype.Int4
+	LabelConfidence  pgtype.Float8
+	TransformRmsKm   pgtype.Float8
+	Rank             pgtype.Int4
+	Status           string
+	DecidedBy        pgtype.UUID
+	DecidedAt        pgtype.Timestamptz
+	DecisionNoteAr   pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	PromotedRegionID pgtype.UUID
+}
+
+type ExternalRegionCandidateDecision struct {
+	ID             pgtype.UUID
+	CandidateID    pgtype.UUID
+	ReviewerID     pgtype.UUID
+	Action         string
+	FromStatus     string
+	ToStatus       string
+	NoteAr         string
+	Diff           []byte
+	CreatedAt      pgtype.Timestamptz
+	SequenceNumber pgtype.Int8
+}
+
 type Family struct {
 	ID               pgtype.UUID
 	CanonicalNameAr  string
@@ -317,6 +376,7 @@ type HistoricalRegion struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	CandidateID      pgtype.UUID
 }
 
 type Interpretation struct {
@@ -376,6 +436,37 @@ type MigrationEvent struct {
 	NotesAr     pgtype.Text
 	CreatedBy   pgtype.UUID
 	CreatedAt   pgtype.Timestamptz
+	Kind        pgtype.Text
+}
+
+type MovementCorridor struct {
+	ID             pgtype.UUID
+	SubjectType    string
+	SubjectID      pgtype.UUID
+	TitleAr        string
+	Season         pgtype.Text
+	ValidFrom      pgtype.Int4
+	ValidTo        pgtype.Int4
+	Status         string
+	Certainty      string
+	SourceID       pgtype.UUID
+	DecidedBy      pgtype.UUID
+	DecidedAt      pgtype.Timestamptz
+	DecisionNoteAr pgtype.Text
+	CreatedBy      pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type MovementCorridorStop struct {
+	ID               pgtype.UUID
+	CorridorID       pgtype.UUID
+	SequenceNumber   int32
+	PlaceID          pgtype.UUID
+	DayCountFromPrev pgtype.Int4
+	ModeFromPrev     pgtype.Text
+	NotesAr          pgtype.Text
+	CreatedAt        pgtype.Timestamptz
 }
 
 type OpenQuestion struct {
@@ -387,6 +478,17 @@ type OpenQuestion struct {
 	CreatedBy     pgtype.UUID
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type PairingDecisionHistory struct {
+	ID          pgtype.UUID
+	CandidateID pgtype.UUID
+	ReviewerID  pgtype.UUID
+	Action      string
+	FromStatus  string
+	ToStatus    string
+	NoteAr      string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type Person struct {
@@ -430,6 +532,18 @@ type Place struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	Visibility       string
+}
+
+type PlaceExternalID struct {
+	PlaceID        pgtype.UUID
+	SourceID       pgtype.UUID
+	ExternalKey    string
+	DecidedBy      pgtype.UUID
+	DecidedAt      pgtype.Timestamptz
+	DecisionNoteAr pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ID             pgtype.UUID
 }
 
 type PlatformFinding struct {
@@ -498,6 +612,32 @@ type QuestionSource struct {
 	QuestionID pgtype.UUID
 	SourceID   pgtype.UUID
 	Role       string
+}
+
+type RegionTileTask struct {
+	ID        pgtype.UUID
+	SourceID  pgtype.UUID
+	PlateKey  string
+	TileID    string
+	BoxPx     []byte
+	Status    string
+	ClaimedBy pgtype.UUID
+	ClaimedAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type RegionTileTaskEvent struct {
+	ID             pgtype.UUID
+	TaskID         pgtype.UUID
+	ReviewerID     pgtype.UUID
+	Action         string
+	FromStatus     string
+	ToStatus       string
+	NoteAr         string
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	SequenceNumber pgtype.Int8
 }
 
 type ResearchAgentEvidence struct {
@@ -1538,6 +1678,22 @@ type TemporalAnalysisRun struct {
 	UpdatedAt                  pgtype.Timestamptz
 }
 
+type TextReuseCluster struct {
+	ID        string
+	Method    string
+	Threshold float64
+	PairCount int32
+	CreatedAt pgtype.Timestamptz
+}
+
+type TextReuseMember struct {
+	ClusterID  string
+	PassageID  pgtype.UUID
+	Similarity float64
+	Excerpt    string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Tree struct {
 	ID              pgtype.UUID
 	NameAr          string
@@ -1648,6 +1804,56 @@ type TribeAlias struct {
 	ValueAr           string
 	NormalizedValueAr string
 	CreatedAt         pgtype.Timestamptz
+}
+
+type TribeDuplicateCandidate struct {
+	ID             pgtype.UUID
+	TribeAID       pgtype.UUID
+	TribeBID       pgtype.UUID
+	MatchedA       string
+	MatchedB       string
+	NameSimilarity float64
+	Status         string
+	DecidedBy      pgtype.UUID
+	DecidedAt      pgtype.Timestamptz
+	DecisionNoteAr pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type TribeDuplicateDecision struct {
+	ID          pgtype.UUID
+	CandidateID pgtype.UUID
+	ReviewerID  pgtype.UUID
+	Action      string
+	FromStatus  string
+	ToStatus    string
+	NoteAr      string
+	Diff        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type TribePassageHint struct {
+	ID              pgtype.UUID
+	TribeID         pgtype.UUID
+	SourcePassageID pgtype.UUID
+	MatchedForms    []string
+	Status          string
+	DecidedBy       pgtype.UUID
+	DecidedAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type TribePassageHintDecision struct {
+	ID         pgtype.UUID
+	HintID     pgtype.UUID
+	TribeID    pgtype.UUID
+	SourceID   pgtype.UUID
+	ReviewerID pgtype.UUID
+	Action     string
+	NoteAr     string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type User struct {

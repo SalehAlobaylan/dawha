@@ -1,0 +1,54 @@
+{
+  "header": {
+    "storymap_version": "0.1.0",
+    "generator": "infra/local/build-journey-narrative.py",
+    "contract": "documented rows only; receipts per slide; platform_inferred never exports"
+  },
+  "storymap": {
+    "title": "حرب",
+    "era": [
+      1800,
+      1950
+    ],
+    "slides": [
+      {
+        "slide_type": "event",
+        "title_ar": "العلا — الرياض",
+        "text_ar": "حدث مسجَّل: العلا — الرياض (1852-03-01 .. 1852-05-30).",
+        "location": {
+          "lat": 24.7136,
+          "lon": 46.6753
+        },
+        "era": [
+          "1852-03-01",
+          "1852-05-30"
+        ],
+        "receipts": {
+          "event_id": "03300000-0000-0000-0000-000000000001",
+          "source_id": "30000000-0000-0000-0000-000000000002",
+          "citation_ar": "المجلد الأول، صفحة 84"
+        }
+      },
+      {
+        "slide_type": "corridor",
+        "title_ar": "مرحلة الصيف: العلا — الرياض",
+        "text_ar": "مرحلة الصيف: العلا — الرياض عن الموسم summer.",
+        "location": {
+          "lat": 26.6084,
+          "lon": 38.1333
+        },
+        "era": null,
+        "receipts": {
+          "corridor_id": "03320000-0000-0000-0000-000000000001",
+          "stop_sequence": 1,
+          "place": "العلا",
+          "day_count_from_prev": null,
+          "mode": "",
+          "source_id": "b0000000-0000-0000-0000-00000000e004",
+          "citation_ar": "Admiralty War Staff, Intelligence Division, Tribal Map of Arabia (No. CB. 1152), Ordnance Survey, 1916."
+        }
+      }
+    ],
+    "generated_at": "2026-11-18"
+  }
+}

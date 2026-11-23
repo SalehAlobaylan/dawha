@@ -1,4 +1,4 @@
-.PHONY: install dev build lint typecheck test ocr-benchmark-test ocr-corpus-check ocr-benchmark db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval name-eval name-pipeline-doctor name-pipeline-db-verify name-pipeline-verify name-pipeline-guard-test name-pipeline-prepare name-pipeline-status name-pipeline-resume name-pipeline-cancel name-pipeline-local-reread docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
+.PHONY: install dev build lint typecheck test ocr-benchmark-test ocr-corpus-check ocr-benchmark db-up db-down db-migrate db-seed db-embed db-embed-check sqlc verify verify-full db-verify migration-check migration-test generated-check security-scan security-scan-npm security-scan-go security-scan-python security-scan-secrets ai-eval name-eval extraction-eval name-pipeline-doctor name-pipeline-db-verify name-pipeline-verify name-pipeline-guard-test plate-georef-test plate-region-candidates-test plate-tile-tasks-test journey-narrative-test name-pipeline-prepare name-pipeline-status name-pipeline-resume name-pipeline-cancel name-pipeline-local-reread docs-check graph-benchmark retrieval-report cost-report e2e e2e-clean storage-up storage-down db-sweep
 
 install:
 	npm install
@@ -9,7 +9,7 @@ dev:
 	npm run dev
 
 build:
-	npm run build
+	VITE_API_URL="$${VITE_API_URL:-http://localhost:$(E2E_API_PORT)}" npm run build
 	cd services/core-api && go build -o /tmp/dawha-core-api ./cmd/api
 
 lint:
@@ -236,7 +236,7 @@ ocr-benchmark:
 # It is the gate, and the gate is only worth something if it is the one everybody
 # runs. `verify-full` and `make e2e` both build on what it checks, and neither
 # replaces it.
-verify: lint typecheck test build docs-check ocr-benchmark-test ocr-corpus-check name-pipeline-guard-test
+verify: lint typecheck test build docs-check ocr-benchmark-test ocr-corpus-check name-pipeline-guard-test plate-georef-test plate-region-candidates-test plate-tile-tasks-test journey-narrative-test
 
 # generated-check fails when the committed sqlc output no longer matches what the
 # current db/migrations produce.
@@ -396,6 +396,67 @@ NAME_PIPELINE_TEST_PACKAGES ?= ./...
 export NAME_PIPELINE_TEST_GATE NAME_PIPELINE_TEST_PACKAGES
 name-pipeline-guard-test:
 	@python3 -m unittest discover -s infra/local -p 'test_name_pipeline_test_env.py'
+
+# plate-georef-test pins the plan 030-D quality gate. The committed plate
+# georeferences must stay identifiable (a real conic apex, a cone constant inside
+# the open unit interval, latitude decreasing with radius), their held-out RMS
+# must stay inside the published gate, and the recorded kilometre figures must
+# still reconcile with the recorded residuals. It is pure and offline, so it
+# belongs in the fast gate: a transform that silently drifts is worse than no
+# transform, because everything the evidence atlas derives from a plate goes
+# through it and a wrong transform looks exactly like a right one.
+#
+#   make plate-georef-test
+plate-georef-test:
+	@python3 -m unittest discover -s infra/local -p 'test_plate_georef.py'
+
+# plate-region-candidates-test pins the plan 030-E proposal contract. A label
+# box is a proposal, so the test refuses to let one become a reading: no label
+# text, no era, no decided status; every crop inside its plate's neatline; every
+# coordinate reproducible from the published 030-D transform; the recorded
+# uncertainty floor equal to that transform's held-out RMS; and a plate without
+# a transform contributing nothing at all. Pure and offline, so it belongs in
+# the fast gate - a proposal that quietly turns into a fact is the failure mode
+# the whole plan exists to prevent.
+#
+#   make plate-region-candidates-test
+plate-region-candidates-test:
+	@python3 -m unittest discover -s infra/local -p 'test_plate_region_candidates.py'
+
+# plate-tile-tasks-test pins the plan 030-F work-allocation contract. The tile
+# grid must be reproducible from the committed 030-D frame and 030-E
+# proposals, cover every proposal exactly once (a partition), store squares
+# only (membership is derived at read time, so no member list can go stale),
+# and plant every row open with an idempotent seed that can never disturb a
+# claim, a pass or a retirement. Pure and offline, so it belongs in the fast
+# gate: a work queue that silently forks or loses proposals is a queue a
+# reviewer cannot trust to close a tile.
+#
+#   make plate-tile-tasks-test
+plate-tile-tasks-test:
+	@python3 -m unittest discover -s infra/local -p 'test_plate_tile_tasks.py'
+
+# journey-narrative-test pins the plan 033-F export's own contract: a
+# documented-only artifact whose every slide carries its receipts, bounded by
+# the era window it names, refusing an empty window. It reads the same
+# committed data the generator reads (the documented container path) and
+# never touches plates or sources.
+journey-narrative-test:
+	@cd services/ai-research && .venv/bin/python -m pytest ../../infra/local/test_journey_narrative.py -q
+
+# extraction-eval measures the extraction factory from its own tables (plan
+# 030-G): rows per week by lane, the decision mix and acceptance rate per
+# source over decided rows only, the plates' recorded RMS floors, and dira
+# coverage in km² of actually traced geometry — which is zero today, stated
+# as zero, never estimated from label centres. Read-only through the
+# documented container path; it writes the docs/benchmarks artifact and
+# prints the human summary. It needs the db container running; it is NOT in
+# `verify` because it measures, and a gate that fails for lack of data would
+# teach everyone to look away.
+#
+#   make extraction-eval
+extraction-eval:
+	@python3 infra/local/extraction_eval.py
 
 # One command for the whole name-review bench on isolated data. The guard runs
 # first, and each gate revalidates the environment in its own process, so a

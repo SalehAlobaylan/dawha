@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "generator": "infra/local/build-tribe-pairings.py",
+    "generatedAt": "2026-11-18",
+    "similarityGate": 0.55,
+    "similarityProxy": "difflib SequenceMatcher·0.5 + shared-trigram Jaccard·0.5 (the 028-F proxy for pg_trgm similarity)",
+    "pairOrderRule": "the pair's row stores the two tribes sorted by canonical name, so a pair is one row forever",
+    "laneRule": "no statement of this lane deletes or updates a tribes row; the effects are an alias insert, a pointer relationship, or a rejection, and the decisions are append-only (plan 005's deferral stands)",
+    "certaintyRule": "a candidate is a measurable proposal; the reviewer's own answer lands in the decision history beside it"
+  },
+  "candidates": [
+    {
+      "tribeAId": "b0000000-0000-0000-0000-c00000000001",
+      "tribeBId": "b0000000-0000-0000-0000-c00000000002",
+      "tribeA": "حرب",
+      "tribeB": "شمّر",
+      "matchedA": "قبيلة حرب",
+      "matchedB": "قبيلة شمر",
+      "nameSimilarity": 0.6032
+    },
+    {
+      "tribeAId": "b0000000-0000-0000-0000-c00000000001",
+      "tribeBId": "b0000000-0000-0000-0000-c00000000006",
+      "tribeA": "حرب",
+      "tribeB": "مطير",
+      "matchedA": "قبيلة حرب",
+      "matchedB": "قبيلة مطير",
+      "nameSimilarity": 0.5684
+    },
+    {
+      "tribeAId": "b0000000-0000-0000-0000-c00000000002",
+      "tribeBId": "b0000000-0000-0000-0000-c00000000006",
+      "tribeA": "شمّر",
+      "tribeB": "مطير",
+      "matchedA": "قبيلة شمر",
+      "matchedB": "قبيلة مطير",
+      "nameSimilarity": 0.6211
+    },
+    {
+      "tribeAId": "b0000000-0000-0000-0000-c00000000005",
+      "tribeBId": "b0000000-0000-0000-0000-c00000000003",
+      "tribeA": "عتيبة",
+      "tribeB": "عنزة",
+      "matchedA": "قبيلة عتيبة",
+      "matchedB": "قبيلة عنزة",
+      "nameSimilarity": 0.5997
+    }
+  ]
+}

@@ -23,8 +23,12 @@ type personMovementPlace struct {
 }
 
 type PersonMovementEvent struct {
-	ID             string              `json:"id"`
-	Status         string              `json:"status"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	// Kind is 033-D's taxonomy key, verbatim (see movement-events.ts): an
+	// event whose sources narrate without classifying stays an honest NULL,
+	// captioned «حدث غير مُصنَّف بعد» by the front-end, never a guess.
+	Kind           string              `json:"kind,omitempty"`
 	Certainty      string              `json:"certainty,omitempty"`
 	TimeFrom       string              `json:"timeFrom,omitempty"`
 	TimeTo         string              `json:"timeTo,omitempty"`
@@ -70,7 +74,7 @@ func (s *Service) PersonMovement(ctx context.Context, personID string, actorID s
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT p.canonical_name_ar,
-		       m.id, m.status, COALESCE(m.certainty, ''),
+		       m.id, m.status, COALESCE(m.kind, ''), COALESCE(m.certainty, ''),
 		       m.time_from, m.time_to, COALESCE(m.notes_ar, ''),
 		       COALESCE(src.id::text, ''), COALESCE(src.title_ar, ''), COALESCE(src.citation_ar, ''),
 		       COALESCE(pf.id::text, ''), pf.canonical_name_ar,
@@ -108,7 +112,7 @@ func (s *Service) PersonMovement(ctx context.Context, personID string, actorID s
 		var fromID, toID pgtype.Text
 		var fromName, toName pgtype.Text
 		var fromLng, fromLat, toLng, toLat pgtype.Float8
-		if err := rows.Scan(&personName, &event.ID, &event.Status, &event.Certainty,
+		if err := rows.Scan(&personName, &event.ID, &event.Status, &event.Kind, &event.Certainty,
 			&timeFrom, &timeTo, &event.Notes,
 			&event.SourceID, &event.SourceTitle, &event.SourceCitation,
 			&fromID, &fromName, &fromLng, &fromLat,

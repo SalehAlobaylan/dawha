@@ -16,7 +16,7 @@ test.describe("run a research query", () => {
     const account = newAccount("research");
     await registerThroughUi(page, account);
 
-    await page.goto("/research");
+    await page.goto("/research?view=evidence");
     const form = page.locator(".research-query-form");
     await expect(form).toBeVisible();
     const question = `من كان والد عبدالله في سجل ${account.displayName}؟`;
@@ -46,7 +46,7 @@ test.describe("run a research query", () => {
   test("a query about nothing in the corpus says it cannot answer", async ({ page, request }) => {
     await waitForApi(request);
     await page.context().clearCookies();
-    await page.goto("/research");
+    await page.goto("/research?view=evidence");
     const form = page.locator(".research-query-form");
     // A term that appears nowhere in the corpus, AND that is too short for the
     // retrieval index to manufacture a match for it.
@@ -87,7 +87,7 @@ test.describe("run a research query", () => {
 
   test("an empty question cannot be submitted", async ({ page, request }) => {
     await waitForApi(request);
-    await page.goto("/research");
+    await page.goto("/research?view=evidence");
     const form = page.locator(".research-query-form");
     // The submit control is disabled until there is something to ask, so no
     // request is spent on an empty question.

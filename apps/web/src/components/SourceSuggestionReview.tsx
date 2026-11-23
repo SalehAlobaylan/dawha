@@ -19,9 +19,11 @@ import {
   Scissors,
   Sparkles,
   Undo2,
+  Users,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { ApiError } from "../lib/api";
 import type { SuggestionCropGeometry } from "../lib/api";
 import { SourceSpotMarker } from "./SourceSpotMarker";
@@ -1759,6 +1761,21 @@ export function SourceSuggestionReview({ fileId, sourceTitle, onClose, onContinu
                   </div>
                   <LocalNameReadingTool key={current.id} suggestionId={current.id} available={readingCapabilities?.localReader.ready === true} unavailableReason={readerReason(readingCapabilities?.localReader.reason, true)} onReadings={setLocalReadings} buttonRef={localRereadButtonRef} />
                   {aiError ? <p className="name-bench-ai-error">{aiError}</p> : null}
+                  {(() => {
+                    // The كُنية card (plan 031-F): the reading carries a nisba
+                    // the dictionary resolves to. A suggestion only — it
+                    // asserts nothing about membership and writes nothing; the
+                    // link opens the tribe's dossier.
+                    const tribal = reviewPreparation?.suggestionId === current.id ? reviewPreparation.context?.tribalSuggestion : undefined;
+                    if (!tribal) return null;
+                    return (
+                      <div className="name-bench-nisba" role="note" aria-label="كُنية القبيلة">
+                        <Users size={13} />
+                        <span>الاسم المقروء يحمل نسبة إلى <strong>{tribal.tribeName}</strong> <small>({tribal.nisbaForm})</small> — اقتراح بلا إثبات انتماء.</span>
+                        <Link to="/search" search={{ view: "index", kind: "tribes", q: tribal.tribeName }} className="inline-link">افتح البطاقة <ChevronLeft size={12} /></Link>
+                      </div>
+                    );
+                  })()}
                   {candidates.length > 0 ? (
                     <div className="name-bench-chips">
                       {candidates.map((candidate, index) => (

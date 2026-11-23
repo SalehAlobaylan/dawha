@@ -1,0 +1,513 @@
+{
+  "meta": {
+    "source": "Wikidata SPARQL rdfs:label + schema:description + skos:altLabel (Arabic), P31=Q133311",
+    "license": "CC0 — all Wikidata structured data is released to the public domain",
+    "endpoint": "https://query.wikidata.org/sparql",
+    "fetchedAt": "2026-11-18",
+    "provenance": "live",
+    "generator": "infra/local/build-tribe-seeds.py",
+    "checksumSha256": "fc180a870a1443af9c49d6bc7978cd17e0cbda779e62d3007c116a5ae23ead55",
+    "selfCheck": "Q-ids and Arabic labels verified 2026-11-15; the generator refuses to emit when the live labels disagree with the curated canonicals",
+    "aliasPolicy": "spelling = normalises equal to the canonical (strict normaliser + the بني/بنو synonym rule); curated = hand-picked attested alternates (CURATED_ALIASES); every other altLabel is excluded and logged under `excluded` — cross-tribe and ancestor-group noise (أزد on غامد، قضاعة on حرب، state/era names on بنو تميم) must not reach the alias tables",
+    "descriptionPolicy": "descriptions are Wikidata Arabic schema:description verbatim, including any historical claims Wikidata carries — those claims are sourced display text, not platform assertions; the dossier review flow grades them like any other claim"
+  },
+  "tribes": [
+    {
+      "canonical_name_ar": "حرب",
+      "wikidata_qid": "Q3827613",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000001",
+      "description_ar": "قبيلة عربية خولانية",
+      "aliases": [
+        {
+          "value_ar": "بني حرب",
+          "normalized_value_ar": "بني حرب",
+          "kind": "curated"
+        },
+        {
+          "value_ar": "قبيلة حرب",
+          "normalized_value_ar": "قبيله حرب",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "شمّر",
+      "wikidata_qid": "Q2230906",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000002",
+      "description_ar": "قبيلة طائية قحطانية",
+      "aliases": [
+        {
+          "value_ar": "الطنايا",
+          "normalized_value_ar": "الطنايا",
+          "kind": "curated"
+        },
+        {
+          "value_ar": "قبيلة شمر",
+          "normalized_value_ar": "قبيله شمر",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "عنزة",
+      "wikidata_qid": "Q3780541",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000003",
+      "description_ar": "قبيلة ربعية عدنانية",
+      "aliases": [
+        {
+          "value_ar": "قبيلة عنزة",
+          "normalized_value_ar": "قبيله عنزه",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "بنو تميم",
+      "wikidata_qid": "Q2633574",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000004",
+      "description_ar": "",
+      "aliases": [
+        {
+          "value_ar": "بني تميم",
+          "normalized_value_ar": "بني تميم",
+          "kind": "spelling"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "عتيبة",
+      "wikidata_qid": "Q2060531",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000005",
+      "description_ar": "قبيلة عربية هوازنية مضرية عدنانية أصلها من بادية الحجاز وسكنت نجد لأول مرة في القرن السادس عشر",
+      "aliases": [
+        {
+          "value_ar": "قبيلة عتيبة",
+          "normalized_value_ar": "قبيله عتيبه",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "مطير",
+      "wikidata_qid": "Q2704114",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000006",
+      "description_ar": "قبيلة قيسية مضرية عدنانية",
+      "aliases": [
+        {
+          "value_ar": "قبيلة مطير",
+          "normalized_value_ar": "قبيله مطير",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "بنو خالد",
+      "wikidata_qid": "Q3827617",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000007",
+      "description_ar": "قبيلة عربية عدنانية",
+      "aliases": [
+        {
+          "value_ar": "بني خالد",
+          "normalized_value_ar": "بني خالد",
+          "kind": "spelling"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "هوازن",
+      "wikidata_qid": "Q3777166",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000008",
+      "description_ar": "قبيلة عربية قيسية عدنانية",
+      "aliases": [
+        {
+          "value_ar": "قبيلة هوازن",
+          "normalized_value_ar": "قبيله هوازن",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "مضر",
+      "wikidata_qid": "Q3628813",
+      "tribe_uuid": "b0000000-0000-0000-0000-c00000000009",
+      "description_ar": "جد القبائل المضرية العدنانية",
+      "aliases": [
+        {
+          "value_ar": "المضرية",
+          "normalized_value_ar": "المضريه",
+          "kind": "curated"
+        },
+        {
+          "value_ar": "بنو مضر",
+          "normalized_value_ar": "بنو مضر",
+          "kind": "curated"
+        }
+      ]
+    },
+    {
+      "canonical_name_ar": "قحطان",
+      "wikidata_qid": "Q57876879",
+      "tribe_uuid": "b0000000-0000-0000-0000-c0000000000a",
+      "description_ar": "قبيلة عربية مذحجية",
+      "aliases": [
+        {
+          "value_ar": "قبيلة قحطان",
+          "normalized_value_ar": "قبيله قحطان",
+          "kind": "curated"
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "qid": "Q3827613",
+      "value": "قحطان الكبرى",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "قبايل حرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "قبائل خولان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "قبائل حرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "قبيلة حرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "حرب بن سعد بن سعد بن خولان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "بني حرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "بنو حرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "الحربي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "قضاعة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "خولان بن عامر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827613",
+      "value": "خولان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2230906",
+      "value": "شمر",
+      "reason": "normalises equal to the canonical name"
+    },
+    {
+      "qid": "Q2230906",
+      "value": "شمر",
+      "reason": "normalises equal to the canonical name"
+    },
+    {
+      "qid": "Q2230906",
+      "value": "الطنايا",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2230906",
+      "value": "السناعيس",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2230906",
+      "value": "قبيلة شمر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3780541",
+      "value": "قبيلة عنزة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3780541",
+      "value": "عنزه",
+      "reason": "normalises equal to the canonical name"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بني تميم",
+      "reason": "aliases another curated tribe's canonical"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "هامة مضر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "منطقه مران",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "منطقة مران",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "ملوك الخليج المنذر بن ساوى البحرين قطر خوزستان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "لا غالب إلا الله .",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "كعام الدجال",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "قبيلة بني تميم",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "قبائل تميم",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "عقوبة الدجال",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "سلايل إسماعيل السؤدد الأنفة العزة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "سدنة الكعبة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "ذي الأعواد سيد مُضر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "دولة آل معمّر نجد",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "خوال العرب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بني العنبر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بني أُسيِّد ...",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بنو قريع",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بنو دارم بنو يربوع",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "الدارمي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "أهل الوبر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "أشد الناس في الملاحم",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "أرادف ملوك الحيرة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "الحنظلي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "الوهابية",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "الأغالبة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "عمرو بن تميم",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "بني سعد",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "العمروي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2633574",
+      "value": "السعدي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2060531",
+      "value": "عتيبي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2060531",
+      "value": "عتبان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2060531",
+      "value": "العتبان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2060531",
+      "value": "العتيبي",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2704114",
+      "value": "مطيري",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q2704114",
+      "value": "قبيلة مطير",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827617",
+      "value": "بني خالد",
+      "reason": "aliases another curated tribe's canonical"
+    },
+    {
+      "qid": "Q3827617",
+      "value": "خوالد",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3827617",
+      "value": "الخوالد",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "هوازن1",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "عامر بن صعصعه",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "عامر بن صعصعة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بني كلاب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بني عامر بن صعصعه",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بني عامر بن صعصعة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بني سعد بن بكر",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بنو عامر بن صعصعة",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "الكعبان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "بنو كلاب",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3777166",
+      "value": "هوزان",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    },
+    {
+      "qid": "Q3628813",
+      "value": "مضرية",
+      "reason": "altLabel is not a spelling variant of the canonical (cross-tribe/ancestor-group noise stays out; log here)"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/auth"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
@@ -35,6 +36,35 @@ func (h researchHandler) query(w http.ResponseWriter, r *http.Request) {
 		if h.Logger != nil {
 			h.Logger.Error("research query failed", "error", err)
 		}
+		writeResearchError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// referenceCheck reads the caller's text through the corpus's own lexicon
+// (plan 034-C): bounded, read-only, the dictionary's own optional-actor gate.
+func (h researchHandler) referenceCheck(w http.ResponseWriter, r *http.Request) {
+	if h.Service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "research service is not configured"})
+		return
+	}
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	if strings.TrimSpace(actorID) == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "reference check requires a signed-in reader"})
+		return
+	}
+	var input research.ReferenceCheckRequest
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ReferenceCheck(r.Context(), actorID, input)
+	if err != nil {
 		writeResearchError(w, err)
 		return
 	}

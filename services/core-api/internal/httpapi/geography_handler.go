@@ -118,10 +118,90 @@ func mapViewport(w http.ResponseWriter, query url.Values) (*geography.Viewport, 
 	return viewport, true
 }
 
+// tribeMovement reads one tribe's documented مسالِك (plan 033-A): the person
+// movement's own contract over MOVED-LAYERED subjects, with the optional
+// needs-review include kept away — a subject read is the accepted-only lane.
+func (h geographyHandler) tribeMovement(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	report, err := h.Service.TribeMovement(r.Context(), r.PathValue("tribeID"), actorID)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// atlasRelations reads the era's recorded relationship arcs (plan 032-E):
+// the claims lane's own anchors, the 200-edge discipline intact.
+func (h geographyHandler) atlasRelations(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	fromYear, toYear := 0, 0
+	if raw := r.URL.Query().Get("from"); raw != "" {
+		if year, err := strconv.Atoi(raw); err == nil && year >= -10000 && year <= 10000 {
+			fromYear = year
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from must be an integer year"})
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("to"); raw != "" {
+		if year, err := strconv.Atoi(raw); err == nil && year >= -10000 && year <= 10000 {
+			toYear = year
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to must be an integer year"})
+			return
+		}
+	}
+	report, err := h.Service.AtlasRelations(r.Context(), actorID, fromYear, toYear)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// subjectCorridors reads one subject's recorded routes (plan 033-B): the
+// ordered stops' own geometry for the atlas's corridor layer.
+func (h geographyHandler) subjectCorridors(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	report, err := h.Service.SubjectCorridors(r.Context(), r.PathValue("subjectType"), r.PathValue("subjectID"), actorID, r.URL.Query().Get("season"), r.URL.Query().Get("mode"))
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// plateRegister is the atlas's plate layer source data (plan 032-A): the
+// plates and their validated transforms, or the honest disabled caption.
+func (h geographyHandler) plateRegister(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	report, err := h.Service.PlateRegister(r.Context(), actorID)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (h geographyHandler) placeEvidence(w http.ResponseWriter, r *http.Request) {
 	actorID := h.optionalUserID(r)
 	includeNeedsReview := r.URL.Query().Get("include") == "needs_review"
 	report, err := h.Service.PlaceEvidence(r.Context(), r.PathValue("placeID"), actorID, includeNeedsReview)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// tribeEvidence is the tribal dossier's receipt folio (plan 031-A), the
+// place-evidence contract read over the tribe's own associations and claims.
+func (h geographyHandler) tribeEvidence(w http.ResponseWriter, r *http.Request) {
+	actorID := h.optionalUserID(r)
+	includeNeedsReview := r.URL.Query().Get("include") == "needs_review"
+	report, err := h.Service.TribeEvidence(r.Context(), r.PathValue("tribeID"), actorID, includeNeedsReview)
 	if err != nil {
 		writeGeographyError(w, err)
 		return
@@ -170,4 +250,43 @@ func writeGeographyError(w http.ResponseWriter, err error) {
 		message = "geography service is not configured"
 	}
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (h geographyHandler) sourceOccurrences(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	input := geography.OccurrenceInput{
+		Query: query.Get("q"), ID: r.PathValue("occurrenceID"), TribeID: query.Get("tribe"),
+		After: query.Get("after"), IncludeUndated: query.Get("undated") == "true",
+	}
+	for _, window := range []struct {
+		key string
+		dst **int
+	}{{"from", &input.From}, {"to", &input.To}} {
+		if raw := query.Get(window.key); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < -9999 || value > 9999 {
+				writeGeographyError(w, geography.ErrValidation)
+				return
+			}
+			*window.dst = &value
+		}
+	}
+	result, err := h.Service.SourceOccurrences(r.Context(), h.optionalUserID(r), input)
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h geographyHandler) atlasSourceRelationship(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	result, err := h.Service.AtlasSourceRelationship(r.Context(), h.optionalUserID(r), query.Get("first"), query.Get("second"))
+	if err != nil {
+		writeGeographyError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, result)
 }

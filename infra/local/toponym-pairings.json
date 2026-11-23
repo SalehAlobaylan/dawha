@@ -1,0 +1,2569 @@
+{
+  "meta": {
+    "source": "toponym spans over infra/local/tribe-gazetteer-passages.json (Plan 030-B)",
+    "lane": "existing external_place_candidates (0063), source row = Phase-A Wikidata (e002)",
+    "license": "CC0 (Wikidata identity resolution); Lorimer text public domain (030-B)",
+    "generator": "infra/local/build-toponym-pairings.py",
+    "fetchedAt": "2026-11-16",
+    "reviewerRule": "candidates with our_place_id NULL can only be rejected or deferred — the pairing service refuses to accept into a vacuum (028-F)",
+    "extraction": "capitalized 1–3-word sequences, stoplist-filtered, 8/passage cap, multi-word ranked first",
+    "resolution": "wbsearchentities → batched P17/P31 gate (region-checked, humans rejected); no hit passes → recorded unresolved, never force-fitted"
+  },
+  "candidates": [
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q169977",
+      "occurrence_id": "lorimer-v2:1:hijaz",
+      "our_place_id": "20000000-0000-0000-0000-000000000003",
+      "reading": "قراءة لوريمر: 'Hijaz' — ويكي بيانات: Hejaz (الحجاز) — geographic region in western Arabia",
+      "name_similarity": 1.0,
+      "passage": 1,
+      "phrase": "Hijaz",
+      "rank": 1
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q234167",
+      "occurrence_id": "lorimer-v2:1:makkah",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Makkah' — ويكي بيانات: Mecca Province (منطقة مكة المكرمة) — province of Saudi Arabia",
+      "name_similarity": 0.0,
+      "passage": 1,
+      "phrase": "Makkah",
+      "rank": 2
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q236027",
+      "occurrence_id": "lorimer-v2:1:madinah",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Madinah' — ويكي بيانات: Medina Province (منطقة المدينة المنورة) — province of Saudi Arabia",
+      "name_similarity": 0.0,
+      "passage": 1,
+      "phrase": "Madinah",
+      "rank": 3
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q16122245",
+      "occurrence_id": "lorimer-v2:2:jabal-shammar",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Jabal Shammar' — ويكي بيانات: Shammar Mountains (جبل شمر) — mountain range in Saudi Arabia",
+      "name_similarity": 0.0,
+      "passage": 2,
+      "phrase": "Jabal Shammar",
+      "rank": 4
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q16122245",
+      "occurrence_id": "lorimer-v2:3:jabal-shammar",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Jabal Shammar' — ويكي بيانات: Shammar Mountains (جبل شمر) — mountain range in Saudi Arabia",
+      "name_similarity": 0.0,
+      "passage": 3,
+      "phrase": "Jabal Shammar",
+      "rank": 5
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q208154",
+      "occurrence_id": "lorimer-v2:4:najd",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Najd' — ويكي بيانات: Najd (نجد) — central region of Arabia",
+      "name_similarity": 0.0,
+      "passage": 4,
+      "phrase": "Najd",
+      "rank": 6
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q234167",
+      "occurrence_id": "lorimer-v2:4:makkah",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Makkah' — ويكي بيانات: Mecca Province (منطقة مكة المكرمة) — province of Saudi Arabia",
+      "name_similarity": 0.0,
+      "passage": 4,
+      "phrase": "Makkah",
+      "rank": 7
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q133462567",
+      "occurrence_id": "lorimer-v2:6:qatif-oasis",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Qatif Oasis' — ويكي بيانات: Al Qatif oasis architecture (عمارة القطيف) — the architectural style native to Al-Qatif, Saudi Arabia.",
+      "name_similarity": 0.0,
+      "passage": 6,
+      "phrase": "Qatif Oasis",
+      "rank": 8
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q5989780",
+      "occurrence_id": "lorimer-v2:6:sanjaq",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Sanjaq' — ويكي بيانات: Sanjaq — village in West Azerbaijan, Iran",
+      "name_similarity": 0.0,
+      "passage": 6,
+      "phrase": "Sanjaq",
+      "rank": 9
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q32204519",
+      "occurrence_id": "lorimer-v2:7:wadi-bishah",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Wadi Bishah' — ويكي بيانات: Wādī Bīshah",
+      "name_similarity": 0.0,
+      "passage": 7,
+      "phrase": "Wadi Bishah",
+      "rank": 10
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q32212843",
+      "occurrence_id": "lorimer-v2:7:wadi-tathlith",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Wadi Tathlith' — ويكي بيانات: Wādī Tathlīth (وادي تثليث)",
+      "name_similarity": 0.0,
+      "passage": 7,
+      "phrase": "Wadi Tathlith",
+      "rank": 11
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q461557",
+      "occurrence_id": "lorimer-v2:9:karun",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Karun' — ويكي بيانات: Karun River (نهر كارون) — river in Iran",
+      "name_similarity": 0.0,
+      "passage": 9,
+      "phrase": "Karun",
+      "rank": 12
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q31945",
+      "occurrence_id": "lorimer-v2:9:arabistan",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'Arabistan' — ويكي بيانات: Arabian Peninsula (شبه الجزيرة العربية) — peninsula in Western Asia",
+      "name_similarity": 0.0,
+      "passage": 9,
+      "phrase": "Arabistan",
+      "rank": 13
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "external_key": "Q1277821",
+      "occurrence_id": "lorimer-v2:9:saveh",
+      "our_place_id": null,
+      "reading": "قراءة لوريمر: 'SaVeh' — ويكي بيانات: Saveh County (مقاطعة ساوة) — county in Markazi Province, Iran",
+      "name_similarity": 0.0,
+      "passage": 9,
+      "phrase": "SaVeh",
+      "rank": 14
+    }
+  ],
+  "unresolved": [
+    {
+      "slug": "ain-ibn-fahaid",
+      "phrase": "Ain Ibn-Fahaid"
+    },
+    {
+      "slug": "muraid-saiyid",
+      "phrase": "Muraid Saiyid"
+    },
+    {
+      "slug": "karashif-dahaim-kitimah",
+      "phrase": "Karashif Dahaim Kitimah"
+    },
+    {
+      "slug": "bisinhdion",
+      "phrase": "Bisinhdion"
+    },
+    {
+      "slug": "khaibar",
+      "phrase": "Khaibar"
+    },
+    {
+      "slug": "salmah",
+      "phrase": "Salmah"
+    },
+    {
+      "slug": "hail",
+      "phrase": "Hail"
+    },
+    {
+      "slug": "amiris",
+      "phrase": "Amiris"
+    },
+    {
+      "slug": "kajd",
+      "phrase": "Kajd"
+    },
+    {
+      "slug": "dhuwaidah-sumair-suwalim",
+      "phrase": "Dhuwaidah Sumair Suwalim"
+    },
+    {
+      "slug": "adalat-khamis",
+      "phrase": "Adalat Khamis"
+    },
+    {
+      "slug": "anizi",
+      "phrase": "Anizi"
+    },
+    {
+      "slug": "anuzj",
+      "phrase": "Anuzj"
+    },
+    {
+      "slug": "madmah",
+      "phrase": "Madmah"
+    },
+    {
+      "slug": "wadi-ar-rummah",
+      "phrase": "Wadi-ar-Rummah"
+    },
+    {
+      "slug": "dirah",
+      "phrase": "Dirah"
+    },
+    {
+      "slug": "utbaii-bmge",
+      "phrase": "Utbaii Bmge"
+    },
+    {
+      "slug": "wadi-sabai",
+      "phrase": "Wadi Sabai"
+    },
+    {
+      "slug": "ataibi",
+      "phrase": "Ataibi"
+    },
+    {
+      "slug": "afcaibah",
+      "phrase": "Afcaibah"
+    },
+    {
+      "slug": "qasim",
+      "phrase": "Qasim"
+    },
+    {
+      "slug": "buqum",
+      "phrase": "Buqum"
+    },
+    {
+      "slug": "tke-mulair",
+      "phrase": "Tke Mulair"
+    },
+    {
+      "slug": "captain-knox",
+      "phrase": "Captain Knox"
+    },
+    {
+      "slug": "qahtaiij-dawasir",
+      "phrase": "Qahtaiij Dawasir"
+    },
+    {
+      "slug": "limiis",
+      "phrase": "Limiis"
+    },
+    {
+      "slug": "dahsliah",
+      "phrase": "DahSliah"
+    },
+    {
+      "slug": "summan",
+      "phrase": "Summan"
+    },
+    {
+      "slug": "kuwait",
+      "phrase": "Kuwait"
+    },
+    {
+      "slug": "baui-klialid",
+      "phrase": "Baui Klialid"
+    },
+    {
+      "slug": "kuwait-town",
+      "phrase": "Kuwait Town"
+    },
+    {
+      "slug": "hasa-oasis",
+      "phrase": "Hasa Oasis"
+    },
+    {
+      "slug": "hasa",
+      "phrase": "Hasa"
+    },
+    {
+      "slug": "distnb",
+      "phrase": "Distnb"
+    },
+    {
+      "slug": "uon",
+      "phrase": "Uon"
+    },
+    {
+      "slug": "widyto-dawasir",
+      "phrase": "Widyto Dawasir"
+    },
+    {
+      "slug": "persian-coast",
+      "phrase": "Persian Coast"
+    },
+    {
+      "slug": "abidah-tibamab",
+      "phrase": "Abidah Tibamab"
+    },
+    {
+      "slug": "jamb-wadi-tatmith",
+      "phrase": "Jamb Wadi TatMith"
+    },
+    {
+      "slug": "wadi-bishab",
+      "phrase": "Wadi Bishab"
+    },
+    {
+      "slug": "wsdi-hanifah",
+      "phrase": "Wsdi Hanifah"
+    },
+    {
+      "slug": "janubiyahj-khataniah",
+      "phrase": "Janubiyahj Khataniah"
+    },
+    {
+      "slug": "jabal-shanxinar",
+      "phrase": "Jabal Shanxinar"
+    },
+    {
+      "slug": "persiae-coasts",
+      "phrase": "PersiaE Coasts"
+    },
+    {
+      "slug": "tbamarah-tuwaim-wahabab",
+      "phrase": "Tbamarah Tuwaim Wahabab"
+    },
+    {
+      "slug": "bistrimion",
+      "phrase": "BistriMion"
+    },
+    {
+      "slug": "hilwah",
+      "phrase": "Hilwah"
+    },
+    {
+      "slug": "eharj",
+      "phrase": "Eharj"
+    },
+    {
+      "slug": "tigris-rivers",
+      "phrase": "Tigris Rivers"
+    },
+    {
+      "slug": "sunni-muhammadans",
+      "phrase": "Sunni Muhammadans"
+    },
+    {
+      "slug": "sliatt-al-arab",
+      "phrase": "Sliatt-al-’Arab"
+    },
+    {
+      "slug": "muntafik",
+      "phrase": "Muntafik"
+    },
+    {
+      "slug": "milaihan",
+      "phrase": "Milaihan"
+    }
+  ],
+  "dropped": [
+    {
+      "passage": 1,
+      "phrase": "HARB HARB Singular",
+      "reason": "duplicated header"
+    },
+    {
+      "passage": 1,
+      "phrase": "Harbi",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Part",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Red Sea",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Harb Bedouins",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Settled Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "The Bedouins",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Mutair",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ataibah",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "The Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani Salim",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Kalakhah Turafah The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Some",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Some",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 1,
+      "phrase": "Central Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 1,
+      "phrase": "Wadi-ar-Rtnuniah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Wadi-al-Hamdh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Madmah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Wadi-ar-Rummah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Hazam-ar-Raji",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Dilaimiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ab-ad-Dud",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Subaih",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Qasim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Aqlah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Balaziyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Fuwarah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Odhaim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "ShSilUlunr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Aridh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Barrud",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Wadi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Sirr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Zilfi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Sadaii",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Rghabah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Basr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bukairiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Hamar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Hilaliyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Jauh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Qaryah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Quwafah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Nabhaniyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Shaihiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Shiqqah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ummahat",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ziyabah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Najd",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Eataim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Divisions",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Masruh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Masrdh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ali",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Amr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bani-as-Safar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Abidah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Dawairah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Ramdhan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 1,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 2,
+      "phrase": "SHAMMAR",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 2,
+      "phrase": "JABAL",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 2,
+      "phrase": "NORTH- ERN NAJDi",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 2,
+      "phrase": "This",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 2,
+      "phrase": "Shammar",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 2,
+      "phrase": "Central Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 2,
+      "phrase": "Shammar Amir",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 2,
+      "phrase": "Dirat Ibn Rashid",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 2,
+      "phrase": "For",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 2,
+      "phrase": "SHAMMAE",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 2,
+      "phrase": "JABAL",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 3,
+      "phrase": "Singular",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 3,
+      "phrase": "Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "AKIZAH",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 3,
+      "phrase": "Northern",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Central Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Distribution",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 3,
+      "phrase": "Their",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Ked Sea",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Some",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Bedouin",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Turkish",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Persian Gulf",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "The Bedouins",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Southern Najd",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Bedouin",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "According",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 3,
+      "phrase": "Jledouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Qasiin",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Hauvan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Syria",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Hail",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Najaf",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Euphrates",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Anizah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Musaiyib",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Iraq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Tawairij",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Syrian",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Karbala",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Hajarah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Batn",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Shamiuar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Wady",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Nafud",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Jubbah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Taimah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Khaibar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Besides",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Qasim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Divisions",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Anizak",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Kuwait",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Amarat",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Bishr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Dahamishah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Hilban",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Amardt",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 3,
+      "phrase": "Tawatihah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 4,
+      "phrase": "ATAIBAH",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 4,
+      "phrase": "Bedouin",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 4,
+      "phrase": "Bedouin",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 4,
+      "phrase": "Mutair",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Shammar",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Qahtan",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Their",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 4,
+      "phrase": "ATAIBAH",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 4,
+      "phrase": "Qatan",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Ataibah",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "The Dirah",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 4,
+      "phrase": "Ataibah",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 4,
+      "phrase": "Sabai",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Anaizah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Buraidah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Qasimi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Rafiqs",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Ataibab",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Dhariyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Buthnah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Miskah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Shibirmah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Wadi-ar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Wadi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Sirr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Washam",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Kharj",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Aridh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Kuwait",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Ihe",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 4,
+      "phrase": "Huwaiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Bedouin Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 5,
+      "phrase": "Central Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 5,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 5,
+      "phrase": "Mutair",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Auizaih- They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 5,
+      "phrase": "Persian Gulf",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 5,
+      "phrase": "Pomical Agent",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "MTJTAm",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 5,
+      "phrase": "The Mutair",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Harb",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Ataibah",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Bani Hajir",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Ataibah",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 5,
+      "phrase": "Jahrah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Miskah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Wadi-as-Sirr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Makkah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Madinah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Aridll",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Kijaz",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Very",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Jiblan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Mme",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Umwahah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Appendix",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Diary",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Hay",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Bishuq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Stunman",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Hasa",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Auizah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Shammarj",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Sabai",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Ajinan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Morrah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Manasir",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Dukhnah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 5,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "LID The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 6,
+      "phrase": "Khalidi",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 6,
+      "phrase": "Eastern Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 6,
+      "phrase": "Bedouin",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 6,
+      "phrase": "Ajman",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 6,
+      "phrase": "Khalid",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "Bani Khalid",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "The Bani Khalid",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "Bani Khalid",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 6,
+      "phrase": "Habl",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Habaiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Biyadh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Ihe",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Kuwait",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Maqta",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Stlintaan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Permanent",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Musallamiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Jinuah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Tarut",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Umm-as-Sahak",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Qasr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Subaih",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Jishshah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Kalabiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Wadi-al-Miyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Bahrain",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Anik",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Hajd",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Malham",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Aridh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Zilfi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Sadair",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Anaizah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Qusaibah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Khabb",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "OisaPah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Qasim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Quwai",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "TaUlim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Religion",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Tlu",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Khnlid",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Mfiliki",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Sunnis",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Wahhabis",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 6,
+      "phrase": "Hanbalis",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "The Qahtan",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 7,
+      "phrase": "Central Arabia",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Qahtan",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 7,
+      "phrase": "QAHTAN",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 7,
+      "phrase": "Mutair",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 7,
+      "phrase": "They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Bed Sea",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Persian Gulf",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Some",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Name",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "North",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 7,
+      "phrase": "Khanafir Wadi SabaP",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Duwadimi Nasir-bin-’Umr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Bistrihution",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Sadair",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Washain",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Qasim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Aridh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Summan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Tihtoah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Bedouins",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Qahtani",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Najd",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Quwai",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Sha",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Basr",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hatan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Majma",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Eaudhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Zilfi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Malqa",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Manfuhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hautah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hamadi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Arabs",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Divisions",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Division",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Location",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Shaikh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Zaid-asb-Sbiflut",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hamad-ahAmmS",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "OtlsLe",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hiidbdhali-bin-Hasbar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Hashar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Jumal",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Sahli",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Ali",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Shilaivvib-bin-Ma",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Mobammad",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 7,
+      "phrase": "Washam",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Hautah Bani Tamim",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 8,
+      "phrase": "DhTUmall Proper",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 8,
+      "phrase": "See Hogarth",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 8,
+      "phrase": "TAMIM",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 8,
+      "phrase": "BANI",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 8,
+      "phrase": "These",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 8,
+      "phrase": "Southern STajd",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 8,
+      "phrase": "Bani Tamlm",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 8,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 8,
+      "phrase": "Bani TamTm",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 8,
+      "phrase": "Adhar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dilam",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Na’ajan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Sulaimiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Aridh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Mizahmiyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dhrumah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Ammariyah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Bara",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Arjah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Riyadh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Manfuhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Masani",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Hizwah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Mahriqah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Sidus",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Sufurrah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Thadiq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Malimal",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Sadair",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Ashairah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Audah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dakhilah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dhalmah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Harmah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Hasun",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Hantah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Jalajil",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Khis",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Majma",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Randhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Ruwaidhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Tamair",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Tuwaim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Wnshai",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Washam",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Fara",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Haraiyiq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Qussab",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Tharmidah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Washaiqir",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Wadi-as-Sirt",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Faidhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Qasim",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Anaizah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Buraidah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Alaq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Qasr-al",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Ashirwat",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Faid",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Qafar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Mustajiddah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Samirah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Silaimi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Sab",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Jaiif-al-’Amir",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Arabs",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Rud-hilleh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Divisions",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "T'he",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Husain",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Jabbar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Abdal",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Madbi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Majid",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Mu’ammar",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Bin",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Hautah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dhalmali",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Harruali",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Raudhah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Tbadiq",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Aridli",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Aridti",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Wahiib",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Dhrumli",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "Kiiarj",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 8,
+      "phrase": "BiySdli",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "TAMIM",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 9,
+      "phrase": "BANI",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 9,
+      "phrase": "TAMlM",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 9,
+      "phrase": "Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "BANI",
+      "reason": "all-caps header spillover"
+    },
+    {
+      "passage": 9,
+      "phrase": "Arab",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Their",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Southern",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Turkish",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "The Maqatif",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Bani Tamim",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 9,
+      "phrase": "There",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "They",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "When",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Southern",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Their",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Bani Malik",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 9,
+      "phrase": "Bani Nahad",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 9,
+      "phrase": "Bani Sakain",
+      "reason": "structural word or bare tribe name"
+    },
+    {
+      "passage": 9,
+      "phrase": "The",
+      "reason": "stopword or structural noun"
+    },
+    {
+      "passage": 9,
+      "phrase": "Shatt-al-’Arab",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Nashwah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Ayaishah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Maqtu",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "River",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Qajariyeh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Jarrahi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Shaikh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Muhammareh",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Qrans",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Faddan",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Awainat",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "BarajFah",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Ghazaiwi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Ghizli",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Ghizzi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Halaf",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Htoid",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Hamudi",
+      "reason": "per-passage cap 8"
+    },
+    {
+      "passage": 9,
+      "phrase": "Sulaiman",
+      "reason": "per-passage cap 8"
+    }
+  ]
+}

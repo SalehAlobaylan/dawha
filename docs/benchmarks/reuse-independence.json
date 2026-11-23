@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-11-19",
+  "tally_semantics": "independence_v1",
+  "sample_limits": "counts over the committed public source_passages corpus only; a tribe whose dossier carries no public passages is honest here as an empty row",
+  "clusters_total": 0,
+  "cluster_lineages_total": 0,
+  "per_tribe": {
+    "مجموع المصادر الجينية": {
+      "lineages": 1,
+      "clustered_passages": 0,
+      "singleton_passages": 1
+    },
+    "تاريخ قبائل نجد": {
+      "lineages": 1,
+      "clustered_passages": 0,
+      "singleton_passages": 1
+    },
+    "شجرة منشورة تجريبية": {
+      "lineages": 1,
+      "clustered_passages": 0,
+      "singleton_passages": 1
+    },
+    "معجم الخليج وعُمان ووسط الجزيرة العربية ": {
+      "lineages": 9,
+      "clustered_passages": 0,
+      "singleton_passages": 9
+    }
+  }
+}

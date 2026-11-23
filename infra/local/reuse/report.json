@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-11-19",
+  "sample": "the corpus's own seeded near-duplicate pairs (the passages the builder ships as its own ground truth)",
+  "sample_limits": "small corpus: pairs measured, not learned; thresholds hand-set; no cross-lingual claim",
+  "clusters": 0,
+  "members": 0,
+  "threshold": 0.55
+}

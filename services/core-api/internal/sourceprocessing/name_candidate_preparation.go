@@ -19,6 +19,19 @@ import (
 //go:embed name_candidate_common.json
 var commonNameJSON []byte
 
+// nameCandidateVocabulary is the embedded common-name corpus (the repo's own
+// data), the gate the nisba card must pass before it ever reaches a screen.
+var nameCandidateVocabulary = func() []string {
+	var vocabulary []string
+	if err := json.Unmarshal(commonNameJSON, &vocabulary); err != nil {
+		// A broken embedded artifact is a build/content state, not a runtime
+		// variant: an empty vocabulary means no nisba card is ever emitted,
+		// which is the safe direction.
+		return []string{}
+	}
+	return vocabulary
+}()
+
 var namePreparationSlots = make(chan struct{}, 4)
 
 type FrozenJudgeIdentity struct {
@@ -68,6 +81,11 @@ type NamePreparationContext struct {
 	FirstExposedAt    time.Time                 `json:"firstExposedAt"`
 	CanPrepare        bool                      `json:"canPrepare"`
 	Preparation       *NameCandidatePreparation `json:"preparation,omitempty"`
+	// TribalSuggestion is the كُنية card (plan 031-F): the machine's reading
+	// carries a nisba the dictionary resolves to a tribe. A link into the
+	// dossier, styled like the other candidate cards; it asserts nothing about
+	// membership and writes nothing.
+	TribalSuggestion *TribalNisbaSuggestion `json:"tribalSuggestion,omitempty"`
 }
 type NameCandidatePreparation struct {
 	ID        string                        `json:"id"`
@@ -158,6 +176,13 @@ func (s *Service) BeginNameReview(ctx context.Context, id, actorID string) (Name
 		}
 		result.ExposureID = exposure
 		result.FirstExposedAt = created
+		// The كُنية card is a read-time suggestion and is always recomputed:
+		// an exposure cached before a tribe joined the dictionary still earns
+		// its card, and a card is never frozen into a stored context.
+		result.TribalSuggestion, err = s.tribalNisbaSuggestion(ctx, result.Reading)
+		if err != nil {
+			return result, err
+		}
 		var prep NameCandidatePreparation
 		var snapshot []byte
 		err = tx.QueryRow(ctx, `SELECT id::text,signature,snapshot FROM source_name_candidate_preparations WHERE exposure_id=$1`, exposure).Scan(&prep.ID, &prep.Signature, &snapshot)
@@ -195,6 +220,12 @@ func (s *Service) BeginNameReview(ctx context.Context, id, actorID string) (Name
 		return result, err
 	}
 	result.Reading = boundedJudgeReading(source.suggestedText)
+	// The كُنية card rides the context (plan 031-F): a read-time suggestion
+	// from the machine's own reading, never a write.
+	result.TribalSuggestion, err = s.tribalNisbaSuggestion(ctx, source.suggestedText)
+	if err != nil {
+		return result, err
+	}
 	result.Alternatives = boundedJudgeNames(source.alternatives, 5)
 	result.Readers = []NameReaderEvidence{}
 	result.Diagnostics = []string{}

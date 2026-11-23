@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, FileText, Layers3, MapPinned, Search, X } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { MapFeature, PairingCandidate } from "../types";
 import { featureLabel, markerProvenance, type AtlasMarker } from "../lib/atlas";
-import { fetchPlaceEvidence, ApiError, fetchPlaceExternalIDs, fetchPairingCandidates, decidePairingCandidate, fetchPairingHistory } from "../lib/api";
+import { fetchAtlasOccurrences, fetchPlaceEvidence, ApiError, fetchPlaceExternalIDs, fetchPairingCandidates, decidePairingCandidate, fetchPairingHistory, fetchAtlasClaimChallenge } from "../lib/api";
+import { movementEventKindLabel } from "../lib/movement-events";
 import { StatusBadge } from "./StatusBadge";
 import {
   formatMapCount,
@@ -44,7 +45,10 @@ interface AtlasInspectorProps {
  * component's imagination.
  */
 export function AtlasInspector({ marker, feature, onClose, window: eraWindow, canModerate = false }: AtlasInspectorProps) {
-  const members = marker ? marker.members : feature ? [feature] : [];
+  const members = useMemo(
+    () => (marker ? marker.members : feature ? [feature] : []),
+    [marker, feature],
+  );
   // The dossier of the selected place. The hook runs before any early return
   // (rules of hooks); with no selection the query idles on `enabled`. Regions
   // and migrations carry no single place — the section below says so instead
@@ -96,6 +100,25 @@ export function AtlasInspector({ marker, feature, onClose, window: eraWindow, ca
       setPairingBusyID(null);
     }
   };
+  // Cross-source historical occurrences for whatever place/region is clicked
+  // on the map — automatic, zero-typing lookup.
+  const selectedTitle = marker?.label ?? (feature ? featureLabel(feature) : "");
+  const crossOccurrences = useQuery({
+    queryKey: ["atlas-inspector-occurrences", selectedTitle],
+    enabled: Boolean(selectedTitle),
+    retry: false,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+    queryFn: ({ signal }) => fetchAtlasOccurrences({ q: selectedTitle }, signal),
+  });
+  // The dispute read rides the claim's own row (plan 031-D machinery). The
+  // first claim-bearing member anchors it; a feature with no claim attached
+  // renders its dispute honestly calm (a 404 read, not a fake pair).
+  const disputeTargetID = useMemo(
+    () => members.map((member) => member.claimId).find((claimId): claimId is string => Boolean(claimId)) ?? "",
+    [members],
+  );
+
   if (members.length === 0) {
     return (
       <aside className="atlas-inspector" aria-label="فاحصة الإشارة">
@@ -143,6 +166,12 @@ export function AtlasInspector({ marker, feature, onClose, window: eraWindow, ca
         <h3>ما تقوله الإشارة</h3>
         <div className="atlas-facts">
           <div><span>العلاقة</span><strong>{mapRelationLabel(primary.relationType)}</strong></div>
+          {primary.kind === "migration" ? (
+            <div>
+              <span>التصنيف</span>
+              <strong>{movementEventKindLabel(primary.eventKind)}</strong>
+            </div>
+          ) : null}
           <div><span>الفترة</span><strong>{primary.period || "غير محددة"}</strong></div>
           <div><span>اليقين</span><strong>{mapCertaintyLabel(primary.certainty)}</strong></div>
           <div><span>حالة الدليل</span><strong>{mapEvidenceStatusLabel(primary.evidenceStatus)}</strong></div>
@@ -202,6 +231,10 @@ export function AtlasInspector({ marker, feature, onClose, window: eraWindow, ca
           <p className="atlas-inspector-note">لا يوجد نص دليل مرتبط بهذه الإشارة بعد. غياب النص لا يعني نفي الواقعة، ولا إثباتها.</p>
         )}
       </section>
+
+      {primary.status === "disputed" && disputeTargetID ? (
+        <DisputedSideBySide claimID={disputeTargetID} />
+      ) : null}
 
       <section className="atlas-inspector-section" aria-label="سجل الأدلة للموضع">
         <h3>سجل الأدلة للموضع</h3>
@@ -267,8 +300,47 @@ export function AtlasInspector({ marker, feature, onClose, window: eraWindow, ca
         </section>
       ) : null}
 
+      {crossOccurrences.data && crossOccurrences.data.occurrences.length > 0 ? (
+        <section className="atlas-inspector-section" aria-label="شواهد في المصادر التاريخية">
+          <h3>شواهد في المصادر التاريخية ({formatMapCount(crossOccurrences.data.occurrences.length)})</h3>
+          <ul className="atlas-cross-occurrence-list">
+            {crossOccurrences.data.occurrences.slice(0, 6).map((row) => {
+              const period = row.periodAr || (row.depictedFrom === row.depictedTo
+                ? row.depictedFrom
+                : [row.depictedFrom, row.depictedTo].filter((year) => year !== undefined).join("–"));
+              return (
+                <li key={row.id} className="atlas-cross-occurrence-item">
+                  <div className="atlas-cross-occurrence-head">
+                    <strong>{row.displayAr}</strong>
+                    {row.original !== row.displayAr ? <bdi lang={row.language}>{row.original}</bdi> : null}
+                  </div>
+                  <small>{row.titleAr} · {row.locatorAr}{period ? ` · ${period}` : ""}</small>
+                  {row.excerptAr ? <blockquote>{row.excerptAr}</blockquote> : null}
+                  <div className="atlas-cross-occurrence-links">
+                    {row.url ? (
+                      <a href={row.url} target="_blank" rel="noreferrer">افتح المصدر</a>
+                    ) : (
+                      <Link to="/sources" search={{ sourceId: row.sourceId }}>سجل المصدر</Link>
+                    )}
+                    {row.plateKey && row.caption ? (
+                      <Link to="/places" search={{ view: "plate", plates: row.plateKey, caption: row.caption }}>اعرض على اللوحة</Link>
+                    ) : null}
+                    {row.tribeId ? (
+                      <Link to="/search" search={{ kind: "tribes", id: row.tribeId }}>سجل القبيلة</Link>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="atlas-inspector-section" aria-label="المصادر">
         <h3>المصدر</h3>
+        {primary.kind === "region" && primary.evidenceId && (
+          <Link to="/places" search={{ occurrence: primary.evidenceId }}>افتح شاهد الحدّ</Link>
+        )}
         {provenance.sources.size > 0 ? (
           <ul className="atlas-source-list">
             {[...provenance.sources.entries()].map(([sourceID, sourceTitle]) => (
@@ -431,4 +503,74 @@ function MigrationReadout({ feature }: { feature: MapFeature }) {
 
 function coordinate(longitude: number, latitude: number): string {
   return `${longitude.toFixed(2)}، ${latitude.toFixed(2)}`;
+}
+
+/**
+ * The disputed polygon's side-by-side (plan 032-D): the claim's own dispute
+ * thread read exactly as 031-D recorded it — the challenge's two-source read
+ * (the claim's row vs the challenger's objection), the thread's status, and
+ * the links into the adjudication surface. A 404 is the honest answer for a
+ * status that predates a thread: the chip stays, the panel says why it's calm
+ * rather than showing a fake pair of sides.
+ */
+function DisputedSideBySide({ claimID }: { claimID: string }) {
+  const challenge = useQuery({
+    queryKey: ["atlas-claim-challenge", claimID],
+    queryFn: ({ signal }) => fetchAtlasClaimChallenge(claimID, signal),
+    staleTime: 30000,
+    retry: false,
+  });
+
+  if (challenge.isPending || challenge.isFetching) {
+    return (
+      <section className="atlas-inspector-section" aria-label="الطعن المرتبط">
+        <h3>الطعن المرتبط</h3>
+        <p className="atlas-inspector-note">يُقرأ سجل الطعن…</p>
+      </section>
+    );
+  }
+  if (challenge.isError) {
+    const status = challenge.error instanceof ApiError ? challenge.error.status : 0;
+    return (
+      <section className="atlas-inspector-section" aria-label="الطعن المرتبط">
+        <h3>الطعن المرتبط</h3>
+        <p className="atlas-inspector-note">
+          {status === 404
+            ? "حالة النزاع مسجّلة على المنطقة، ولم يُفتح طعن موثّق على هذا الادعاء بعد."
+            : "تعذّر قراءة سجل الطعن المرتبط."}
+        </p>
+      </section>
+    );
+  }
+  const dispute = challenge.data?.dispute;
+  if (!dispute) return null;
+  return (
+    <section className="atlas-inspector-section atlas-dispute-sidebyside" aria-label="الطعن: الجانبان">
+      <h3>الطعن: الجانبان</h3>
+      <div className="atlas-dispute-sides">
+        <div className="atlas-dispute-side">
+          <span className="atlas-dispute-side-label">الادعاء الموثّق</span>
+          {challenge.data?.claims.map((claim) => (
+            <blockquote key={claim.claimId}>
+              <p>{claim.predicate}</p>
+              <small>{claim.status}</small>
+            </blockquote>
+          ))}
+        </div>
+        <div className="atlas-dispute-side">
+          <span className="atlas-dispute-side-label">الاعتراض</span>
+          <blockquote>
+            <p>{dispute.titleAr}</p>
+            {dispute.descriptionAr ? <small>{dispute.descriptionAr}</small> : null}
+          </blockquote>
+        </div>
+      </div>
+      <div className="atlas-dispute-meta">
+        <StatusBadge tone="source">{dispute.status}</StatusBadge>
+        <Link to="/questions" className="atlas-dossier-link">
+          فاحصة الحسم <ArrowLeft size={11} />
+        </Link>
+      </div>
+    </section>
+  );
 }

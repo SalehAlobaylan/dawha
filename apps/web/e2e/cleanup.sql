@@ -182,6 +182,16 @@ DELETE FROM research_runs WHERE actor_id IN (SELECT id FROM synthetic_users);
 --    somebody's own work cites a synthetic person, which is worth a loud abort.
 DELETE FROM people WHERE id IN (SELECT id FROM synthetic_people);
 
+-- 7b. Tribes and places a synthetic actor published (journey 13b's dossier
+--     fixture: tribes.created_by and places.created_by are NO ACTION).
+--     tribe_aliases cascade; geographic_associations and migration_events
+--     were already removed in step 1; a relationship a synthetic actor
+--     recorded is synthetic too and has no foreign key at all, so it is
+--     matched on its author.
+DELETE FROM tribes WHERE created_by IN (SELECT id FROM synthetic_users);
+DELETE FROM places WHERE created_by IN (SELECT id FROM synthetic_users);
+DELETE FROM entity_relationships WHERE created_by IN (SELECT id FROM synthetic_users);
+
 -- 8. The actors themselves, and the audit trail of the run. audit_log.actor_id is
 --    NO ACTION, so the trail has to go before the users do - and it is matched on
 --    the entity as well as the actor, because the background worker and an
@@ -253,6 +263,9 @@ BEGIN
     + (SELECT count(*) FROM people p WHERE p.created_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = p.created_by))
     + (SELECT count(*) FROM audit_log a WHERE a.actor_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = a.actor_id))
     + (SELECT count(*) FROM trees t WHERE t.owner_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = t.owner_id))
+    + (SELECT count(*) FROM tribes t WHERE t.created_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = t.created_by))
+    + (SELECT count(*) FROM places p WHERE p.created_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = p.created_by))
+    + (SELECT count(*) FROM entity_relationships e WHERE e.created_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = e.created_by))
   INTO orphans;
   IF orphans > 0 THEN
     RAISE EXCEPTION 'e2e cleanup: % rows would be left without their parent', orphans;

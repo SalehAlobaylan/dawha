@@ -66,6 +66,7 @@ test.describe("name review history and repair", () => {
     await expect(bench.getByRole("status").filter({ hasText: "أُجّل" })).toBeVisible();
     await bench.getByRole("button", { name: "إغلاق ورشة الأسماء" }).click();
 
+
     // Reload the page, as a reviewer returning next day would. The deferred item
     // is not lost and is reachable from its own view.
     await openBench(page, title);
@@ -231,6 +232,94 @@ test.describe("name review history and repair", () => {
       [suggestion.id],
     );
     expect(savedGeometry).toEqual([{ geometry_revision: 1 }]);
+  });
+
+  // Plan 031-F (كُنية القبيلة): a reading that ends in a نِسْبَة the dictionary
+  // resolves to carries a tribe card in the bench — a LINK into the dossier,
+  // never an assertion of the person's membership, and nothing is written for
+  // it: the ledger's rows are the reviewer's own, exactly as before.
+  test("a nisba reading shows the tribe card as a suggestion only", async ({ page, request }) => {
+    await waitForApi(request);
+    const owner = newAccount("nisba-bench");
+    await registerThroughUi(page, owner);
+
+    const title = `شجرة نسبة ${owner.displayName}`;
+    const sourceResponse = await page.request.post(`${API_URL}/api/v1/sources`, {
+      data: { title_ar: title, source_type: "family_document" },
+    });
+    expect(sourceResponse.status(), await sourceResponse.text()).toBe(201);
+    const sourceBody = (await sourceResponse.json()) as { source: { id: string } };
+    const sourceId = sourceBody.source.id;
+    const uploadResponse = await page.request.post(`${API_URL}/api/v1/sources/${sourceId}/files`, {
+      multipart: { file: { name: "chart.png", mimeType: "image/png", buffer: CHART_PNG } },
+    });
+    expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
+    const file = (await uploadResponse.json()) as { id: string };
+
+    // The dictionary's tribe behind the نِسْبَة: published by this journey's
+    // own account, so the card's match is this journey's own data.
+    const tribeId = `b0000000-0000-4000-8000-${Date.now().toString(16).padStart(12, "0")}`;
+    await executeSql(
+      `INSERT INTO tribes (id, canonical_name_ar, normalized_name_ar, visibility, created_by)
+       VALUES ($1, 'حرب', 'حرب', 'public', (SELECT id FROM users WHERE email = $2))`,
+      [tribeId, owner.email],
+    );
+    await executeSql(
+      `INSERT INTO tribe_aliases (tribe_id, value_ar, normalized_value_ar) VALUES ($1, 'بني حرب', 'بني حرب')`,
+      [tribeId],
+    );
+
+    const nisbaOccurrence = `e2e-nisba-${Date.now()}-a`;
+    const plainOccurrence = `e2e-nisba-${Date.now()}-b`;
+    for (const [occurrence, text] of [[nisbaOccurrence, "سعيد الحربي"], [plainOccurrence, "سعيد بن سعيد"]] as const) {
+      await executeSql(
+        `INSERT INTO source_tree_suggestions (
+           source_id, source_file_id, occurrence_id, page_number, kind, suggested_text_ar,
+           region, confidence, view_count, reading_method, reading_model
+         ) VALUES ($1, $2, $3, 1, 'name', $4, $5::jsonb, 0.6, 1, 'e2e_fixture', 'e2e_fixture')`,
+        [sourceId, file.id, occurrence, text, JSON.stringify({ x: 0.1, y: 0.1, width: 0.3, height: 0.2 })],
+      );
+    }
+
+    await openBench(page, title);
+    const bench = page.locator(".name-bench");
+
+    // Step the two pending cards; exactly one carries the كُنية card, and the
+    // card names its tribe as a link — suggestion only. Each step waits for
+    // the reading itself to change (the context loads per card), so the
+    // assertions never race the fetch.
+    let seen = 0;
+    let previous = "";
+    const input = bench.locator(".name-bench-field input");
+    for (let step = 0; step < 2; step++) {
+      if (step > 0) {
+        await page.keyboard.press("j");
+        await expect(input).not.toHaveValue(previous);
+      }
+      const value = await input.inputValue();
+      previous = value;
+      const card = bench.locator(".name-bench-nisba");
+      if (value.includes("الحربي")) {
+        await expect(card).toBeVisible();
+        await expect(card).toContainText("حرب");
+        await expect(card).toContainText("بلا إثبات انتماء");
+        seen += 1;
+      } else {
+        await expect(card).toHaveCount(0);
+      }
+    }
+    expect(seen, "exactly one of the two readings carries the كُنية card").toBe(1);
+
+    // And nothing was written for the card: no decision rows exist for this
+    // file's suggestions; the ledger's schema and rows are the reviewer's own.
+    const rows = await readRows<{ decisions: string }>(
+      `SELECT count(*)::text AS decisions
+         FROM source_tree_suggestion_decisions d
+         JOIN source_tree_suggestions s ON s.id = d.suggestion_id
+        WHERE s.source_file_id = $1`,
+      [file.id],
+    );
+    expect(rows[0].decisions).toBe("0");
   });
 });
 

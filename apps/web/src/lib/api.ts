@@ -36,6 +36,7 @@ import type {
   JobView,
   MapResponse,
   PlaceEvidenceResponse,
+  TribeEvidenceResponse,
   PersonMovementResponse,
   PairingListParams,
   PairingListResponse,
@@ -154,6 +155,13 @@ import type {
 // reader at somebody else's API, so a production build without VITE_API_URL
 // keeps the honest empty base.
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8080" : "");
+
+/** The API origin for URL-shaped resources the map layer composes itself
+ * (raster tile URLs) — components that add a rasterSource need the origin,
+ * never the fetchers' internals. */
+export function atlasTileUrlTemplate(plateKey: string): string {
+  return `${apiBaseUrl}/api/v1/plates/${encodeURIComponent(plateKey)}/tiles/{z}/{x}/{y}.png`;
+}
 const demoTreeId = "tree-demo";
 
 export const demoTreeDetail: TreeDetail = {
@@ -929,6 +937,8 @@ export interface MapFetchFilters {
   status?: string;
   placeId?: string;
   viewport?: { minLongitude: number; minLatitude: number; maxLongitude: number; maxLatitude: number };
+  movementMode?: string;
+  season?: string;
   limit?: number;
   signal?: AbortSignal;
 }
@@ -938,6 +948,8 @@ export async function fetchMapFeatures(filters: MapFetchFilters = {}): Promise<M
   if (filters.fromYear !== undefined) params.set("from_year", String(filters.fromYear));
   if (filters.toYear !== undefined) params.set("to_year", String(filters.toYear));
   if (filters.status) params.set("status", filters.status);
+  if (filters.movementMode) params.set("movementMode", filters.movementMode);
+  if (filters.season) params.set("season", filters.season);
   if (filters.placeId) params.set("place_id", filters.placeId);
   if (filters.limit !== undefined) params.set("limit", String(filters.limit));
   if (filters.viewport) {
@@ -997,8 +1009,7 @@ export async function fetchPlaceEvidence(placeID: string, options: PlaceEvidence
  * Credentials are carried: the layer is a policy answer, and a private
  * source's segments are invisible to everyone but its readers.
  */
-export async function fetchPersonMovement(personID: string, signal?: AbortSignal): Promise<PersonMovementResponse> {
-  const timeoutSignal = AbortSignal.timeout(8000);
+export async function fetchPersonMovement(personID: string, signal?: AbortSignal): Promise<PersonMovementResponse> {  const timeoutSignal = AbortSignal.timeout(8000);
   const effectiveSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
   const response = await fetch(`${apiBaseUrl}/api/v1/persons/${encodeURIComponent(personID)}/movement`, {
     credentials: "include",
@@ -1008,6 +1019,156 @@ export async function fetchPersonMovement(personID: string, signal?: AbortSignal
     throw new ApiError(await readErrorMessage(response), response.status);
   }
   return (await response.json()) as PersonMovementResponse;
+}
+
+/**
+ * One tribe's receipt folio (plan 031-A): the accepted spatial/claim receipts
+ * behind the tribe's dossier, bounded server-side. Credentials are carried:
+ * the folio is a policy answer (a private source is not laundered through a
+ * public tribe), and includeNeedsReview re-checks the moderator role at the
+ * server, so the flag is a request, not authority.
+ */
+/**
+ * The record-hints lane (plan 031-C): the ingest lanes' tribe-mention
+ * suggestions as (tribe × source) cards in a bounded queue. A hint never
+ * auto-applies; the accept = a named reviewer's documented receipt, the
+ * dismissal hides the card for the dismissing reviewer only. The lane is
+ * moderator-readable and the server re-checks the role.
+ */
+export interface TribeHintCard {
+  tribeId: string;
+  tribeName: string;
+  sourceId: string;
+  sourceTitle: string;
+  passageCount: number;
+  mentions: number;
+  status: "suggested" | "accepted";
+  decidedBy?: string;
+  createdAt?: string;
+}
+
+export interface TribeHintListResponse {
+  hints: TribeHintCard[];
+  tribeId?: string;
+  status: string;
+  limit: number;
+  truncated: boolean;
+}
+
+export interface TribeHintMatchResult {
+  sourceId: string;
+  hintsSuggested: number;
+  matchedTribes: number;
+  perTribe: Array<{ tribeId: string; tribeName: string; mentions: number }>;
+}
+
+export async function fetchTribeHints(tribeId: string, status = "suggested", signal?: AbortSignal): Promise<TribeHintListResponse> {
+  const search = new URLSearchParams();
+  search.set("tribe_id", tribeId);
+  search.set("status", status);
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/tribe-hints?${search.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.any([AbortSignal.timeout(8000), signal ?? AbortSignal.timeout(0)]),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TribeHintListResponse;
+}
+
+export async function runTribeHintsMatching(sourceId: string): Promise<TribeHintMatchResult> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/tribe-hints/run`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceId }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TribeHintMatchResult;
+}
+
+export async function decideTribeHint(tribeId: string, sourceId: string, action: "accept" | "dismiss", noteAr = ""): Promise<{ card: TribeHintCard; action: string; createdClaimId?: string; createdReceipts: number }> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/tribe-hints/tribes/${encodeURIComponent(tribeId)}/sources/${encodeURIComponent(sourceId)}/decide`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, noteAr }),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { card: TribeHintCard; action: string; createdClaimId?: string; createdReceipts: number };
+}
+
+/**
+ * المِسلك — the tribe-duplicate lane (plan 031-E): the measured pair
+ * proposals with the matched forms verbatim; the reviewer's three effects
+ * (link-alias / canonical pointer / reject) touch no `tribes` row — the undo
+ * is data, not surgery. Moderator-readable, role-checked at the server.
+ */
+export interface TribeDuplicateCandidate {
+  id: string;
+  tribeAId: string;
+  tribeAName?: string;
+  tribeBId: string;
+  tribeBName?: string;
+  matchedA: string;
+  matchedB: string;
+  nameSimilarity: number;
+  status: "suggested" | "linked" | "pointed" | "rejected";
+  decidedBy?: string;
+  decisionNoteAr?: string;
+  createdAt: string;
+  canonical?: string;
+}
+
+export interface TribeDuplicateListResponse {
+  candidates: TribeDuplicateCandidate[];
+  status: string;
+  limit: number;
+  truncated: boolean;
+}
+
+export async function fetchTribeDuplicateCandidates(status = "suggested", signal?: AbortSignal): Promise<TribeDuplicateListResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/tribe-pairings?status=${encodeURIComponent(status)}`, {
+    credentials: "include",
+    signal: AbortSignal.any([AbortSignal.timeout(8000), signal ?? AbortSignal.timeout(0)]),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TribeDuplicateListResponse;
+}
+
+export async function decideTribeDuplicate(candidateID: string, input: { action: "link_alias" | "canonize" | "reject"; canonical?: string; noteAr?: string }): Promise<{ candidate: TribeDuplicateCandidate; action: string }> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/tribe-pairings/${encodeURIComponent(candidateID)}/decide`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { candidate: TribeDuplicateCandidate; action: string };
+}
+
+export async function fetchTribeEvidence(tribeID: string, options: PlaceEvidenceOptions = {}): Promise<TribeEvidenceResponse> {
+  const params = new URLSearchParams();
+  if (options.includeNeedsReview) params.set("include", "needs_review");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const signal = options.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal;
+  const response = await fetch(`${apiBaseUrl}/api/v1/tribes/${encodeURIComponent(tribeID)}/evidence${suffix}`, {
+    credentials: "include",
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as TribeEvidenceResponse;
 }
 
 /**
@@ -1415,6 +1576,45 @@ export async function createDispute(input: CreateDisputeInput): Promise<DisputeD
 export async function updateDispute(disputeId: string, input: UpdateDisputeInput): Promise<DisputeDetail> {
   const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${disputeId}`, {
     method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DisputeDetail;
+}
+
+/**
+ * The dossier claim's طعن (plan 031-D): opens a dispute thread against one
+ * readable claim, and the claim's own row flips to `disputed` inside the
+ * challenge's transaction — every surface reading the claim's chip shows the
+ * dispute the moment it commits. Suggestion-free: the thread is what the
+ * adjudication answers.
+ */
+export async function challengeClaim(claimID: string, input: { titleAr: string; descriptionAr?: string }): Promise<DisputeDetail> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${encodeURIComponent(claimID)}/challenge`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as DisputeDetail;
+}
+
+/**
+ * Closes a challenged dispute (plan 031-D): the moderator's explicit outcome —
+ * documented keeps the claim, rejected retires it — with the resolution's own
+ * words required. The server re-checks the role; the challenge's author cannot
+ * close their own thread.
+ */
+export async function adjudicateChallenge(disputeID: string, input: { claimStatus: "documented" | "rejected"; resolutionAr: string }): Promise<DisputeDetail> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/disputes/${encodeURIComponent(disputeID)}/adjudicate`, {
+    method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -2483,3 +2683,793 @@ export function prepareNameCandidates(suggestionId: string, exposureId: string, 
  return nameReviewRequest<NameCandidatePreparation>(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/candidate-preparation`, "POST", { exposureId, poolVersion: "ar-name-pool-v2", snapshot }, signal);
 }
 export function sealNameReview(suggestionId: string) { return nameReviewRequest<{ sealed: boolean }>(`source-tree-suggestions/${encodeURIComponent(suggestionId)}/review-context/seal`, "POST"); }
+
+// ---------------------------------------------------------------------------
+// The region lanes (plans 030-E/F): machine-proposed plate labels, the tile
+// workbench that organises them, and the decisions that answer them.
+//
+// The grammar these types carry is the archive's certainty grammar, not a
+// general-purpose review queue: a candidate is a PROPOSAL with an empty reading
+// until a named reviewer fills it, score components travel apart on purpose,
+// every list is bounded with a truncated flag, and a tile retires only when
+// two passes by different reviewers agree.
+// ---------------------------------------------------------------------------
+
+/** One machine-proposed plate label (plan 030-E). `labelTextAr` is empty until a reviewer reads it. */
+export interface RegionCandidate {
+  id: string;
+  sourceId: string;
+  sourceTitle?: string;
+  fileSha256?: string;
+  plateKey: string;
+  occurrenceId: string;
+  cropPx: { x: number; y: number; w: number; h: number };
+  coordinates?: { longitude: number; latitude: number };
+  hasRegionGeometry: boolean;
+  regionGeometryWkt?: string;
+  labelTextAr: string;
+  labelReadBy?: string;
+  labelReadAt?: string;
+  eraLabel: string;
+  inkDensity?: number;
+  componentCount?: number;
+  labelConfidence?: number;
+  transformRmsKm?: number;
+  rank?: number;
+  status: "suggested" | "accepted" | "corrected" | "rejected" | "deferred";
+  decidedBy?: string;
+  decidedAt?: string;
+  decisionNoteAr?: string;
+  createdAt: string;
+}
+
+export interface RegionCandidateListResponse {
+  candidates: RegionCandidate[];
+  status: string;
+  limit: number;
+  truncated: boolean;
+}
+
+/** The plate's honesty block, carried from `sources.metadata.georef`. */
+export interface RegionPlateSummary {
+  sourceId: string;
+  plateKey: string;
+  titleAr?: string;
+  license?: string;
+  georefMethod?: string;
+  certainty?: string;
+  needsReview: boolean;
+  reviewReasons: string[];
+}
+
+export interface RegionCandidateDetailResponse {
+  candidate: RegionCandidate;
+  plate?: RegionPlateSummary;
+}
+
+/** The tight and context crops rendered from the stored scan ([]byte fields arrive base64). */
+export interface RegionCandidateCrop {
+  candidateId: string;
+  plateKey: string;
+  tightPng: string;
+  contextPng: string;
+  geometry: {
+    plateWidth: number;
+    plateHeight: number;
+    cropPx: { x: number; y: number; w: number; h: number };
+    tightBox: { x: number; y: number; w: number; h: number };
+    contextBox: { x: number; y: number; w: number; h: number };
+    scaled: boolean;
+  };
+  plate?: RegionPlateSummary;
+}
+
+export interface RegionCandidateHistoryResponse {
+  candidateId: string;
+  history: Array<{
+    id: string;
+    candidateId: string;
+    reviewerId: string;
+    reviewerName?: string;
+    action: "accept" | "correct" | "reject" | "defer" | "reopen";
+    fromStatus: string;
+    toStatus: string;
+    noteAr?: string;
+    diff?: string;
+    createdAt: string;
+  }>;
+  limit: number;
+  truncated: boolean;
+}
+
+export interface RegionDecideInput {
+  action: "accept" | "correct" | "reject" | "defer" | "reopen";
+  noteAr?: string;
+  labelTextAr?: string;
+  eraLabel?: string;
+}
+
+/** The candidate queue: one status lane, bounded (`limit` + `truncated`). */
+export async function fetchRegionCandidates(params: { status?: string; plateKey?: string; query?: string } = {}): Promise<RegionCandidateListResponse> {
+  const search = new URLSearchParams();
+  search.set("status", params.status ?? "suggested");
+  if (params.plateKey?.trim()) search.set("plate_key", params.plateKey.trim());
+  if (params.query?.trim()) search.set("q", params.query.trim());
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates?${search.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionCandidateListResponse;
+}
+
+export async function fetchRegionCandidate(candidateID: string, signal?: AbortSignal): Promise<RegionCandidateDetailResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateID)}`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionCandidateDetailResponse;
+}
+
+/**
+ * The candidate's crop from the stored scan: the plate's own pixels rendered
+ * tight (the box the detector ranked) and with context (the neighbourhood a
+ * person orients by). A missing or corrupt scan is a 503 and surfaces as an
+ * error, never as a silent empty image.
+ */
+export async function fetchRegionCandidateCrop(candidateID: string, signal?: AbortSignal): Promise<RegionCandidateCrop> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateID)}/crop`, {
+    credentials: "include",
+    cache: "no-store",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(20000), signal]) : AbortSignal.timeout(20000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionCandidateCrop;
+}
+
+export async function fetchRegionCandidateHistory(candidateID: string, signal?: AbortSignal): Promise<RegionCandidateHistoryResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateID)}/history`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionCandidateHistoryResponse;
+}
+
+/** One reviewer decision: accept/correct carry the reading, reject optionally names the crop, defer carries none. */
+export async function decideRegionCandidate(candidateID: string, input: RegionDecideInput): Promise<{ candidate: RegionCandidate; action: string }> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateID)}/decide`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { candidate: RegionCandidate; action: string };
+}
+
+/** One tile task: a bounded square of a plate holding proposals. */
+export interface RegionTile {
+  id: string;
+  sourceId: string;
+  plateKey: string;
+  tileId: string;
+  boxPx: { x: number; y: number; w: number; h: number };
+  status: "open" | "in_progress" | "submitted" | "retired";
+  claimedBy?: string;
+  claimedAt?: string;
+  passes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RegionTileListResponse {
+  tiles: RegionTile[];
+  status: string;
+  limit: number;
+  truncated: boolean;
+}
+
+/** The workbench's header counts: how many tile tasks sit in each lane. */
+export interface RegionTileSummary {
+  counts: Record<string, number>;
+  statuses: string[];
+}
+
+/** One choosing surface row: a dictionary name the reviewer may pick. */
+export interface RegionNameSuggestion {
+  valueAr: string;
+  normalizedAr: string;
+  kind: "canonical" | "alias";
+}
+
+export interface RegionTileCandidate {
+  answeredByMe: boolean;
+  id: string;
+  occurrenceId: string;
+  cropPx: { x: number; y: number; w: number; h: number };
+  status: RegionCandidate["status"];
+  labelTextAr: string;
+  labelReadBy?: string;
+  decidedBy?: string;
+}
+
+export interface RegionTileDetailResponse {
+  tile: RegionTile;
+  claimedByMe: boolean;
+  candidates: RegionTileCandidate[];
+  limit: number;
+  truncated: boolean;
+}
+
+export interface RegionTileSubmitResult {
+  tile: RegionTile;
+  action: "submit" | "confirm" | "invalidate";
+  otherSubmitter?: string;
+  agreement?: {
+    retires: boolean;
+    selfReview: boolean;
+    confirmations: string[];
+    deferrals: string[];
+    disagreements: string[];
+    unevaluated: string[];
+  };
+}
+
+export interface RegionTileHistoryResponse {
+  taskId: string;
+  history: Array<{
+    id: string;
+    taskId: string;
+    reviewerId: string;
+    reviewerName?: string;
+    action: "claim" | "release" | "submit" | "confirm" | "invalidate" | "reopen";
+    fromStatus: string;
+    toStatus: string;
+    noteAr?: string;
+    snapshot?: string;
+    createdAt: string;
+  }>;
+  limit: number;
+  truncated: boolean;
+}
+
+/** The tile queue: one status lane, bounded. The default lane is `open`. */
+export async function fetchRegionTiles(params: { status?: string; plateKey?: string } = {}): Promise<RegionTileListResponse> {
+  const search = new URLSearchParams();
+  search.set("status", params.status ?? "open");
+  if (params.plateKey?.trim()) search.set("plate_key", params.plateKey.trim());
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles?${search.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTileListResponse;
+}
+
+/** The header's own counts: one bounded read, no per-lane scans. */
+export async function fetchRegionTileSummary(): Promise<RegionTileSummary> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/summary`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTileSummary;
+}
+
+/** The choosing surface's own names: the dictionary's bounded match. */
+export async function fetchRegionNameSuggestions(query: string): Promise<RegionNameSuggestion[]> {
+  const params = new URLSearchParams({ q: query });
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/name-suggestions?${params.toString()}`, {
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  const payload = (await response.json()) as { suggestions?: RegionNameSuggestion[] };
+  return payload.suggestions ?? [];
+}
+
+export async function fetchRegionTile(taskID: string, signal?: AbortSignal): Promise<RegionTileDetailResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles/${encodeURIComponent(taskID)}`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTileDetailResponse;
+}
+
+export async function claimRegionTile(taskID: string): Promise<RegionTile> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles/${encodeURIComponent(taskID)}/claim`, {
+    method: "POST",
+    credentials: "include",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTile;
+}
+
+/** Defers a held seat: the tile returns to the open queue, history keeps the round trip. */
+export async function releaseRegionTile(taskID: string, noteAr = ""): Promise<RegionTile> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles/${encodeURIComponent(taskID)}/release`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ noteAr }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTile;
+}
+
+/** Closes one pass over the tile; a second submit compares the two passes and retires or returns the tile. */
+export async function submitRegionTile(taskID: string, noteAr = ""): Promise<RegionTileSubmitResult> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles/${encodeURIComponent(taskID)}/submit`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ noteAr }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTileSubmitResult;
+}
+
+export async function fetchRegionTileHistory(taskID: string, signal?: AbortSignal): Promise<RegionTileHistoryResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-workbench/tiles/${encodeURIComponent(taskID)}/history`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as RegionTileHistoryResponse;
+}
+
+/* The atlas's plate register (plan 032-A): every plate source with its
+ * validated transform, or the honest disabled caption. Shapes mirror the
+ * core-api's geography.PlateRegisterResponse exactly — the register never
+ * invents a number the server did not measure (the fit block is the
+ * transform's own held-out floor, surfaced verbatim). */
+export interface AtlasPlateFit {
+  lonRmsDeg: number;
+  latRmsDeg: number;
+  lonMaxDeg: number;
+  latMaxDeg: number;
+}
+
+export interface AtlasPlateTransform {
+  affine?: [number, number, number, number, number, number];
+  kind: string;
+  apexX: number;
+  apexY: number;
+  coneConstant: number;
+  centralLongitude: number;
+  latC0: number;
+  latC1: number;
+  pixelsPerDegree: number;
+}
+
+export interface AtlasPlateFrame {
+  outerLeft: number;
+  innerLeft: number;
+  innerRight: number;
+  outerRight: number;
+  outerTop: number;
+  innerTop: number;
+  innerBottom: number;
+  outerBottom: number;
+}
+
+export interface AtlasPlateTransformation {
+  method: string;
+  transform: AtlasPlateTransform;
+  frame: AtlasPlateFrame;
+  fit: AtlasPlateFit;
+  certainty: string;
+  needsReview: boolean;
+  reviewReasons: string[];
+}
+
+export interface PlateCaption {
+  tribeId?: string;
+  id: string;
+  x: number;
+  y: number;
+  printedName: string;
+  nameAr: string;
+}
+
+export interface PlateCaptionRevision {
+  id: string;
+  nameAr: string;
+  proposedBy: string;
+  published: boolean;
+}
+
+export async function plateCaptionRevisions(captionId: string): Promise<PlateCaptionRevision[]> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/plate-captions/${encodeURIComponent(captionId)}/revisions`, {
+    credentials: "include", signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return (await response.json()) as PlateCaptionRevision[];
+}
+
+export async function savePlateCaptionRevision(captionId: string, revision: { nameAr: string } | { id: string }) {
+  const suffix = "id" in revision ? `/${encodeURIComponent(revision.id)}/publish` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/plate-captions/${encodeURIComponent(captionId)}/revisions${suffix}`, {
+    credentials: "include", method: "POST", signal: AbortSignal.timeout(8000),
+    headers: { "Content-Type": "application/json" },
+    body: "nameAr" in revision ? JSON.stringify(revision) : undefined,
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+}
+
+export interface AtlasPlateRegisterRow {
+  sourceId: string;
+  plateKey: string;
+  titleAr: string;
+  license: string;
+  plateDate?: string;
+  plateWidth?: number;
+  plateHeight?: number;
+  controlPoints: number;
+  transform?: AtlasPlateTransformation;
+  disabledCaption?: string;
+  captions?: PlateCaption[];
+}
+
+export interface AtlasPlateRegisterResponse {
+  plates: AtlasPlateRegisterRow[];
+  limit: number;
+  truncated: boolean;
+}
+
+export interface AtlasPlatePointCropResponse {
+  plateKey: string;
+  longitude: number;
+  latitude: number;
+  platePointPx: string;
+  cropPng: string;
+  cropBox: { x: number; y: number; w: number; h: number };
+  insideNeatline: boolean;
+  plate?: {
+    sourceId?: string;
+    plateKey: string;
+    georefMethod?: string;
+    certainty?: string;
+    needsReview: boolean;
+    reviewReasons: string[];
+  };
+}
+
+/** The plate register is a public read (the plates' own publicity gates the
+ * layer); a 403/401 is surfaced as the honest answer it is. Aborts cleanly
+ * when the atlas unmounts mid-fetch. */
+export async function fetchAtlasPlateRegister(signal?: AbortSignal): Promise<AtlasPlateRegisterResponse> {
+  const timeoutSignal = AbortSignal.timeout(8000);
+  const response = await fetch(`${apiBaseUrl}/api/v1/plates`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as AtlasPlateRegisterResponse;
+}
+
+/* الأطلس — مقارنة النقطة، طعون المضلّع، أروابط العلاقات (plan 032-C/D/E). */
+
+export interface AtlasPlatePointCrop {
+  plateKey: string;
+  longitude: number;
+  latitude: number;
+  platePointPx: string;
+  insideNeatline: boolean;
+  cropPng: string;
+  cropBox: { x: number; y: number; w: number; h: number };
+  plate?: {
+    plateKey: string;
+    georefMethod?: string;
+    certainty?: string;
+    needsReview: boolean;
+    reviewReasons: string[];
+  };
+}
+
+/** One plate's read at one map point (plan 032-C). A plate without a usable
+ * transform is refused server-side — the panel captions that refusal rather
+ * than retrying, and no crop is fetched for it. */
+export async function fetchAtlasPlatePointCrop(plateKey: string, longitude: number, latitude: number, signal?: AbortSignal, size?: number): Promise<AtlasPlatePointCrop> {
+  const params = new URLSearchParams({ lon: String(longitude), lat: String(latitude) });
+  if (size !== undefined) params.set("size", String(size));
+  const response = await fetch(`${apiBaseUrl}/api/v1/plates/${encodeURIComponent(plateKey)}/crop?${params.toString()}`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(15000), signal]) : AbortSignal.timeout(15000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as AtlasPlatePointCrop;
+}
+
+export interface AtlasClaimChallengeDetail {
+  dispute: {
+    id: string;
+    titleAr: string;
+    descriptionAr?: string;
+    status: string;
+    resolutionAr?: string;
+    claimCount: number;
+  };
+  claims: Array<{
+    claimId: string;
+    position: string;
+    subjectType: string;
+    subjectId: string;
+    predicate: string;
+    objectType: string;
+    objectId: string;
+    status: string;
+  }>;
+}
+
+/** The claim's latest dispute thread — the atlas's disputed side-by-side
+ * (plan 032-D). A claim with no dispute thread is an honest 404; the panel
+ * says so instead of pretending calm. */
+export async function fetchAtlasClaimChallenge(claimID: string, signal?: AbortSignal): Promise<AtlasClaimChallengeDetail> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/claims/${encodeURIComponent(claimID)}/challenge`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as AtlasClaimChallengeDetail;
+}
+
+export interface AtlasRelationArc {
+  id: string;
+  predicate: string;
+  status: string;
+  subject: { entityType: string; entityId: string; label: string; longitude: number | null; latitude: number | null };
+  object: { entityType: string; entityId: string; label: string; longitude: number | null; latitude: number | null };
+  validFrom?: string;
+  validTo?: string;
+}
+
+export interface AtlasRelationsResponse {
+  relations: AtlasRelationArc[];
+  limit: number;
+  truncated: boolean;
+}
+
+/** The era's recorded relationship arcs (plan 032-E): the layer the era
+ * chips scope. Zero years means "any era" — the atlas's full read. */
+export async function fetchAtlasRelations(fromYear: number, toYear: number, signal?: AbortSignal): Promise<AtlasRelationsResponse> {
+  const params = new URLSearchParams();
+  if (fromYear !== 0) params.set("from", String(fromYear));
+  if (toYear !== 0) params.set("to", String(toYear));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/atlas/relations${suffix}`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(8000), signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as AtlasRelationsResponse;
+}
+
+/* ممرات الحركة (plan 033-B): أحد الموضوعات المسجَّلة أعمدة ممراته، بجلوس
+ * المحطات المرتّبة التيermint تحمل مصدرها. الحدود كما دائماً، والأعمدة تُرسم
+ * من محطاتها فقط. */
+export interface MovementCorridorStop {
+  sequence: number;
+  placeId: string;
+  placeName: string;
+  longitude: number;
+  latitude: number;
+  dayCountFromPrev?: number;
+  modeFromPrev: string;
+  notes?: string;
+}
+
+export interface MovementCorridorRow {
+  id: string;
+  titleAr: string;
+  season?: string;
+  validFrom?: number;
+  validTo?: number;
+  status: string;
+  certainty: string;
+  sourceId: string;
+  sourceTitle?: string;
+  decided: boolean;
+  stops: MovementCorridorStop[];
+}
+
+export interface SubjectCorridorsResponse {
+  subjectType: string;
+  subjectId: string;
+  corridors: MovementCorridorRow[];
+  limit: number;
+  truncated: boolean;
+}
+
+/** One subject's recorded corridors (the ordered stops' own geometry, the
+ * schema's own source rule), with the plan-C filters passed verbatim. */
+export async function fetchSubjectCorridors(subjectType: string, subjectID: string, options: { season?: string; mode?: string; signal?: AbortSignal } = {}): Promise<SubjectCorridorsResponse> {
+  const params = new URLSearchParams();
+  if (options.season) params.set("season", options.season);
+  if (options.mode) params.set("mode", options.mode);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/subjects/${encodeURIComponent(subjectType)}/${encodeURIComponent(subjectID)}/corridors${suffix}`, {
+    credentials: "include",
+    signal: options.signal ? AbortSignal.any([AbortSignal.timeout(8000), options.signal]) : AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as SubjectCorridorsResponse;
+}
+
+
+/** The accepted candidate's own promotion (030-E's remaining surface): one
+ * call writes the historical region row the candidate already earned, with
+ * the reviewer's reading carried verbatim. Idempotent by the accepted-status
+ * guard — a second promote of the same candidate returns the same row. */
+export async function promoteRegionCandidate(candidateID: string): Promise<{ promoted: boolean; candidateId: string; regionId?: string; labelAr?: string; eraLabel?: string; note?: string }> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateID)}/promote`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response), response.status);
+  }
+  return (await response.json()) as { promoted: boolean; candidateId: string; regionId?: string; labelAr?: string; eraLabel?: string; note?: string };
+}
+
+export interface AtlasSourceOccurrence {
+  id: string;
+  sourceId: string;
+  itemKey?: string;
+  scanSha256?: string;
+  sourceSelector?: { figure?: { symbol: number }; legend?: { row: number }; pdfPage?: number; start?: string; end?: string };
+  titleAr: string;
+  original: string;
+  displayAr: string;
+  language: string;
+  method: string;
+  locatorAr: string;
+  url?: string;
+  creditAr?: string;
+  rightsAr?: string;
+  periodAr?: string;
+  publicationYear?: number;
+  depictedFrom?: number;
+  depictedTo?: number;
+  excerptAr?: string;
+  noteAr?: string;
+  tribeId?: string;
+  placeId?: string;
+  branchId?: string;
+  branchName?: string;
+  plateKey?: string;
+  caption?: string;
+}
+
+export async function fetchAtlasOccurrences(input: {
+  q?: string; tribe?: string; id?: string; after?: string; from?: number; to?: number; undated?: boolean;
+}, signal?: AbortSignal): Promise<{ occurrences: AtlasSourceOccurrence[]; next?: string }> {
+  const { id, ...filters } = input;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  const timeout = AbortSignal.timeout(8000);
+  const path = id ? `/${encodeURIComponent(id)}` : "";
+  const response = await fetch(`${apiBaseUrl}/api/v1/atlas/occurrences${path}?${params}`, {
+    credentials: "include",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return response.json();
+}
+
+export async function reviewAtlasOccurrenceIdentity(id: string, input: { tribeId?: string; placeId?: string; branchId?: string; noteAr: string }): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/atlas/occurrences/${encodeURIComponent(id)}/identity`, {
+    method: "POST", credentials: "include", signal: AbortSignal.timeout(8000),
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+}
+
+export interface AtlasReadingProposal {
+  id: string;
+  titleAr: string;
+  locatorAr: string;
+  url: string;
+  sha256: string;
+  method: string;
+  engine: string;
+  raw: { original: string; selector: Record<string, unknown> };
+}
+
+export async function fetchAtlasProposals(after?: string, signal?: AbortSignal): Promise<{ proposals: AtlasReadingProposal[]; next?: string }> {
+  const params = new URLSearchParams(after ? { after } : {});
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/atlas/proposals?${params}`, { credentials: "include", signal });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return response.json();
+}
+
+export async function importAtlasProposals(sourceId: string, body: string): Promise<{ added: number }> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/atlas/sources/${encodeURIComponent(sourceId)}/proposals`, {
+    method: "POST", credentials: "include", signal: AbortSignal.timeout(12_000),
+    headers: { "Content-Type": "application/json" }, body,
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return response.json();
+}
+
+export async function decideAtlasProposal(id: string, input: {
+  action: "publish" | "reject"; original: string; displayAr: string; language: string; noteAr: string;
+}): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/atlas/proposals/${encodeURIComponent(id)}/decision`, {
+    method: "POST", credentials: "include", signal: AbortSignal.timeout(8000),
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+}
+
+export async function reviewAtlasBoundary(candidateId: string, input?: {
+  sourceId: string; locator: string; wkt: string; validFrom: string; validTo: string; occurrenceId: string;
+}): Promise<void> {
+  const action = input ? "boundary" : "promote";
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/region-candidates/${encodeURIComponent(candidateId)}/${action}`, {
+    method: "POST", credentials: "include", signal: AbortSignal.timeout(8000),
+    headers: input ? { "Content-Type": "application/json" } : undefined,
+    body: input ? JSON.stringify(input) : undefined,
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+}
+
+export async function attachAtlasClaimReceipt(id: string, claimId: string, noteAr: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/admin/atlas/occurrences/${encodeURIComponent(id)}/claim-receipt`, {
+    method: "POST", credentials: "include", signal: AbortSignal.timeout(8000),
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ claimId, noteAr }),
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+}
+
+export async function fetchAtlasSourceRelationship(first: string, second: string, signal?: AbortSignal): Promise<{ status: string; kind?: string }> {
+  const params = new URLSearchParams({ first, second });
+  const response = await fetch(`${apiBaseUrl}/api/v1/atlas/source-relationship?${params}`, { credentials: "include", signal });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  return response.json();
+}

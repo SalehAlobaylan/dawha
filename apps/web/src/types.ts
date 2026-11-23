@@ -2123,7 +2123,13 @@ export interface DictionaryClaimReference {
   objectType: string;
   objectId: string;
   status: string;
-  evidenceCount: number;
+  /** ✓ يدعم — distinct sources behind supporting receipts (plan 031-B). */
+  supportingSources: number;
+  /** ✗ يناقض — distinct sources behind contradicts/refutes receipts. */
+  contradictingSources: number;
+  /** Mention-only (سياق) receipts' distinct sources. */
+  mentionOnlySources: number;
+  claimNotes?: string;
 }
 
 export interface DictionaryQuestionReference {
@@ -2151,6 +2157,11 @@ export interface DictionaryDetail {
   sources: DictionaryReference[];
   questions: DictionaryQuestionReference[];
   migrations: DictionaryReference[];
+  /** The badge trio's derivation caption (plan 031-B), served beside the tallies. */
+  badgeCaption: string;
+  /** The tallies' own version (plan 034-B): `independence_v1` = the badges
+   * count distinct textual LINEAGES (a reuse cluster's copies count once). */
+  tallySemantics?: string;
 }
 
 export interface MapFeature {
@@ -2164,6 +2175,9 @@ export interface MapFeature {
   relationType?: string;
   status: "documented" | "interpreted" | "platform_inferred" | "disputed" | "unresolved";
   certainty?: string;
+  /** The event taxonomy's own key (plan 033-D) — verbatim; absent = the honest
+   * «حدث غير مُصنَّف بعد» caption (movement-events.ts), never a guess. */
+  eventKind?: string;
   timeFrom?: string;
   timeTo?: string;
   /**
@@ -2294,6 +2308,40 @@ export interface PlaceEvidenceResponse {
   truncated?: boolean;
 }
 
+/**
+ * One line of a tribe's receipt folio (plan 031-A): a spatial receipt (the
+ * dira/place evidence behind the tribe's associations) or a claim receipt
+ * (one evidence row behind one of the tribe's claims). Each line carries its
+ * own status chip and the source that owns the quote; the moderation lane
+ * carries `needs_review`/`unresolved` rows beside them, never blurred.
+ */
+export interface TribeEvidenceRow {
+  id: string;
+  kind: "spatial_evidence" | "claim_evidence";
+  status: string;
+  passageId?: string;
+  passageText?: string;
+  pageNumber?: number;
+  locator?: string;
+  sourceId?: string;
+  sourceTitle?: string;
+  associationId?: string;
+  relation?: string;
+  claimId?: string;
+  claimStatus?: string;
+  claimNotes?: string;
+  createdAt?: string;
+}
+
+/** The bounded receipt folio for one tribe, read through the caller's policy. */
+export interface TribeEvidenceResponse {
+  tribeId: string;
+  status: string;
+  evidence: TribeEvidenceRow[];
+  limit?: number;
+  truncated?: boolean;
+}
+
 /** One documented segment of a person's subject layer (plan 028-D). */
 export interface PersonMovementPlace {
   id?: string;
@@ -2305,6 +2353,8 @@ export interface PersonMovementPlace {
 export interface PersonMovementEvent {
   id: string;
   status: string;
+  /** The event taxonomy's key (plan 033-D, movement-events.ts); absent = the honest unclassified caption. */
+  kind?: string;
   certainty?: string;
   timeFrom?: string;
   timeTo?: string;
@@ -3405,4 +3455,6 @@ export interface NamePreparationContext {
  lexicon: NameLexicon; versions: Record<string, string>; diagnostics: string[];
  eligible: boolean; eligibilityReason: string; firstExposedAt: string;
  canPrepare: boolean; preparation?: NameCandidatePreparation;
+ /** كُنية القبيلة (plan 031-F): the reading carries a nisba the dictionary resolves to a tribe. A link, never a membership assertion. */
+ tribalSuggestion?: { tribeId: string; tribeName: string; nisbaForm: string };
 }

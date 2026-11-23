@@ -22,6 +22,8 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/pairing"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/questions"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/regionreview"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/regionworkbench"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/research"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/researchagent"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/search"
@@ -29,6 +31,8 @@ import (
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/temporalanalysis"
 	"github.com/SalehAlobaylan/dawha/services/core-api/internal/trees"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/tribehints"
+	"github.com/SalehAlobaylan/dawha/services/core-api/internal/tribepairings"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/ratelimit"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/storage"
 	"github.com/SalehAlobaylan/dawha/services/core-api/platform/telemetry"
@@ -110,6 +114,14 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	dataHygieneHandler := dataHygieneHandler{Service: dataHygieneService, Auth: authService}
 	pairingService := pairing.NewService(dependencies.DB)
 	pairingHandler := pairingHandler{Service: pairingService, Auth: authService}
+	regionReviewService := regionreview.NewService(dependencies.DB, dependencies.SourceStorage)
+	regionReviewHandler := regionReviewHandler{Service: regionReviewService, Auth: authService}
+	regionWorkbenchService := regionworkbench.NewService(dependencies.DB)
+	regionWorkbenchHandler := regionWorkbenchHandler{Service: regionWorkbenchService, Auth: authService}
+	tribeHintsService := tribehints.NewService(dependencies.DB)
+	tribeHintsHandler := tribeHintsHandler{Service: tribeHintsService, Auth: authService}
+	tribePairingsService := tribepairings.NewService(dependencies.DB)
+	tribePairingsHandler := tribePairingsHandler{Service: tribePairingsService, Auth: authService}
 	searchService := search.NewService(dependencies.DB, dependencies.AI)
 	searchHandler := searchHandler{Service: searchService, Auth: authService}
 	researchService := research.NewService(dependencies.DB, dependencies.AI).WithMetrics(dependencies.Metrics)
@@ -308,8 +320,31 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/disputes", questionHandler.listDisputes)
 	mux.HandleFunc("POST /api/v1/disputes", questionHandler.createDispute)
 	mux.HandleFunc("GET /api/v1/disputes/{disputeID}", questionHandler.getDispute)
+	mux.HandleFunc("GET /api/v1/claims/{claimID}/challenge", questionHandler.claimChallenge)
 	mux.HandleFunc("PATCH /api/v1/disputes/{disputeID}", questionHandler.updateDispute)
 	mux.HandleFunc("POST /api/v1/disputes/{disputeID}/claims", questionHandler.linkDisputeClaim)
+	// The dossier's طعن (plan 031-D): a reader opens a dispute thread against
+	// one readable claim and the claim's own row flips to `disputed` in the
+	// same transaction; the adjudication is the moderator's close, with the
+	// outcome the challenged claims land in spelled.
+	mux.HandleFunc("POST /api/v1/claims/{claimID}/challenge", questionHandler.challengeClaim)
+	mux.HandleFunc("POST /api/v1/disputes/{disputeID}/adjudicate", questionHandler.adjudicateChallenge)
+	// The record-hints lane (plan 031-C): the ingest lanes' tribe mentions as
+	// suggestion cards in a bounded queue. A hint never auto-applies; an
+	// accepted hint is a named reviewer's receipt (a documented claim with its
+	// passage evidence), and a dismissal hides the card for the dismissive
+	// reviewer only.
+	mux.HandleFunc("POST /api/v1/admin/tribe-hints/run", tribeHintsHandler.runMatch)
+	mux.HandleFunc("GET /api/v1/admin/tribe-hints", tribeHintsHandler.listHints)
+	mux.HandleFunc("GET /api/v1/admin/tribe-hints/tribes/{tribeID}/sources/{sourceID}", tribeHintsHandler.hintDetail)
+	mux.HandleFunc("POST /api/v1/admin/tribe-hints/tribes/{tribeID}/sources/{sourceID}/decide", tribeHintsHandler.decideHint)
+	// المِسلك (plan 031-E): tribe-duplicate candidates, the measured pair
+	// proposals, and the reviewer's three effects — link-alias, canonical
+	// pointer, reject — with NO statement writing a tribes row; the undo is
+	// data, not surgery (plan 005's deferral stands).
+	mux.HandleFunc("GET /api/v1/admin/tribe-pairings", tribePairingsHandler.listCandidates)
+	mux.HandleFunc("POST /api/v1/admin/tribe-pairings/{candidateID}/decide", tribePairingsHandler.decideCandidate)
+	mux.HandleFunc("GET /api/v1/admin/tribe-pairings/{candidateID}/history", tribePairingsHandler.history)
 	mux.HandleFunc("GET /api/v1/dictionary", dictionaryHandler.index)
 	mux.HandleFunc("GET /api/v1/dictionary/{kind}/{id}", dictionaryHandler.detail)
 	mux.HandleFunc("GET /api/v1/map", geographyHandler.mapFeatures)
@@ -319,6 +354,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/research/questions/{questionID}/runs", researchHandler.listRuns)
 	mux.HandleFunc("GET /api/v1/research/runs/{runID}", researchHandler.getRun)
 	mux.HandleFunc("POST /api/v1/research/query", researchHandler.query)
+	// The reference check (plan 034-C): paste text, read the corpus's own
+	// lexicon matches with their tallies — bounded, read-only, honest about
+	// the spans that matched nothing (the plan's own «غير معروف لنا» class).
+	mux.HandleFunc("POST /api/v1/research/reference-check", researchHandler.referenceCheck)
 	mux.HandleFunc("POST /api/v1/research/graph/relationship-impact", researchHandler.relationshipImpact)
 	mux.HandleFunc("POST /api/v1/research/graph/branch-structure-comparison", researchHandler.branchStructureComparison)
 	mux.HandleFunc("POST /api/v1/research/graph/ancestor-frontier", researchHandler.ancestorFrontier)
@@ -371,6 +410,35 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	// The dossier is read through the same policy the marker layer answers: the
 	// route is a place read, and the readable-place rule is in the service.
 	mux.HandleFunc("GET /api/v1/places/{placeID}/evidence", geographyHandler.placeEvidence)
+	// The tribal dossier's receipt folio (plan 031-A): the place-evidence
+	// contract over the tribe's associations and claims — accepted-only by
+	// default, the moderation lane one include away, bounded either way.
+	mux.HandleFunc("GET /api/v1/tribes/{tribeID}/evidence", geographyHandler.tribeEvidence)
+	// The tribe's مسالِك (plan 033-A): the person lane's own shape over the
+	// broadened subjects, the same walls (source + place + the tribe's own).
+	mux.HandleFunc("GET /api/v1/tribes/{tribeID}/movement", geographyHandler.tribeMovement)
+	// The corridors' read (plan 033-B): one subject's recorded routes — the
+	// ordered stops' own geometry, bounded, visibility-scoped.
+	mux.HandleFunc("GET /api/v1/subjects/{subjectType}/{subjectID}/corridors", geographyHandler.subjectCorridors)
+	// The atlas's plate register (plan 032-A): every plate source with its
+	// validated transform, or the honest disabled caption per plate.
+	mux.HandleFunc("GET /api/v1/plates", geographyHandler.plateRegister)
+	// The relation flow arcs (plan 032-E): recorded entity_relationships over
+	// the selected era, both endpoints resolved through the claims lane.
+	mux.HandleFunc("GET /api/v1/atlas/relations", geographyHandler.atlasRelations)
+	mux.HandleFunc("GET /api/v1/atlas/occurrences", geographyHandler.sourceOccurrences)
+	mux.HandleFunc("GET /api/v1/atlas/source-relationship", geographyHandler.atlasSourceRelationship)
+	mux.HandleFunc("GET /api/v1/atlas/occurrences/{occurrenceID}", geographyHandler.sourceOccurrences)
+	// The warped plate layer (plan 032-B): XYZ tiles warped per-pixel through
+	// the stored conic — never a four-corner guess (030-D rejected affine for
+	// the plate's own bowing parallels). The segment shape `/{z}/{x}/{y}.png`
+	// is the XYZ contract's own; ServeMux wildcards cannot end a segment
+	// (`{tileY}.png` refuses to register), so the route owns the subtree and
+	// the handler parses the remainder strictly.
+	mux.HandleFunc("GET /api/v1/plates/{plateKey}/tiles/", regionReviewHandler.plateTile)
+	// The comparison point-crop (plan 032-C): the plate's own pixels around
+	// one map point, the stored inverse's own read.
+	mux.HandleFunc("GET /api/v1/plates/{plateKey}/crop", regionReviewHandler.platePointCrop)
 	// The subject layer's read: one person's documented مسالِك, policy-scoped
 	// exactly like the map layers they overlay.
 	mux.HandleFunc("GET /api/v1/persons/{personID}/movement", geographyHandler.personMovement)
@@ -386,6 +454,38 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/place-pairings/{candidateID}/reopen", pairingHandler.reopenCandidate)
 	mux.HandleFunc("GET /api/v1/admin/place-pairings/{candidateID}/history", pairingHandler.history)
 	mux.HandleFunc("GET /api/v1/places/{placeID}/external-ids", pairingHandler.externalIDs)
+	// The region-review lane (plan 030-E): the plate-label proposals the
+	// build-plate-region-candidates lane wrote, the crops they are read
+	// against, and the decisions that answer them. Proposals are
+	// moderator-readable only — none of this renders to readers, and no
+	// decision here promotes a proposal into a fact (that is a later
+	// review surface, per the 0066 contract).
+	mux.HandleFunc("POST /api/v1/admin/region-candidates/{candidateID}/promote", regionReviewHandler.promoteCandidate)
+	mux.HandleFunc("POST /api/v1/admin/region-candidates/{candidateID}/boundary", regionReviewHandler.reviewBoundary)
+	mux.HandleFunc("POST /api/v1/admin/atlas/occurrences/{occurrenceID}/identity", regionReviewHandler.reviewOccurrenceIdentity)
+	mux.HandleFunc("POST /api/v1/admin/atlas/occurrences/{occurrenceID}/claim-receipt", regionReviewHandler.attachAtlasClaimReceipt)
+	mux.HandleFunc("POST /api/v1/admin/atlas/sources/{sourceID}/proposals", regionReviewHandler.importAtlasStage)
+	mux.HandleFunc("GET /api/v1/admin/atlas/proposals", regionReviewHandler.atlasProposals)
+	mux.HandleFunc("POST /api/v1/admin/atlas/proposals/{proposalID}/decision", regionReviewHandler.decideAtlasProposal)
+	mux.HandleFunc("GET /api/v1/admin/plate-captions/{captionID}/revisions", regionReviewHandler.captionHistory)
+	mux.HandleFunc("POST /api/v1/admin/plate-captions/{captionID}/revisions", regionReviewHandler.proposeCaption)
+	mux.HandleFunc("POST /api/v1/admin/plate-captions/{captionID}/revisions/{revisionID}/publish", regionReviewHandler.publishCaption)
+	mux.HandleFunc("GET /api/v1/admin/region-candidates", regionReviewHandler.listCandidates)
+	mux.HandleFunc("GET /api/v1/admin/region-candidates/{candidateID}", regionReviewHandler.getCandidate)
+	mux.HandleFunc("GET /api/v1/admin/region-candidates/{candidateID}/crop", regionReviewHandler.candidateCrop)
+	mux.HandleFunc("GET /api/v1/admin/region-candidates/{candidateID}/history", regionReviewHandler.history)
+	mux.HandleFunc("POST /api/v1/admin/region-candidates/{candidateID}/decide", regionReviewHandler.decideCandidate)
+	// The tile lane (plan 030-F): bounded squares of a plate, claimed by one
+	// reviewer at a time, retired by two independent passes or returned to
+	// the queue with the difference named.
+	mux.HandleFunc("GET /api/v1/admin/region-workbench/tiles", regionWorkbenchHandler.listTiles)
+	mux.HandleFunc("GET /api/v1/admin/region-workbench/tiles/{taskID}", regionWorkbenchHandler.getTile)
+	mux.HandleFunc("GET /api/v1/admin/region-workbench/tiles/{taskID}/history", regionWorkbenchHandler.tileHistory)
+	mux.HandleFunc("POST /api/v1/admin/region-workbench/tiles/{taskID}/claim", regionWorkbenchHandler.claimTile)
+	mux.HandleFunc("POST /api/v1/admin/region-workbench/tiles/{taskID}/release", regionWorkbenchHandler.releaseTile)
+	mux.HandleFunc("POST /api/v1/admin/region-workbench/tiles/{taskID}/submit", regionWorkbenchHandler.submitTile)
+	mux.HandleFunc("GET /api/v1/admin/region-workbench/summary", regionWorkbenchHandler.summary)
+	mux.HandleFunc("GET /api/v1/admin/region-candidates/name-suggestions", regionReviewHandler.nameSuggestions)
 	mux.HandleFunc("GET /api/v1/entity-relationships", identityHandler.listRelationships)
 	mux.HandleFunc("POST /api/v1/entity-relationships", identityHandler.createRelationship)
 	mux.HandleFunc("GET /api/v1/entity-relationships/{relationshipID}", identityHandler.getRelationship)

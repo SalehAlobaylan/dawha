@@ -254,11 +254,18 @@ func TestMapKeepsEveryPublicAssociation(t *testing.T) {
 		t.Fatal("no seeded person is in a published version, so this fixture proves nothing")
 	}
 	wanted := map[string]string{}
+	// The mirror carries the map's own name COALESCE over the entity tables:
+	// a tribe-row association's name is the TRIBE's own canonical name, and a
+	// person row's the person's — null into string broke the scan when 033-A's
+	// subject broadening gave the shared map non-person rows.
 	associationRows, err := pool.Query(ctx, `
-		SELECT ga.id, ep.canonical_name_ar
+		SELECT ga.id, COALESCE(ep.canonical_name_ar, ef.canonical_name_ar, et.canonical_name_ar, eb.canonical_name_ar, ga.entity_id::text)
 		FROM geographic_associations ga
 		JOIN places p ON p.id = ga.place_id
 		LEFT JOIN people ep ON ga.entity_type = 'person' AND ep.id = ga.entity_id
+		LEFT JOIN families ef ON ga.entity_type = 'family' AND ef.id = ga.entity_id
+		LEFT JOIN tribes et ON ga.entity_type = 'tribe' AND et.id = ga.entity_id
+		LEFT JOIN branches eb ON ga.entity_type = 'branch' AND eb.id = ga.entity_id
 		LEFT JOIN sources s ON s.id = ga.source_id
 		WHERE p.visibility = 'public' AND p.geometry IS NOT NULL
 		  AND (s.id IS NULL OR s.visibility = 'public')
@@ -278,17 +285,24 @@ func TestMapKeepsEveryPublicAssociation(t *testing.T) {
 	if err := associationRows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	// The migration lane's mirror: the map's own COALESCE over the entity
+	// tables, so a broadened subject (tribe/family, plan 033-A) reads its own
+	// canonical name here exactly as the map draws it.
 	migrationRows, err := pool.Query(ctx, `
-		SELECT m.id, ep.canonical_name_ar
+		SELECT m.id, COALESCE(ep.canonical_name_ar, ef.canonical_name_ar, et.canonical_name_ar, eb.canonical_name_ar, m.subject_id::text)
 		FROM migration_events m
+		JOIN people pe ON m.subject_type = 'person' AND pe.id = m.subject_id
 		LEFT JOIN places pf ON pf.id = m.from_place_id
 		LEFT JOIN places pt ON pt.id = m.to_place_id
 		LEFT JOIN people ep ON m.subject_type = 'person' AND ep.id = m.subject_id
+		LEFT JOIN families ef ON m.subject_type = 'family' AND ef.id = m.subject_id
+		LEFT JOIN tribes et ON m.subject_type = 'tribe' AND et.id = m.subject_id
+		LEFT JOIN branches eb ON m.subject_type = 'branch' AND eb.id = m.subject_id
 		LEFT JOIN sources s ON s.id = m.source_id
 		WHERE (pf.id IS NULL OR pf.visibility = 'public') AND (pt.id IS NULL OR pt.visibility = 'public')
 		  AND (pf.geometry IS NOT NULL OR pt.geometry IS NOT NULL)
 		  AND (s.id IS NULL OR s.visibility = 'public')
-		  AND (m.subject_type <> 'person' OR ep.id = ANY($1::uuid[]))
+		  AND pe.id = ANY($1::uuid[])
 	`, uuidList(publicPeople))
 	if err != nil {
 		t.Fatal(err)

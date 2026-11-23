@@ -254,3 +254,18 @@ export async function waitForProcessing(
   }
   return last === "failed" ? "failed" : "still running";
 }
+
+/**
+ * Signs one registered account in through the API and returns the session
+ * cookie header the journeys need to walk the API as that account. Every
+ * id need register first; a failed login reads as an assertion error here,
+ * because a journey that cannot carry its own session is a journey that
+ * asserts nothing.
+ */
+export async function loginThroughApi(request: APIRequestContext, email: string, password: string): Promise<string> {
+  const response = await request.post(`${API_URL}/api/v1/auth/login`, { data: { email, password } });
+  expect(response.status(), `login ${email}: ${await response.text()}`).toBe(200);
+  const headers = response.headersArray().find((header) => header.name.toLowerCase() === "set-cookie");
+  expect(headers, "login plants the session cookie").toBeTruthy();
+  return (headers?.value ?? "").split(";")[0] ?? "";
+}

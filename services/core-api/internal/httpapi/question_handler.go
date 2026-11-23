@@ -190,6 +190,25 @@ func (h questionHandler) listDisputes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// claimChallenge is the atlas's read of one claim's most recent dispute
+// thread (plan 032-D): the side-by-side the disputed polygon's panel serves.
+// Anonymous is an empty string — the visibility policy answers what an
+// anonymous reader may see.
+func (h questionHandler) claimChallenge(w http.ResponseWriter, r *http.Request) {
+	actorID := ""
+	if h.Auth != nil {
+		if user, err := h.Auth.UserFromRequest(r.Context(), r); err == nil {
+			actorID = user.ID
+		}
+	}
+	result, err := h.Service.ClaimDispute(r.Context(), r.PathValue("claimID"), actorID)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h questionHandler) getDispute(w http.ResponseWriter, r *http.Request) {
 	result, err := h.Service.GetDispute(r.Context(), r.PathValue("disputeID"))
 	if err != nil {
@@ -226,6 +245,46 @@ func (h questionHandler) updateDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Service.UpdateDispute(r.Context(), r.PathValue("disputeID"), user.ID, input)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// challengeClaim is the طعن action (plan 031-D): one readable dossier claim,
+// one dispute thread, and the claim's own row flipping to `disputed` in the
+// same transaction — every surface reads the flip from the row itself.
+func (h questionHandler) challengeClaim(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input questions.ChallengeClaimInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.ChallengeClaim(r.Context(), r.PathValue("claimID"), user.ID, input)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// adjudicateChallenge closes a challenged dispute and settles the claims it
+// opposed (plan 031-D). The moderator role is re-checked in the service; the
+// resolution's own words are required.
+func (h questionHandler) adjudicateChallenge(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input questions.AdjudicateChallengeInput
+	if !decodeRequest(w, r, &input) {
+		return
+	}
+	result, err := h.Service.AdjudicateChallenge(r.Context(), r.PathValue("disputeID"), user.ID, input)
 	if err != nil {
 		writeQuestionError(w, err)
 		return

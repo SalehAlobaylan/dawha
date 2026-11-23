@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "generator": "infra/local/tribe-label-translation.json",
+    "generatedAt": "2026-11-19",
+    "method": "hand-authored transliteration gloss: the Admiralty 1916 plate's own English romanizations matched against the dictionary's canonical Arabic tribe names (plan 031's tribes + tribe_aliases). Machine proposes; the reviewer confirms at the workbench lane; label_text_ar stays empty until a human fills it, so every row here is a PROPOSAL SIDE, never a reading.",
+    "knownShapers": "romanizations of 1916-era British military cartography; classical name-equivalence (e.g. ANEZEH <-> عنزة) follows the multi-key normalizer's particle folding (ال/بن/بنت) and the historical literature's own variants rather than a single author's taste."
+  },
+  "pairs": [
+    { "english": "SHAMMAR", "arabic": "شمّر" },
+    { "english": "THAMMAR", "arabic": "شمّر" },
+    { "english": "SHAMAR", "arabic": "شمّر" },
+    { "english": "ANEZEH", "arabic": "عنزة" },
+    { "english": "ANIZA", "arabic": "عنزة" },
+    { "english": "ANAYZAH", "arabic": "عنزة" },
+    { "english": "UTAIBA", "arabic": "عتيبة" },
+    { "english": "OTAIBA", "arabic": "عتيبة" },
+    { "english": "UTAIBAH", "arabic": "عتيبة" },
+    { "english": "MUTAIR", "arabic": "مطير" },
+    { "english": "MUTAYR", "arabic": "مطير" },
+    { "english": "MTEIR", "arabic": "مطير" },
+    { "english": "Q AHTAN", "arabic": "قحطان" },
+    { "english": "QAHTAN", "arabic": "قحطان" },
+    { "english": "BENI TAMM", "arabic": "بنو تميم" },
+    { "english": "BANI TAMIM", "arabic": "بنو تميم" },
+    { "english": "TEMIM", "arabic": "بنو تميم" },
+    { "english": "HARBI", "arabic": "حرب" },
+    { "english": "HARB", "arabic": "حرب" },
+    { "english": "HUWAZIN", "arabic": "هوازن" },
+    { "english": "HOWAZIN", "arabic": "هوازن" },
+    { "english": "HWAZN", "arabic": "هوازن" },
+    { "english": "MUZAR", "arabic": "مضر" },
+    { "english": "MUDAR", "arabic": "مضر" },
+    { "english": "MEDHRI", "arabic": "مضر" }
+  ],
+  "note": "the classical repertoire; keys match via the repository's own multi-key normalizer (canonical + particle folding) so a box reading SHAMMAR or BENI TAMM proposes its tribe honestly; a wrong proposal is a reviewer's own rejection, never a silent zero"
+}

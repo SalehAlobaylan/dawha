@@ -5,11 +5,13 @@ import { HomePage } from "./routes/index";
 import { InvitationPage } from "./routes/invitation";
 import { LoginPage } from "./routes/login";
 import { PlacesPage } from "./routes/places";
+import { AtlasEmbedPage } from "./routes/atlas-embed";
 import { ResearchHubPage } from "./routes/research-hub";
 import { parseResearchSearch, parseDiscoverySearch } from "./lib/research-navigation";
 import { ResearchWorkspacePage } from "./routes/research-workspace";
 import { SourcesPage } from "./routes/sources";
 import { DataHygienePage } from "./routes/data-hygiene";
+import { RegionWorkbenchPage } from "./routes/region-workbench";
 import { TreeByIdRoute, TreeVersionRoute } from "./routes/tree-route";
 import { ChartImportPage } from "./routes/chart-import";
 import { TreeLibraryPage } from "./routes/tree-library";
@@ -111,6 +113,14 @@ const dataHygieneRoute = createRoute({
   component: DataHygienePage,
 });
 
+// The region workbench (plans 030-E/F): the tile queue over a plate's
+// proposed labels, and the keyboard-first reading lane.
+const regionWorkbenchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/region-workbench",
+  component: RegionWorkbenchPage,
+});
+
 const chartImportRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/import",
@@ -130,6 +140,13 @@ const placesRoute = createRoute({
   path: "/places",
   validateSearch: parseAtlasSearch,
   component: PlacesPage,
+});
+
+const atlasEmbedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/atlas/embed",
+  validateSearch: parseAtlasSearch,
+  component: AtlasEmbedPage,
 });
 
 const questionsRoute = createRoute({
@@ -183,12 +200,14 @@ export const routeTree = rootRoute.addChildren([
   contradictionsRoute,
   sourcesRoute,
   dataHygieneRoute,
+  regionWorkbenchRoute,
   chartImportRoute,
   namesRoute,
   legacyNameReviewRoute,
   chartOverviewRoute,
   nameReviewRoute,
   placesRoute,
+  atlasEmbedRoute,
   questionsRoute,
   dictionaryRoute,
   searchRoute,

@@ -56,6 +56,8 @@ SELECT
   (SELECT count(*) FROM sources WHERE id IN (SELECT id FROM synthetic_sources)) AS sources,
   (SELECT count(*) FROM source_files WHERE source_id IN (SELECT id FROM synthetic_sources)) AS source_files,
   (SELECT count(*) FROM people WHERE created_by IN (SELECT id FROM synthetic)) AS people,
+  (SELECT count(*) FROM tribes WHERE created_by IN (SELECT id FROM synthetic)) AS tribes,
+  (SELECT count(*) FROM places WHERE created_by IN (SELECT id FROM synthetic)) AS places,
   (SELECT count(*) FROM open_questions WHERE created_by IN (SELECT id FROM synthetic)) AS questions,
   (SELECT count(*) FROM suggestions WHERE submitted_by IN (SELECT id FROM synthetic)) AS suggestions,
   (SELECT count(*) FROM tree_invitations WHERE inviter_id IN (SELECT id FROM synthetic)) AS invitations,

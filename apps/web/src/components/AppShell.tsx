@@ -2,6 +2,7 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
+  ClipboardCheck,
   Compass,
   GitBranch,
   LayoutDashboard,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { BrandMark } from "./BrandMark";
-import { fetchSessionStatus } from "../lib/api";
+import { fetchSessionStatus, fetchResearchAccess } from "../lib/api";
 
 const workspaceNavigation = [
   { to: "/", label: "الرئيسية", icon: LayoutDashboard },
@@ -33,6 +34,9 @@ export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const fromExplore = useRouterState({ select: (state) => (state.location.search as { from?: string }).from === "explore" && state.location.pathname.startsWith("/tree/") });
   const session = useQuery({ queryKey: ["workspace-session"], queryFn: fetchSessionStatus, staleTime: 60000, enabled: pathname !== "/login" && !pathname.startsWith("/invitation/") });
+  // The workspace's own lane flags: a moderation reviewer's two surfaces
+  // ride the app shell's own sidebar, gated by the reviewer's own roles.
+  const researchAccess = useQuery({ queryKey: ["research-access"], queryFn: fetchResearchAccess, staleTime: 60000, enabled: session.data === true });
 
   if (pathname === "/login" || pathname.startsWith("/invitation/")) {
     return <Outlet />;
@@ -84,6 +88,13 @@ export function AppShell() {
           <h2 id="research-nav-heading" className="sidebar-section-label">البحث</h2>
           <nav className="secondary-nav" aria-label="البحث">{navLink({ to: "/research", label: "مكتب البحث", icon: Sparkles })}{navLink({ to: "/search", label: "البحث والفهرس", icon: Search })}</nav>
         </section>
+
+        {researchAccess.data?.canReview ? (
+          <section className="sidebar-group sidebar-admin" aria-labelledby="admin-nav-heading">
+            <h2 id="admin-nav-heading" className="sidebar-section-label">الإدارة</h2>
+            <nav className="secondary-nav" aria-label="الإدارة">{navLink({ to: "/region-workbench", label: "ورشة القبائل", icon: ClipboardCheck })}</nav>
+          </section>
+        ) : null}
 
         <div className="sidebar-bottom">
           <div className="layer-note">

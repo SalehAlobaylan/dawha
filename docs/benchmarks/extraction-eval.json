@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "generator": "infra/local/extraction_eval.py",
+    "generatedAt": "2026-11-17",
+    "generatedAtUtc": "2026-11-17T16:05:05+00:00",
+    "queries": {
+      "toponym_lane_weekly": "SELECT to_char(date_trunc('week', created_at), 'YYYY-MM-DD') AS week, count(*) FROM external_place_candidates GROUP BY date_trunc('week', created_at) ORDER BY week",
+      "plate_label_lane_weekly": "SELECT to_char(date_trunc('week', created_at), 'YYYY-MM-DD') AS week, count(*) FROM external_region_candidates GROUP BY date_trunc('week', created_at) ORDER BY week",
+      "candidate_decisions_by_source": "SELECT c.source_id::text, COALESCE(src.title_ar, '') AS source_title, count(*) AS total, count(*) FILTER (WHERE c.status = 'suggested') AS suggested, count(*) FILTER (WHERE c.status = 'accepted') AS accepted, count(*) FILTER (WHERE c.status = 'corrected') AS corrected, count(*) FILTER (WHERE c.status = 'rejected') AS rejected, count(*) FILTER (WHERE c.status = 'deferred') AS deferred FROM external_region_candidates c LEFT JOIN sources src ON src.id = c.source_id GROUP BY c.source_id, src.title_ar ORDER BY total DESC",
+      "pairing_decisions_by_source": "SELECT c.source_id::text, COALESCE(src.title_ar, '') AS source_title, count(*) AS total, count(*) FILTER (WHERE c.status IN ('accepted', 'alias_only')) AS accepted, count(*) FILTER (WHERE c.status = 'rejected') AS rejected, count(*) FILTER (WHERE c.status = 'deferred') AS deferred, count(*) FILTER (WHERE c.status = 'suggested') AS suggested FROM external_place_candidates c LEFT JOIN sources src ON src.id = c.source_id GROUP BY c.source_id, src.title_ar ORDER BY total DESC",
+      "transform_rms_distribution": "SELECT c.plate_key, c.transform_rms_km, count(*) AS proposals, min(c.label_confidence) AS min_label_confidence, max(c.label_confidence) AS max_label_confidence FROM external_region_candidates c WHERE c.transform_rms_km IS NOT NULL GROUP BY c.plate_key, c.transform_rms_km ORDER BY c.plate_key",
+      "dira_coverage": "SELECT count(*) FILTER (WHERE c.status IN ('accepted', 'corrected')) AS accepted_rows, count(*) FILTER (WHERE c.status IN ('accepted', 'corrected') AND c.region_geometry IS NOT NULL) AS accepted_with_geometry, COALESCE(sum(ST_Area(c.region_geometry::geography)) FILTER ( WHERE c.status IN ('accepted', 'corrected') AND c.region_geometry IS NOT NULL), 0) AS coverage_km2 FROM external_region_candidates c",
+      "tile_states": "SELECT status, count(*) FROM region_tile_tasks GROUP BY status ORDER BY status"
+    },
+    "definitions": {
+      "acceptanceRate": "(accepted + corrected) / decided rows; suggested rows are work remaining and sit in no rate",
+      "diraCoverage": "the area of accepted candidates' traced region_geometry only; a label box is not an area, and no km² is derived from its centre",
+      "rms": "the plate's recorded transform held-out RMS (030-D), the floor under every position the lane projects"
+    }
+  },
+  "toponym_lane_weekly": [
+    {
+      "week": "2026-11-02",
+      "count": 6
+    },
+    {
+      "week": "2026-11-09",
+      "count": 14
+    }
+  ],
+  "plate_label_lane_weekly": [
+    {
+      "week": "2026-11-16",
+      "count": 74
+    }
+  ],
+  "candidate_decisions_by_source": [
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e004",
+      "source_title": "خريطة قبائل الجزيرة العربية — هيئة الأركان البحريّة البريطانية ١٩١٦",
+      "total": 74,
+      "suggested": 74,
+      "accepted": 0,
+      "corrected": 0,
+      "rejected": 0,
+      "deferred": 0,
+      "decided": 0,
+      "acceptance_rate_among_decided": null
+    }
+  ],
+  "pairing_decisions_by_source": [
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000e002",
+      "source_title": "ويكي بيانات: قبائل عربية منتقاة (CC0)",
+      "total": 14,
+      "accepted": 0,
+      "rejected": 0,
+      "deferred": 0,
+      "suggested": 14,
+      "decided": 0,
+      "acceptance_rate_among_decided": null
+    },
+    {
+      "source_id": "b0000000-0000-0000-0000-00000000f001",
+      "source_title": "مقترحات ربط الأماكن الخارجية (CC0)",
+      "total": 6,
+      "accepted": 0,
+      "rejected": 0,
+      "deferred": 0,
+      "suggested": 6,
+      "decided": 0,
+      "acceptance_rate_among_decided": null
+    }
+  ],
+  "transform_rms_distribution": [
+    {
+      "plate_key": "admiralty-1916-tribal",
+      "transform_rms_km": 8.56,
+      "proposals": 74,
+      "min_label_confidence": 0.517,
+      "max_label_confidence": 0.9683
+    }
+  ],
+  "dira_coverage": [
+    {
+      "accepted_rows": 0,
+      "accepted_with_geometry": 0,
+      "coverage_km2": 0,
+      "note": "لا توجد مقترحات مقبولة تحمل شكل حدود بعد؛ كل صفوف المسار الأول صناديق ملصقات. التغطية صفر كم² منطوقة، ولا رقم يُصنع من مراكز الملصقات."
+    }
+  ],
+  "tile_states": [
+    {
+      "status": "open",
+      "count": 24
+    }
+  ]
+}

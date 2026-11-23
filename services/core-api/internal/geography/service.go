@@ -56,6 +56,14 @@ type MapInput struct {
 	// database applies, not a post-hoc crop: a feature outside the box is never
 	// built, joined or shipped.
 	Viewport *Viewport
+	// The movement filters (plan 033-C): the corridor layer's own mode
+	// (camel/horse/foot/sea) and the season window (summer/winter). The
+	// season rides the events' own calendar months through the same
+	// undated-kept predicate discipline the era window uses; the mode applies
+	// where a mode exists (the corridor stops). Empty = no filter, and the
+	// absent filters change nothing (the plan's own unit test pins it).
+	MovementMode string
+	Season       string
 	// Limit bounds the response. Zero means MaxMapFeatures.
 	Limit int
 }
@@ -94,6 +102,10 @@ type Feature struct {
 	EvidenceID     string `json:"evidenceId,omitempty"`
 	EvidenceText   string `json:"evidenceText,omitempty"`
 	EvidenceStatus string `json:"evidenceStatus,omitempty"`
+	// EventKind is 033-D's taxonomy key for a movement row (yawm/ghazwa/…),
+	// verbatim; every other lane carries NULL and renders no chip. The
+	// unclassified event is the honest NULL (movement-events.ts).
+	EventKind string `json:"eventKind,omitempty"`
 	// ClaimID is the claim the geographic record serves, when it serves one. It is
 	// the map's exit into the research flow: a feature without a claim is a
 	// geographic record, not an argument, and the inspector says so rather than
@@ -174,23 +186,52 @@ func NewService(pool *pgxpool.Pool) *Service {
 // policy predicates use, so the visibility fragments and the map fragments
 // interleave without renumbering each other.
 type mapFilters struct {
-	status   string
-	placeID  string
-	fromYear int
-	toYear   int
-	viewport *Viewport
-	params   *visibility.Params
+	status       string
+	placeID      string
+	fromYear     int
+	toYear       int
+	viewport     *Viewport
+	movementMode string
+	season       string
+	params       *visibility.Params
 }
 
 func newMapFilters(input MapInput, params *visibility.Params) mapFilters {
 	return mapFilters{
-		status:   input.Status,
-		placeID:  input.PlaceID,
-		fromYear: input.FromYear,
-		toYear:   input.ToYear,
-		viewport: input.Viewport,
-		params:   params,
+		status:       input.Status,
+		placeID:      input.PlaceID,
+		fromYear:     input.FromYear,
+		toYear:       input.ToYear,
+		viewport:     input.Viewport,
+		movementMode: input.MovementMode,
+		season:       input.Season,
+		params:       params,
 	}
+}
+
+// seasonPredicate is 033-C's season filter over the events' own calendar
+// months, through the era window's own undated-kept discipline: a row with
+// no dates is kept under any season (the platform does not know its months),
+// and a season's band is the pastoral calendar the sources narrate — صيف =
+// months 5–9, شتاء = 11–3. An event whose window TOUCHES the band overlaps:
+// its start month, its end month, or the span that crosses the band's edge.
+func (f mapFilters) seasonPredicate(fromReference, toReference string) string {
+	if f.season != "summer" && f.season != "winter" {
+		return "TRUE"
+	}
+	monthsValue := "{5,6,7,8,9}"
+	if f.season == "winter" {
+		monthsValue = "{11,12,1,2,3}"
+	}
+	months := f.params.Add(monthsValue)
+	startMonth := "COALESCE(EXTRACT(MONTH FROM " + fromReference + "), EXTRACT(MONTH FROM " + toReference + "))"
+	endMonth := "COALESCE(EXTRACT(MONTH FROM " + toReference + "), EXTRACT(MONTH FROM " + fromReference + "))"
+	return `(EXTRACT(MONTH FROM ` + fromReference + `) IS NULL AND EXTRACT(MONTH FROM ` + toReference + `) IS NULL
+		   OR ` + startMonth + `::int = ANY(` + months + `::int[])
+		   OR ` + endMonth + `::int = ANY(` + months + `::int[])
+		   OR (EXTRACT(MONTH FROM ` + fromReference + `)::int < EXTRACT(MONTH FROM ` + toReference + `)::int
+		       AND EXISTS (SELECT 1 FROM generate_series(EXTRACT(MONTH FROM ` + fromReference + `)::int, EXTRACT(MONTH FROM ` + toReference + `)::int) AS span(month)
+		                   WHERE span.month = ANY(` + months + `::int[]))))`
 }
 
 // statusPredicate compares against the status the feature is *drawn* with, which is
@@ -398,7 +439,7 @@ func (s *Service) placeFeatures(ctx context.Context, policy visibility.Policy, f
 		SELECT p.id, 'place', p.id, p.canonical_name_ar, NULL::text, NULL::uuid, NULL::text,
 		       'place', 'documented', NULL::text, NULL::date, NULL::date, NULL::uuid, NULL::text,
 		       NULL::uuid, NULL::text, NULL::text, `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8,
-		       NULL::uuid, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean
+		       NULL::uuid, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean, NULL::text
 		FROM places p
 		WHERE p.geometry IS NOT NULL AND `+policy.ReferencePredicate(filters.params, "place", "p.id")+`
 		  AND `+filters.statusPredicate("'documented'")+`
@@ -458,7 +499,7 @@ func (s *Service) associationFeatures(ctx context.Context, policy visibility.Pol
 		       COALESCE(ep.canonical_name_ar, ef.canonical_name_ar, et.canonical_name_ar, ga.entity_id::text),
 		       ga.relation_type, ga.status, ga.certainty, ga.time_from, ga.time_to, ga.source_id, s.title_ar,
 		       se.id, se.evidence_text_ar, se.review_status, `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8,
-		       ga.claim_id, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean
+		       ga.claim_id, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean, NULL::text
 		FROM geographic_associations ga
 		JOIN places p ON p.id = ga.place_id
 		LEFT JOIN people ep ON ga.entity_type = 'person' AND ep.id = ga.entity_id
@@ -509,7 +550,7 @@ func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Polic
 		       m.subject_type, m.subject_id, COALESCE(ep.canonical_name_ar, m.subject_id::text), 'migration', m.status, m.certainty,
 		       m.time_from, m.time_to, m.source_id, s.title_ar, se.id, se.evidence_text_ar, se.review_status,
 		       `+longitude+`, `+latitude+`, ST_X(pf.geometry), ST_Y(pf.geometry), ST_X(pt.geometry), ST_Y(pt.geometry),
-		       m.claim_id, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean
+		       m.claim_id, NULL::text, NULL::bigint, NULL::bigint, NULL::bigint, NULL::boolean, m.kind
 		FROM migration_events m
 		LEFT JOIN places pf ON pf.id = m.from_place_id
 		LEFT JOIN places pt ON pt.id = m.to_place_id
@@ -531,6 +572,7 @@ func (s *Service) migrationFeatures(ctx context.Context, policy visibility.Polic
 		  AND `+filters.placePredicate("COALESCE(m.to_place_id, m.from_place_id)")+`
 		  AND `+filters.timePredicate("m.time_from", "m.time_to")+`
 		  AND `+filters.geometryViewportPredicate(line)+`
+		  AND `+filters.seasonPredicate("m.time_from", "m.time_to")+`
 		ORDER BY m.time_from NULLS LAST, m.created_at DESC, m.id
 		LIMIT `+limitReference,
 		filters.params.Args()...)
@@ -584,13 +626,14 @@ func (s *Service) regionFeatures(ctx context.Context, policy visibility.Policy, 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT r.id, 'region', NULL::uuid, r.name_ar, NULL::text, NULL::uuid, NULL::text, 'historical_region',
 		       `+drawnStatus+`, r.certainty, r.valid_from, r.valid_to,
-		       r.source_id, s.title_ar, NULL::uuid, NULL::text, NULL::text,
+		       r.source_id, s.title_ar, r.boundary_occurrence_id, r.boundary_locator_ar, NULL::text,
 		       `+longitude+`, `+latitude+`, NULL::float8, NULL::float8, NULL::float8, NULL::float8,
 		       NULL::uuid, ST_AsGeoJSON(r.geometry), `+placeCount+`, `+associationCount+`, `+personCount+`,
-		       (r.valid_from IS NOT NULL OR r.valid_to IS NOT NULL)
+		       (r.valid_from IS NOT NULL OR r.valid_to IS NOT NULL), NULL::text
 		FROM historical_regions r
 		LEFT JOIN sources s ON s.id = r.source_id
 		WHERE r.geometry IS NOT NULL AND (s.id IS NULL OR s.visibility = 'public')
+		  AND (r.candidate_id IS NULL OR r.boundary_reviewed)
 		  AND `+filters.statusPredicate(drawnStatus)+`
 		  AND `+filters.placePredicate("NULL::uuid")+`
 		  AND `+filters.timePredicate("r.valid_from", "r.valid_to")+`
@@ -630,7 +673,8 @@ func scanFeatures(rows pgx.Rows) ([]Feature, error) {
 		var placeCount pgtype.Int8
 		var associationCount, personCount pgtype.Int8
 		var datedInWindow pgtype.Bool
-		if err := rows.Scan(&item.ID, &item.Kind, &placeID, &item.PlaceName, &entityType, &entityID, &entityName, &relationType, &item.Status, &certainty, &timeFrom, &timeTo, &sourceID, &sourceTitle, &evidenceID, &evidenceText, &evidenceStatus, &longitude, &latitude, &fromLongitude, &fromLatitude, &toLongitude, &toLatitude, &claimID, &regionGeometry, &placeCount, &associationCount, &personCount, &datedInWindow); err != nil {
+		var eventKind pgtype.Text
+		if err := rows.Scan(&item.ID, &item.Kind, &placeID, &item.PlaceName, &entityType, &entityID, &entityName, &relationType, &item.Status, &certainty, &timeFrom, &timeTo, &sourceID, &sourceTitle, &evidenceID, &evidenceText, &evidenceStatus, &longitude, &latitude, &fromLongitude, &fromLatitude, &toLongitude, &toLatitude, &claimID, &regionGeometry, &placeCount, &associationCount, &personCount, &datedInWindow, &eventKind); err != nil {
 			return nil, err
 		}
 		item.PlaceID = uuidString(placeID)
@@ -648,6 +692,7 @@ func scanFeatures(rows pgx.Rows) ([]Feature, error) {
 		item.EvidenceText = textValue(evidenceText)
 		item.EvidenceStatus = textValue(evidenceStatus)
 		item.ClaimID = uuidString(claimID)
+		item.EventKind = textValue(eventKind)
 		item.Ring = decodeRegionRing(regionGeometry.String)
 		item.PlaceCount = intValue(placeCount)
 		item.AssociationCount = intValue(associationCount)

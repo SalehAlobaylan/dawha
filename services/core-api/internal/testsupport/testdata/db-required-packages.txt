@@ -13,8 +13,10 @@ github.com/SalehAlobaylan/dawha/services/core-api/internal/httpapi
 github.com/SalehAlobaylan/dawha/services/core-api/internal/identity
 github.com/SalehAlobaylan/dawha/services/core-api/internal/jobs
 github.com/SalehAlobaylan/dawha/services/core-api/internal/jobworker
-github.com/SalehAlobaylan/dawha/services/core-api/internal/questions
 github.com/SalehAlobaylan/dawha/services/core-api/internal/pairing
+github.com/SalehAlobaylan/dawha/services/core-api/internal/questions
+github.com/SalehAlobaylan/dawha/services/core-api/internal/regionreview
+github.com/SalehAlobaylan/dawha/services/core-api/internal/regionworkbench
 github.com/SalehAlobaylan/dawha/services/core-api/internal/research
 github.com/SalehAlobaylan/dawha/services/core-api/internal/researchagent
 github.com/SalehAlobaylan/dawha/services/core-api/internal/search
@@ -23,4 +25,6 @@ github.com/SalehAlobaylan/dawha/services/core-api/internal/suggestions
 github.com/SalehAlobaylan/dawha/services/core-api/internal/temporalanalysis
 github.com/SalehAlobaylan/dawha/services/core-api/internal/testsupport
 github.com/SalehAlobaylan/dawha/services/core-api/internal/trees
+github.com/SalehAlobaylan/dawha/services/core-api/internal/tribehints
+github.com/SalehAlobaylan/dawha/services/core-api/internal/tribepairings
 github.com/SalehAlobaylan/dawha/services/core-api/internal/visibility

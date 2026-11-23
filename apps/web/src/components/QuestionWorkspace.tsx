@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp, Clock3, FileText, Link2, Plus, Save, ShieldAlert } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { addQuestionNote, ApiError, createDispute, createQuestion, fetchDisputes, fetchQuestion, fetchQuestions, linkQuestionClaim, linkQuestionDispute, linkQuestionSource, updateQuestion } from "../lib/api";
+import { addQuestionNote, adjudicateChallenge, ApiError, createDispute, createQuestion, fetchDisputes, fetchQuestion, fetchQuestions, fetchResearchAccess, linkQuestionClaim, linkQuestionDispute, linkQuestionSource, updateQuestion } from "../lib/api";
 import { questionPriorityLabel, questionStatusLabel } from "../lib/question-labels";
 import { StatusBadge } from "./StatusBadge";
 import type { OpenQuestionRecord, QuestionClaimLink, QuestionDetail, QuestionSourceLink } from "../types";
@@ -144,6 +144,7 @@ export function QuestionWorkspace({
       {queryError ? <div className="question-workspace-error" role="alert">{errorMessage(queryError)} {queryError instanceof ApiError && queryError.status === 503 ? <span>شغّل Core API وVITE_API_URL لتفعيل الإدارة.</span> : null}</div> : null}
       {questionOpen ? <form className="question-create-form" onSubmit={submitQuestion}><div className="question-form-title"><CircleHelp size={16} /><strong>صياغة سؤال قابل للبحث</strong></div><div className="question-form-grid"><label className="composer-label">العنوان<input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="مثال: هل Depends على مصدر آخر؟" /></label><label className="composer-label">الأولوية<select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="low">منخفضة</option><option value="normal">عادية</option><option value="high">عالية</option></select></label><label className="composer-label">الوصف<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} placeholder="ما الفجوة أو التعارض؟" /></label></div><button className="primary-button" type="submit" disabled={createQuestionMutation.isPending}>{createQuestionMutation.isPending ? "جارٍ الحفظ…" : "احفظ السؤال"}</button></form> : null}
       <div className="question-workspace-grid"><div className="question-list-column"><div className="question-column-heading"><div><div className="detail-label">الأسئلة المحفوظة</div><small>{(questionsQuery.data ?? []).length} أسئلة</small></div><CircleHelp size={16} /></div>{questionsQuery.isPending ? <p className="question-empty">جارٍ التحميل…</p> : (questionsQuery.data ?? []).length > 0 ? <div className="question-api-list">{(questionsQuery.data ?? []).map((item) => <button className={`question-api-item${selectedId === item.id ? " question-api-item-active" : ""}`} type="button" key={item.id} onClick={() => setSelectedId(item.id)}><span><strong>{item.titleAr}</strong><small>{questionStatusLabel(item.status)} · {questionPriorityLabel(item.priority)}</small></span><b>{item.claimCount}</b></button>)}</div> : <p className="question-empty">لا توجد أسئلة محفوظة بعد.</p>}</div><div className="question-detail-column">{detail ? <QuestionDetailView detail={detail} status={status} setStatus={setStatus} priority={priority} setPriority={setPriority} note={note} setNote={setNote} claimId={claimId} setClaimId={setClaimId} claimRole={claimRole} setClaimRole={setClaimRole} sourceId={sourceId} setSourceId={setSourceId} sourceRole={sourceRole} setSourceRole={setSourceRole} disputeId={disputeId} setDisputeId={setDisputeId} disputes={disputesQuery.data ?? []} onStatus={submitStatus} onNote={submitNote} onClaim={submitClaim} onSource={submitSource} onDispute={submitDispute} statusPending={updateQuestionMutation.isPending} notePending={noteMutation.isPending} /> : detailQuery.isPending ? <p className="question-empty">جارٍ فتح السؤال…</p> : <div className="question-empty"><CircleHelp size={19} /><p>اختر سؤالاً أو افتح سؤالاً جديداً.</p></div>}</div></div>
+      <DisputeAdjudicationPanel />
       <form className="question-dispute-form" onSubmit={submitNewDispute}><div className="question-form-title"><ShieldAlert size={16} /><strong>خلاف مستقل</strong><small>سجّل الروايات المتعارضة قبل ربطها بسؤال.</small></div><div className="question-form-grid"><label className="composer-label">عنوان الخلاف<input required value={disputeTitle} onChange={(event) => setDisputeTitle(event.target.value)} placeholder="اسم الخلاف" /></label><label className="composer-label">الوصف<input value={disputeDescription} onChange={(event) => setDisputeDescription(event.target.value)} placeholder="ما الروايتان؟" /></label><button className="secondary-button" type="submit" disabled={createDisputeMutation.isPending}>{createDisputeMutation.isPending ? "جارٍ الإنشاء…" : "أنشئ خلافاً"}</button></div></form>
     </section>
   );
@@ -176,4 +177,77 @@ function activityLabel(action: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "تعذر إكمال عملية السؤال.";
+}
+
+/**
+ * The challenged threads' adjudication column (plan 031-D). The moderator's
+ * own close: the outcome the challenged claims land in — documented keeps it,
+ * rejected retires it — with the resolution's own words, required. Non-
+ * moderators read the stated refusal, never the controls; the challenge's
+ * author cannot close their own thread (the server re-checks the role).
+ */
+function DisputeAdjudicationPanel() {
+  const access = useQuery({ queryKey: ["research-access"], queryFn: fetchResearchAccess, staleTime: 60_000 });
+  const queryClient = useQueryClient();
+  const [resolution, setResolution] = useState<Record<string, string>>({});
+  const [outcome, setOutcome] = useState<Record<string, "documented" | "rejected">>({});
+  const [message, setMessage] = useState("");
+  const disputesQuery = useQuery({ queryKey: ["disputes"], queryFn: fetchDisputes });
+  const adjudicate = useMutation({
+    mutationFn: (disputeID: string) => adjudicateChallenge(disputeID, {
+      claimStatus: outcome[disputeID] ?? "documented",
+      resolutionAr: resolution[disputeID] ?? "",
+    }),
+    onSuccess: () => {
+      setMessage("حُسم الخلاف: الادعاءات المطعون فيها مسوّرة بالنص المكتوب.");
+      void queryClient.invalidateQueries({ queryKey: ["disputes"] });
+      void queryClient.invalidateQueries({ queryKey: ["question"] });
+      void queryClient.invalidateQueries({ queryKey: ["dictionary-detail"] });
+    },
+    onError: (error) => setMessage(error instanceof ApiError ? error.message : "تعذر الحسم؛ أعد المحاولة."),
+  });
+
+  // The stated refusal: a non-moderator reads that adjudication is not
+  // theirs; the server re-checks the role even if a hand-drawn control
+  // reaches the API.
+  if (!access.data?.canMerge) return null;
+  const threads = (disputesQuery.data ?? []).filter((dispute) => dispute.status === "open" || dispute.status === "under_review" || dispute.status === "reopened");
+
+  return (
+    <section className="question-adjudication" aria-label="التحكيم في الخلافات المطعون فيها">
+      <div className="question-form-title"><ShieldAlert size={16} /><strong>التحكيم</strong><small>حسم الخلاف المطعون فيه = قرار مصوّر بالنص.</small></div>
+      {message ? <div className="question-workspace-message" role="status">{message}</div> : null}
+      {threads.length === 0 ? (
+        <p className="question-empty">لا خلافات مفتوحة للتحكيم الآن.</p>
+      ) : (
+        <ul className="question-adjudication-list">
+          {threads.map((dispute) => (
+            <li key={dispute.id} className="question-adjudication-row">
+              <strong>{dispute.titleAr}</strong>
+              <form
+                onSubmit={(event) => { event.preventDefault(); adjudicate.mutate(dispute.id); }}
+              >
+                <select
+                  aria-label="مصير الادعاء"
+                  value={outcome[dispute.id] ?? "documented"}
+                  onChange={(event) => setOutcome((state) => ({ ...state, [dispute.id]: event.target.value as "documented" | "rejected" }))}
+                >
+                  <option value="documented">تثبيت الادعاء</option>
+                  <option value="rejected">إسقاط الادعاء</option>
+                </select>
+                <input
+                  required
+                  value={resolution[dispute.id] ?? ""}
+                  onChange={(event) => setResolution((state) => ({ ...state, [dispute.id]: event.target.value }))}
+                  placeholder="نص الحسم (مع الشاهد) — مطلوب"
+                  aria-label="نص الحسم"
+                />
+                <button type="submit" disabled={adjudicate.isPending}>{adjudicate.isPending ? "جارٍ الحسم…" : "احسم"}</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }

@@ -1,0 +1,439 @@
+{
+  "meta": {
+    "generator": "infra/local/build-plate-tile-tasks.py",
+    "generatedAt": "2026-11-17",
+    "tileSize": 1024,
+    "method": "a square grid over each plate's 030-D neatline frame; one tile task per square holding at least one proposal's crop-box centre",
+    "membershipRule": "NOT stored: membership is derived at read time from the crop boxes against the tile's own box (centre-in-square, the same arithmetic as this script), so a later proposals run that appends rows is picked up by the existing tiles with no re-sync",
+    "certaintyRule": "a tile task is work allocation, not a verdict; retirement needs two passes by different reviewers that agree, per stipulation 2 (plan 030), and nothing here writes a reading",
+    "maxTilesPerPlate": 400
+  },
+  "plates": [
+    {
+      "key": "admiralty-1916-tribal",
+      "sourceId": "b0000000-0000-0000-0000-00000000e004",
+      "tileSize": 1024,
+      "frame": {
+        "x0": 514,
+        "y0": 513,
+        "x1": 6604,
+        "y1": 6604
+      },
+      "tileCount": 24,
+      "proposalCount": 74,
+      "truncated": false,
+      "tiles": [
+        {
+          "tileId": "tile:admiralty-1916-tribal:r0c0",
+          "row": 0,
+          "col": 0,
+          "boxPx": {
+            "x": 514,
+            "y": 513,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 5,
+          "proposals": [
+            "label:1006-1114-152-54",
+            "label:1060-1324-270-60",
+            "label:1312-1412-144-50",
+            "label:594-1326-164-54",
+            "label:848-1438-146-60"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r0c1",
+          "row": 0,
+          "col": 1,
+          "boxPx": {
+            "x": 1538,
+            "y": 513,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 3,
+          "proposals": [
+            "label:1884-1348-248-84",
+            "label:2006-676-154-68",
+            "label:2446-1106-184-78"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r0c2",
+          "row": 0,
+          "col": 2,
+          "boxPx": {
+            "x": 2562,
+            "y": 513,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 3,
+          "proposals": [
+            "label:2460-616-214-80",
+            "label:2568-1438-196-56",
+            "label:2704-1048-282-66"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r0c4",
+          "row": 0,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 513,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 6,
+          "proposals": [
+            "label:4794-1372-1080-70",
+            "label:4830-1088-368-62",
+            "label:4878-1516-130-38",
+            "label:5076-1514-230-38",
+            "label:5264-1090-200-60",
+            "label:5464-1512-104-38"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c0",
+          "row": 1,
+          "col": 0,
+          "boxPx": {
+            "x": 514,
+            "y": 1537,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 2,
+          "proposals": [
+            "label:1284-2230-150-42",
+            "label:1480-1636-96-78"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c1",
+          "row": 1,
+          "col": 1,
+          "boxPx": {
+            "x": 1538,
+            "y": 1537,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 4,
+          "proposals": [
+            "label:1550-2014-228-42",
+            "label:1626-2408-290-92",
+            "label:2094-2326-168-44",
+            "label:2302-2336-110-38"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c2",
+          "row": 1,
+          "col": 2,
+          "boxPx": {
+            "x": 2562,
+            "y": 1537,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 4,
+          "proposals": [
+            "label:2902-1652-138-62",
+            "label:2954-1576-200-52",
+            "label:2998-1918-138-46",
+            "label:3252-1620-320-76"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c3",
+          "row": 1,
+          "col": 3,
+          "boxPx": {
+            "x": 3586,
+            "y": 1537,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:3776-2358-104-46"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c4",
+          "row": 1,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 1537,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:4546-1652-176-34"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r1c5",
+          "row": 1,
+          "col": 5,
+          "boxPx": {
+            "x": 5634,
+            "y": 1537,
+            "w": 970,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:5670-1654-180-32"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r2c0",
+          "row": 2,
+          "col": 0,
+          "boxPx": {
+            "x": 514,
+            "y": 2561,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:1342-2576-110-48"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r2c1",
+          "row": 2,
+          "col": 1,
+          "boxPx": {
+            "x": 1538,
+            "y": 2561,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 4,
+          "proposals": [
+            "label:1574-3150-166-52",
+            "label:1778-2718-114-72",
+            "label:1890-2952-162-48",
+            "label:2188-2664-378-160"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r2c2",
+          "row": 2,
+          "col": 2,
+          "boxPx": {
+            "x": 2562,
+            "y": 2561,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 4,
+          "proposals": [
+            "label:2560-2936-120-44",
+            "label:2754-2538-232-104",
+            "label:3114-3130-258-106",
+            "label:3146-3242-236-52"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r2c3",
+          "row": 2,
+          "col": 3,
+          "boxPx": {
+            "x": 3586,
+            "y": 2561,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 4,
+          "proposals": [
+            "label:3798-2850-158-82",
+            "label:3976-2614-174-42",
+            "label:4126-3472-182-40",
+            "label:4258-3386-102-56"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r2c4",
+          "row": 2,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 2561,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 2,
+          "proposals": [
+            "label:4590-3346-302-46",
+            "label:5302-3402-140-62"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r3c1",
+          "row": 3,
+          "col": 1,
+          "boxPx": {
+            "x": 1538,
+            "y": 3585,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 6,
+          "proposals": [
+            "label:1442-3728-388-62",
+            "label:1750-3586-320-58",
+            "label:1844-4342-174-50",
+            "label:2178-3582-226-62",
+            "label:2232-4340-86-30",
+            "label:2360-4424-328-116"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r3c3",
+          "row": 3,
+          "col": 3,
+          "boxPx": {
+            "x": 3586,
+            "y": 3585,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:3654-3656-234-56"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r3c4",
+          "row": 3,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 3585,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:4820-3774-240-84"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r3c5",
+          "row": 3,
+          "col": 5,
+          "boxPx": {
+            "x": 5634,
+            "y": 3585,
+            "w": 970,
+            "h": 1024
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:6242-3742-184-52"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r4c2",
+          "row": 4,
+          "col": 2,
+          "boxPx": {
+            "x": 2562,
+            "y": 4609,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 5,
+          "proposals": [
+            "label:2522-4678-240-58",
+            "label:2646-5126-104-48",
+            "label:2824-4904-232-54",
+            "label:2854-5152-204-38",
+            "label:2930-5104-106-36"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r4c4",
+          "row": 4,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 4609,
+            "w": 1024,
+            "h": 1024
+          },
+          "proposalCount": 2,
+          "proposals": [
+            "label:5148-5302-308-140",
+            "label:5384-5414-174-42"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r5c2",
+          "row": 5,
+          "col": 2,
+          "boxPx": {
+            "x": 2562,
+            "y": 5633,
+            "w": 1024,
+            "h": 971
+          },
+          "proposalCount": 7,
+          "proposals": [
+            "label:2546-5902-246-54",
+            "label:2840-5866-218-40",
+            "label:2860-6052-166-38",
+            "label:3156-5814-132-42",
+            "label:3164-6156-408-106",
+            "label:3322-6098-176-52",
+            "label:3326-6402-158-52"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r5c3",
+          "row": 5,
+          "col": 3,
+          "boxPx": {
+            "x": 3586,
+            "y": 5633,
+            "w": 1024,
+            "h": 971
+          },
+          "proposalCount": 5,
+          "proposals": [
+            "label:3474-6292-278-60",
+            "label:3576-6060-152-82",
+            "label:3886-5736-190-42",
+            "label:4170-5612-92-54",
+            "label:4236-6018-198-40"
+          ]
+        },
+        {
+          "tileId": "tile:admiralty-1916-tribal:r5c4",
+          "row": 5,
+          "col": 4,
+          "boxPx": {
+            "x": 4610,
+            "y": 5633,
+            "w": 1024,
+            "h": 971
+          },
+          "proposalCount": 1,
+          "proposals": [
+            "label:5482-6378-284-46"
+          ]
+        }
+      ]
+    }
+  ]
+}

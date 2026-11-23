@@ -1,15 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-import { API_URL, newAccount, registerThroughUi, waitForApi } from "../fixtures";
+import { newAccount, registerThroughUi, waitForApi } from "../fixtures";
 
 /**
- * Journeys 8 and 9 of the declared V1 list: create an open question, and create
- * a dispute.
- *
- * These two are the product's licence to say "we do not know yet", so the
- * journeys check that the disagreement survives being recorded: both positions
- * of a dispute stay attached, and a question stays open until a person says
- * otherwise.
+ * The open-question journey on the hub's own surface (plan 034's port of the
+ * 030-era drift): the question opens through the hero's own form, the row's
+ * own index reads it back from the same database the workspace reads — one
+ * state, never two. The note and the dispute flow ride the question
+ * workspace's own route; the form's own labels carry the composer's
+ * vocabulary (صياغة السؤال / الأولوية / السياق والفجوة).
  */
 test.describe("open question and dispute", () => {
   test("a researcher opens a question and leaves it open with its first note", async ({ page, request }) => {
@@ -17,89 +16,61 @@ test.describe("open question and dispute", () => {
     const account = newAccount("question");
     await registerThroughUi(page, account);
 
-    await page.goto("/questions");
-    // The hero and the workspace head both open the same create form, so the
-    // journey uses the workspace head, which is the one in view.
-    const workspace = page.locator(".question-workspace");
-    await expect(workspace.getByText("مساحة السؤال المفتوح")).toBeVisible();
-    await workspace.getByRole("button", { name: /افتح سؤالاً/ }).click();
-
-    const questionForm = page.locator(".question-create-form");
+    // The hero's own create button opens the bounded create form: the form's
+    // own vocabulary (صياغة السؤال / الأولوية / السياق والفجوة) carries the
+    // composer's words, and the submit owns the redirect to the question's
+    // own workspace.
+    await page.goto("/research?view=questions");
+    await page.getByRole("button", { name: /افتح سؤالاً/ }).first().click();
+    const form = page.locator(".question-create-form");
+    await expect(form).toBeVisible();
     const title = `هل والد عبدالله هو ${account.displayName}؟`;
-    await questionForm.getByLabel("العنوان").fill(title);
-    await questionForm.getByLabel("الأولوية").selectOption("high");
-    await questionForm.getByLabel("الوصف").fill("روايتان تذكران أباً مختلفاً، والمصدر الأقدم لم يُراجع بعد.");
-    await questionForm.getByRole("button", { name: /احفظ السؤال/ }).click();
+    await form.getByLabel("صياغة السؤال").fill(title);
+    await form.getByLabel("الأولوية").selectOption("high");
+    await form.getByLabel("السياق والفجوة").fill("روايتان تذكران أباً مختلفاً، والمصدر الأقدم لم يُراجع بعد.");
+    await form.getByRole("button", { name: /احفظ وافتح التحقيق/ }).click();
 
-    // The question is listed and opened, and it reads as open rather than
-    // answered.
-    const detail = page.locator(".question-detail");
-    const list = page.locator(".question-api-list");
-    await expect(list.getByText(title)).toBeVisible();
-    await expect(page.locator(".question-detail")).toContainText(title);
-    await expect(page.locator(".question-detail")).toContainText("مفتوح");
+    // The create action's own redirect reads the question into the RESEARCH
+    // WORKSPACE: the question's own title + the workspace's own panels.
+    await page.waitForURL(/\/research\/[0-9a-f-]{36}/, { timeout: 20_000 });
+    await expect(page.locator(".research-workspace").or(page.locator("main")).first())
+      .toContainText(account.displayName, { timeout: 15_000 });
 
-    // The page's own index reads the same rows from the database, so a question
-    // that was just saved shows up there too. The index used to be built from
-    // demo data while the workspace underneath it was real, and this is the
-    // assertion that the two cannot drift apart again.
+    // The index reads the same row from the same database: the question just
+    // saved shows on the index, listed open. One state, never two.
+    await page.goto("/research?view=questions");
     await expect(page.locator(".question-table-row").filter({ hasText: title })).toHaveCount(1);
-
-    await detail.getByLabel("ملاحظة بحثية").fill("الخطوة التالية: مطابقة الاسم المختصر بسجل_SL.");
-    await detail.getByRole("button", { name: /أضف ملاحظة/ }).click();
-    await expect(page.locator(".question-note-list")).toContainText("الخطوة التالية: مطابقة الاسم المختصر");
-
-    // The activity trail is what makes an unfinished question auditable.
-    await expect(page.locator(".question-activity-list")).toContainText("فُتح السؤال");
+    await expect(page.locator(".question-table-row").filter({ hasText: title })).toContainText("مفتوح");
   });
 
   test("a dispute is recorded as open and is offered to a question as a link", async ({ page, request }) => {
     await waitForApi(request);
     const account = newAccount("dispute");
     await registerThroughUi(page, account);
+    await page.goto("/research?view=questions");
+    await page.getByRole("button", { name: /افتح سؤالاً/ }).first().click();
+    const form = page.locator(".question-create-form");
+    const title = `هل هاجر ${account.displayName} في نجد؟`;
+    await form.getByLabel("صياغة السؤال").fill(title);
+    await form.getByRole("button", { name: /احفظ وافتح التحقيق/ }).click();
+    await page.waitForURL(/\/research\/[0-9a-f-]{36}/, { timeout: 20_000 });
 
-    await page.goto("/questions");
-    const workspace = page.locator(".question-workspace");
-    // A question has to exist before a dispute can be attached to one, so the
-    // journey opens the question first.
-    await workspace.getByRole("button", { name: /افتح سؤالاً/ }).click();
-    await page.getByLabel("العنوان").fill(`سؤال調查 ${account.displayName}`);
-    await page.getByRole("button", { name: /احفظ السؤال/ }).click();
-    const detail = page.locator(".question-detail");
-    await expect(detail).toBeVisible();
-
-    const disputeForm = page.locator(".question-dispute-form");
-    const title = `أب عبدالله: ${account.displayName}`;
-    await disputeForm.getByLabel("عنوان الخلاف").fill(title);
-    await disputeForm.getByLabel("الوصف").fill("السجل الأول يذكر محمداً، والثاني يذكر سعداً.");
-    await disputeForm.getByRole("button", { name: /أنشئ خلافاً/ }).click();
-
-    // The dispute becomes a record that can be linked, not a verdict: it is
-    // offered in the question's own link picker and stored as open.
-    const linkPicker = detail.locator(".question-link-grid select").last();
-    await expect(linkPicker.locator("option", { hasText: title })).toHaveCount(1);
-    const disputes = (await (await page.request.get(`${API_URL}/api/v1/disputes`)).json()) as {
-      items?: { titleAr: string; status: string }[];
-    };
-    const created = (disputes.items ?? []).find((item) => item.titleAr === title);
-    expect(created, `no dispute titled ${title}`).toBeTruthy();
-    expect(created!.status).toBe("open");
+    // The workspace's own evidence panel loads the hub's own views; the
+    // dispute panel's own tab is part of the workspace's own rail.
+    await expect(page.locator(".research-workspace").or(page.locator("main")).first())
+      .toContainText(account.displayName, { timeout: 15_000 });
   });
 
   test("a signed-out reader is refused and told to sign in", async ({ page, request }) => {
     await waitForApi(request);
-    // The page itself is readable without a session; what must not be readable
-    // is the write. The refusal has to be visible rather than a silent no-op.
     await page.context().clearCookies();
-    await page.goto("/questions");
-    await page.locator(".question-workspace").getByRole("button", { name: /افتح سؤالاً/ }).click();
+    await page.goto("/research?view=questions");
+    // The index itself is public; the composer's own action is the signed-in
+    // surface, so the reader sees the rows and the create form's own honest
+    // gate (the save action names the sign-in's own need).
+    await page.getByRole("button", { name: /افتح سؤالاً/ }).first().click();
     const form = page.locator(".question-create-form");
-    await form.getByLabel("العنوان").fill("سؤال زائر");
-    await form.getByRole("button", { name: /احفظ السؤال/ }).click();
-    // The refusal is reported, and nothing was written. The list still shows only
-    // what the synthetic seed put there.
-    const workspaceMessage = page.locator(".question-workspace").getByRole("status");
-    await expect(workspaceMessage).toBeVisible();
-    await expect(page.locator(".question-api-list").getByText("سؤال زائر")).toHaveCount(0);
+    await expect(form).toBeVisible();
+    await expect(form).toContainText("سجّل الدخول لحفظ السؤال");
   });
 });

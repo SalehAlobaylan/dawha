@@ -1,0 +1,728 @@
+{
+  "meta": {
+    "generator": "infra/local/build-plate-georef.py",
+    "generatedAt": "2026-11-18",
+    "method": "control points are the plate's own printed degree labels in the margin strips; degrees are assigned from one hand-verified anchor plus the printed 4-degree step and validated by spacing uniformity and meridian-shift linearity; the transform is an equidistant conic whose apex is fitted to the labelled meridian lines and whose latitude is linear in the radius",
+    "modelChoice": "an affine/bilinear model was tried first and rejected: it cannot represent a conic plate's curved parallels and placed the plate's own town symbols 0.5-0.8 degrees too far south. The published conic reduces the town residual to the values in each plate's townCheck",
+    "stepDeg": 4.0,
+    "fitGateKm": 15.0,
+    "townGateKm": 40.0,
+    "certaintyRule": "any geometry derived through these transforms is `approximate` until a named reviewer accepts it (plans 030/032); plates flagged needsReview must not be warped for data extraction until their reasons clear",
+    "probeCoverageNote": "interior graticule lines were probed and are not continuous: the strongest interior row covers 0.32 of its span and the strongest interior column 0.35 at full resolution, which is why control points come from the printed labels rather than line detection"
+  },
+  "plates": [
+    {
+      "key": "admiralty-1916-tribal",
+      "file": "sources/plates/admiralty-1916-tribal-original.jpg",
+      "fileSha256": "6de65d63ff0c3bef2e81bb5709403e08e4330a97b50af98adc8510729da06814",
+      "fileBytes": 6208567,
+      "license": "public_domain",
+      "licenseNote": "UK Crown publication pre-1957; US publication pre-1929. Commons file tagged Public domain.",
+      "archiveTitle": "File:1916 map by the British Admiralty War Staff - Tribal map of ARABIA.jpg",
+      "fetchedAt": "2026-11-16",
+      "georef": {
+        "method": "graticule_labels",
+        "model": {
+          "kind": "equidistant_conic",
+          "apex": {
+            "x": 3416.88,
+            "y": -23190.58
+          },
+          "coneConstant": 0.444164,
+          "standardParallelDeg": 26.37,
+          "centralLongitude": 45.5126,
+          "latitude": {
+            "form": "lat = c0*r + c1",
+            "coef": [
+              -0.004322437,
+              140.780974604
+            ]
+          },
+          "forward": "lon = lon0 + degrees(atan2(px-apex.x, py-apex.y)) / n ; lat = c0*hypot(px-apex.x, py-apex.y) + c1",
+          "inverse": "r = (lat-c1)/c0 ; th = radians((lon-lon0)*n) ; px = apex.x + r*sin(th) ; py = apex.y + r*cos(th)",
+          "pxPerDegLat": 231.351
+        },
+        "frame": {
+          "outer_top": 369.0,
+          "inner_top": 513.5,
+          "inner_bottom": 6604.5,
+          "outer_bottom": 6750.0,
+          "outer_left": 370.0,
+          "inner_left": 514.5,
+          "inner_right": 6604.5,
+          "outer_right": 6748.5
+        },
+        "labels": {
+          "top": [
+            920.0,
+            1672.5,
+            2405.0,
+            3134.5,
+            3874.0,
+            4616.5,
+            5344.5,
+            6098.0
+          ],
+          "bottom": [
+            2147.0,
+            3066.5,
+            3986.0,
+            4915.0,
+            5848.5
+          ],
+          "left": [
+            850.5,
+            1792.5,
+            2737.0,
+            3661.0,
+            4587.5,
+            5525.5,
+            6442.5
+          ],
+          "right": [
+            875.5,
+            1784.0,
+            2708.0,
+            3639.5,
+            4577.0,
+            5516.5,
+            6451.5
+          ]
+        },
+        "degrees": {
+          "top": [
+            32.0,
+            36.0,
+            40.0,
+            44.0,
+            48.0,
+            52.0,
+            56.0,
+            60.0
+          ],
+          "bottom": [
+            40.0,
+            44.0,
+            48.0,
+            52.0,
+            56.0
+          ],
+          "left": [
+            36.0,
+            32.0,
+            28.0,
+            24.0,
+            20.0,
+            16.0,
+            12.0
+          ],
+          "right": [
+            36.0,
+            32.0,
+            28.0,
+            24.0,
+            20.0,
+            16.0,
+            12.0
+          ]
+        },
+        "spacing": {
+          "top": {
+            "count": 8,
+            "meanPx": 739.7,
+            "cv": 0.0131,
+            "degrees": [
+              32.0,
+              60.0
+            ]
+          },
+          "bottom": {
+            "count": 5,
+            "meanPx": 925.4,
+            "cv": 0.0066,
+            "degrees": [
+              40.0,
+              56.0
+            ]
+          },
+          "left": {
+            "count": 7,
+            "meanPx": 932.0,
+            "cv": 0.0108,
+            "degrees": [
+              36.0,
+              12.0
+            ]
+          },
+          "right": {
+            "count": 7,
+            "meanPx": 929.3,
+            "cv": 0.0114,
+            "degrees": [
+              36.0,
+              12.0
+            ]
+          }
+        },
+        "meridianShift": {
+          "lons": [
+            40.0,
+            44.0,
+            48.0,
+            52.0,
+            56.0
+          ],
+          "shiftPx": [
+            -258.0,
+            -68.0,
+            112.0,
+            298.5,
+            504.0
+          ],
+          "r2": 0.99948
+        },
+        "meridianResidualPx": [
+          -7.83,
+          -17.75,
+          21.25,
+          37.91,
+          -33.66
+        ],
+        "meridianMaxResidualPx": 37.91,
+        "meridianConcurrencyDeg": 0.205,
+        "anchorCheck": [
+          {
+            "side": "top",
+            "deg": 32.0,
+            "px": 920,
+            "how": "margin crop, top-left corner",
+            "foundPx": 920.0,
+            "deltaPx": 0.0,
+            "ok": true
+          },
+          {
+            "side": "top",
+            "deg": 48.0,
+            "px": 3874,
+            "how": "margin crop, top-right",
+            "foundPx": 3874.0,
+            "deltaPx": 0.0,
+            "ok": true
+          },
+          {
+            "side": "top",
+            "deg": 52.0,
+            "px": 4616,
+            "how": "margin crop, top-right",
+            "foundPx": 4616.5,
+            "deltaPx": 0.5,
+            "ok": true
+          },
+          {
+            "side": "bottom",
+            "deg": 44.0,
+            "px": 3066,
+            "how": "margin crop, bottom middle",
+            "foundPx": 3066.5,
+            "deltaPx": 0.5,
+            "ok": true
+          },
+          {
+            "side": "bottom",
+            "deg": 48.0,
+            "px": 3986,
+            "how": "margin crop, bottom middle",
+            "foundPx": 3986.0,
+            "deltaPx": 0.0,
+            "ok": true
+          },
+          {
+            "side": "bottom",
+            "deg": 52.0,
+            "px": 4915,
+            "how": "margin crop, bottom middle",
+            "foundPx": 4915.0,
+            "deltaPx": 0.0,
+            "ok": true
+          },
+          {
+            "side": "left",
+            "deg": 36.0,
+            "px": 850,
+            "how": "margin crop, top-left corner",
+            "foundPx": 850.5,
+            "deltaPx": 0.5,
+            "ok": true
+          },
+          {
+            "side": "left",
+            "deg": 28.0,
+            "px": 2737,
+            "how": "margin crop, left middle",
+            "foundPx": 2737.0,
+            "deltaPx": 0.0,
+            "ok": true
+          }
+        ],
+        "fit": {
+          "lonRmsDeg": 0.02367,
+          "latRmsDeg": 0.06896,
+          "lonMaxDeg": 0.04141,
+          "latMaxDeg": 0.15166,
+          "lonResiduals": [
+            -0.0255,
+            0.0368,
+            0.0093,
+            -0.0241,
+            -0.0001,
+            0.0353,
+            -0.0204,
+            0.0414,
+            0.018,
+            -0.0043,
+            -0.0237,
+            -0.0068,
+            0.0169
+          ],
+          "latResiduals": [
+            0.1104,
+            0.0669,
+            0.0107,
+            0.0407,
+            0.0584,
+            0.0251,
+            0.0809,
+            -0.1517,
+            -0.0458,
+            -0.0087,
+            -0.006,
+            -0.0309,
+            -0.0662,
+            -0.0838
+          ]
+        },
+        "heldOut": {
+          "method": "refit with each labelled longitude pair and each labelled latitude pair removed in turn; the removed pair is predicted and scored",
+          "lonHoldouts": 10,
+          "latHoldouts": 14,
+          "lonRmsDeg": 0.03442,
+          "latRmsDeg": 0.07068,
+          "lonMaxDeg": 0.05066,
+          "latMaxDeg": 0.16849,
+          "combinedKm": 8.56,
+          "gateKm": 15.0
+        },
+        "townCheck": {
+          "towns": [
+            {
+              "name": "Mecca",
+              "trueLon": 39.83,
+              "trueLat": 21.42,
+              "predictedPx": [
+                2200.8,
+                4396.9
+              ],
+              "printedPx": [
+                2196,
+                4404
+              ],
+              "offsetPx": [
+                -4.8,
+                7.1
+              ],
+              "printedLon": 39.809,
+              "printedLat": 21.388,
+              "errorKm": 4.1
+            },
+            {
+              "name": "Medina",
+              "trueLon": 39.61,
+              "trueLat": 24.47,
+              "predictedPx": [
+                2186.0,
+                3689.9
+              ],
+              "printedPx": [
+                2222,
+                3663
+              ],
+              "offsetPx": [
+                36.0,
+                -26.9
+              ],
+              "printedLon": 39.776,
+              "printedLat": 24.593,
+              "errorKm": 21.7
+            },
+            {
+              "name": "Riyadh",
+              "trueLon": 46.68,
+              "trueLat": 24.71,
+              "predictedPx": [
+                3659.9,
+                3661.5
+              ],
+              "printedPx": [
+                3680,
+                3678
+              ],
+              "offsetPx": [
+                20.1,
+                16.5
+              ],
+              "printedLon": 46.776,
+              "printedLat": 24.638,
+              "errorKm": 12.6
+            },
+            {
+              "name": "Ha'il",
+              "trueLon": 41.69,
+              "trueLat": 27.52,
+              "predictedPx": [
+                2640.5,
+                3001.0
+              ],
+              "printedPx": [
+                2710,
+                2996
+              ],
+              "offsetPx": [
+                69.5,
+                -5.0
+              ],
+              "printedLon": 42.031,
+              "printedLat": 27.55,
+              "errorKm": 33.8
+            },
+            {
+              "name": "Kuwait",
+              "trueLon": 47.98,
+              "trueLat": 29.37,
+              "predictedPx": [
+                3909.9,
+                2579.7
+              ],
+              "printedPx": [
+                3935,
+                2598
+              ],
+              "offsetPx": [
+                25.1,
+                18.3
+              ],
+              "printedLon": 48.104,
+              "printedLat": 29.289,
+              "errorKm": 15.0
+            },
+            {
+              "name": "Basra",
+              "trueLon": 47.78,
+              "trueLat": 30.51,
+              "predictedPx": [
+                3865.3,
+                2316.8
+              ],
+              "printedPx": [
+                3880,
+                2329
+              ],
+              "offsetPx": [
+                14.7,
+                12.2
+              ],
+              "printedLon": 47.853,
+              "printedLat": 30.456,
+              "errorKm": 9.2
+            },
+            {
+              "name": "Aden",
+              "trueLon": 45.03,
+              "trueLat": 12.79,
+              "predictedPx": [
+                3306.1,
+                6420.0
+              ],
+              "printedPx": [
+                3296,
+                6421
+              ],
+              "offsetPx": [
+                -10.1,
+                1.0
+              ],
+              "printedLon": 44.986,
+              "printedLat": 12.786,
+              "errorKm": 4.8
+            }
+          ],
+          "rmsKm": 17.4,
+          "maxKm": 33.8,
+          "medianKm": 12.6,
+          "gateKm": 40.0,
+          "readingNote": "town symbols take no part in the fit; they are read from the plate and scored against modern coordinates, so this number measures the plate's own geography and the transform at once"
+        },
+        "interiorCheck": {
+          "meridiansChecked": 5,
+          "medianAbsOffsetPx": 14.4,
+          "medianAbsOffsetDeg": 0.0622,
+          "samples": [
+            {
+              "lon": 40.0,
+              "samples": [
+                {
+                  "y": 1804,
+                  "predPx": 2348.1,
+                  "inkPx": 2326,
+                  "offsetPx": -22.1,
+                  "coverage": 0.95
+                },
+                {
+                  "y": 3117,
+                  "predPx": 2292.0,
+                  "inkPx": 2270,
+                  "offsetPx": -22.0,
+                  "coverage": 0.81
+                },
+                {
+                  "y": 4430,
+                  "predPx": 2235.8,
+                  "inkPx": 2219,
+                  "offsetPx": -16.8,
+                  "coverage": 0.86
+                },
+                {
+                  "y": 5744,
+                  "predPx": 2179.6,
+                  "inkPx": 2173,
+                  "offsetPx": -6.6,
+                  "coverage": 0.99
+                }
+              ],
+              "medianAbsOffsetPx": 19.4
+            },
+            {
+              "lon": 44.0,
+              "samples": [
+                {
+                  "y": 1804,
+                  "predPx": 3123.8,
+                  "inkPx": 3115,
+                  "offsetPx": -8.8,
+                  "coverage": 0.9
+                },
+                {
+                  "y": 3117,
+                  "predPx": 3108.4,
+                  "inkPx": 3070,
+                  "offsetPx": -38.4,
+                  "coverage": 0.61
+                },
+                {
+                  "y": 4430,
+                  "predPx": 3093.0,
+                  "inkPx": 3081,
+                  "offsetPx": -12.0,
+                  "coverage": 1.0
+                },
+                {
+                  "y": 5744,
+                  "predPx": 3077.6,
+                  "inkPx": 3067,
+                  "offsetPx": -10.6,
+                  "coverage": 1.0
+                }
+              ],
+              "medianAbsOffsetPx": 11.3
+            },
+            {
+              "lon": 48.0,
+              "samples": [
+                {
+                  "y": 1804,
+                  "predPx": 3898.9,
+                  "inkPx": 3897,
+                  "offsetPx": -1.9,
+                  "coverage": 0.96
+                },
+                {
+                  "y": 3117,
+                  "predPx": 3924.2,
+                  "inkPx": 3929,
+                  "offsetPx": 4.8,
+                  "coverage": 0.99
+                },
+                {
+                  "y": 4430,
+                  "predPx": 3949.6,
+                  "inkPx": 3946,
+                  "offsetPx": -3.6,
+                  "coverage": 1.0
+                },
+                {
+                  "y": 5744,
+                  "predPx": 3974.9,
+                  "inkPx": 3966,
+                  "offsetPx": -8.9,
+                  "coverage": 0.72
+                }
+              ],
+              "medianAbsOffsetPx": 4.2
+            },
+            {
+              "lon": 52.0,
+              "samples": [
+                {
+                  "y": 1804,
+                  "predPx": 4675.0,
+                  "inkPx": 4690,
+                  "offsetPx": 15.0,
+                  "coverage": 0.82
+                },
+                {
+                  "y": 3117,
+                  "predPx": 4741.0,
+                  "inkPx": 4767,
+                  "offsetPx": 26.0,
+                  "coverage": 0.81
+                },
+                {
+                  "y": 4430,
+                  "predPx": 4807.1,
+                  "inkPx": 4821,
+                  "offsetPx": 13.9,
+                  "coverage": 1.0
+                },
+                {
+                  "y": 5744,
+                  "predPx": 4873.3,
+                  "inkPx": 4872,
+                  "offsetPx": -1.3,
+                  "coverage": 0.9
+                }
+              ],
+              "medianAbsOffsetPx": 14.4
+            },
+            {
+              "lon": 56.0,
+              "samples": [
+                {
+                  "y": 1804,
+                  "predPx": 5453.4,
+                  "inkPx": 5483,
+                  "offsetPx": 29.6,
+                  "coverage": 0.53
+                },
+                {
+                  "y": 3117,
+                  "predPx": 5560.4,
+                  "inkPx": 5602,
+                  "offsetPx": 41.6,
+                  "coverage": 0.86
+                },
+                {
+                  "y": 4430,
+                  "predPx": 5667.4,
+                  "inkPx": 5688,
+                  "offsetPx": 20.6,
+                  "coverage": 0.71
+                },
+                {
+                  "y": 5744,
+                  "predPx": 5774.5,
+                  "inkPx": 5775,
+                  "offsetPx": 0.5,
+                  "coverage": 0.59
+                }
+              ],
+              "medianAbsOffsetPx": 25.1
+            }
+          ]
+        },
+        "interiorParallelsVerified": false,
+        "labelBiasNote": "a degree label's ink centroid carries a constant typesetting offset relative to the line it names; as a constant it is absorbed by the intercept and bounded here at ±0.08 deg",
+        "certainty": "approximate",
+        "needsReview": true,
+        "reviewReasons": [
+          "interior_parallels_unverified_by_ink"
+        ]
+      }
+    },
+    {
+      "key": "dickson-1914-tribal",
+      "file": "sources/plates/dickson-tribal-arabia.jpg",
+      "fileSha256": "d5e03518a89ad227d63040fa0e10d74d5076d5f7c5641a54aad2a779a8f22812",
+      "fileBytes": 854667,
+      "license": "cc_by_sa_3_0",
+      "licenseNote": "Commons file (scan/reproduction) tagged CC BY-SA 3.0, attribution required on display. The underlying 1914 map is by an author who died in 1959, so its copyright status differs by jurisdiction; used here as a research reference.",
+      "archiveTitle": "File:خريطة قبائل الجزيرة العربية لمستشرق أنجليزي قبل مئة سنة وضعها المستشرق هارولد ديكسون.jpg",
+      "fetchedAt": "2026-11-16",
+      "georef": {
+        "method": "control_points",
+        "reason": "",
+        "model": {
+          "kind": "affine",
+          "affine": [
+            0.018955080973840306,
+            0.0004665548175556769,
+            30.78100094900797,
+            -2.413045233123656e-05,
+            -0.016991240788847728,
+            41.58377432177165
+          ]
+        },
+        "frame": {
+          "outer_left": 12.0,
+          "inner_left": 12.0,
+          "outer_right": 1559.0,
+          "inner_right": 1559.0,
+          "outer_top": 12.0,
+          "inner_top": 12.0,
+          "outer_bottom": 1749.0,
+          "inner_bottom": 1749.0
+        },
+        "fit": {
+          "lonRmsDeg": 0.3242780572821668,
+          "latRmsDeg": 0.22403633382289118,
+          "lonMaxDeg": 0.6052571660121728,
+          "latMaxDeg": 0.3921475243950745,
+          "heldOutCount": 6,
+          "maxErrorKm": 62.8578157669648,
+          "maxAllowedKm": 80.0,
+          "rmsKm": 39.705951933206876,
+          "coverage": {
+            "fit": {
+              "xSpanFraction": 0.751131221719457,
+              "ySpanFraction": 0.7121473805411629
+            },
+            "check": {
+              "xSpanFraction": 0.8015513897866839,
+              "ySpanFraction": 0.719055843408175
+            }
+          },
+          "fitPoints": [
+            { "label": "Damascus", "x": 286, "y": 463, "lon": 36.2913, "lat": 33.5138 },
+            { "label": "Baghdad", "x": 688, "y": 494, "lon": 44.3661, "lat": 33.3152 },
+            { "label": "Kuwait", "x": 891, "y": 734, "lon": 47.9774, "lat": 29.3759 },
+            { "label": "Mecca", "x": 459, "y": 1179, "lon": 39.8262, "lat": 21.4225 },
+            { "label": "Muscat", "x": 1448, "y": 1043, "lon": 58.5922, "lat": 23.61 },
+            { "label": "Aden", "x": 700, "y": 1700, "lon": 45.0187, "lat": 12.7855 }
+          ],
+          "checkPoints": [
+            { "label": "Wejh", "x": 273, "y": 909, "lon": 36.4525, "lat": 26.2455, "errorKm": 14.540659543929946 },
+            { "label": "Medina", "x": 443, "y": 996, "lon": 39.6142, "lat": 24.4672, "errorKm": 20.510008746355755 },
+            { "label": "Riyadh", "x": 804, "y": 1004, "lon": 46.6753, "lat": 24.7136, "errorKm": 29.844679750151872 },
+            { "label": "Sur", "x": 1513, "y": 1094, "lon": 59.5289, "lat": 22.5667, "errorKm": 62.8578157669648 },
+            { "label": "Mosul", "x": 612, "y": 307, "lon": 43.13, "lat": 36.34, "errorKm": 54.22624505566742 },
+            { "label": "Sana'a", "x": 661, "y": 1556, "lon": 44.2064, "lat": 15.3694, "errorKm": 32.326288211989784 }
+          ],
+          "intendedScale": "peninsula_overview"
+        },
+        "certainty": "approximate",
+        "needsReview": true,
+        "reviewReasons": [
+          "landmark_based_registration"
+        ]
+      }
+    }
+  ]
+}

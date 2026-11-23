@@ -1,4 +1,4 @@
-import { ChevronLeft, CircleHelp, LoaderCircle, ShieldQuestion } from "lucide-react";
+import { ChevronLeft, CircleHelp, LoaderCircle, ShieldQuestion, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { AtlasInferenceState } from "../lib/atlas-inference";
 import type { GeospatialFinding } from "../types";
@@ -18,7 +18,15 @@ import { formatMapCount } from "../lib/map-vocabulary";
  * workspace. Approving, dismissing or confirming happens there, with the
  * existing review flow, never here and never without a human.
  */
-export function AtlasInferenceOverlay({ state, onFocus }: { state: AtlasInferenceState; onFocus: (key: string, longitude: number, latitude: number) => void }) {
+export function AtlasInferenceOverlay({
+  state,
+  onFocus,
+  onClose,
+}: {
+  state: AtlasInferenceState;
+  onFocus: (key: string, longitude: number, latitude: number) => void;
+  onClose?: () => void;
+}) {
   if (!state.enabled) return null;
 
   const needsReview = sortFindings(state.findings).filter((finding) => finding.status === "needs_review").length;
@@ -28,15 +36,22 @@ export function AtlasInferenceOverlay({ state, onFocus }: { state: AtlasInferenc
     <section className="atlas-inference" aria-label="الطبقة الاستنتاجية">
       <div className="atlas-inference-head">
         <span className="atlas-inference-seal-glyph" aria-hidden="true">▣</span>
-        <div>
+        <div className="atlas-inference-head-copy">
           <h3>الطبقة الاستنتاجية</h3>
           <p>ختم منصة، لا شهادة مصدر. لا شيء هنا يُعرض كأنه موثق.</p>
         </div>
-        {state.run ? (
-          <span className="atlas-inference-count" aria-label={`${formatMapCount(needsReview)} ملاحظة تحتاج مراجعة، ${formatMapCount(clusters.length)} تجمعاً`}>
-            {formatMapCount(needsReview)} تحتاج مراجعة · {formatMapCount(clusters.length)} تجمعاً
-          </span>
-        ) : null}
+        <div className="atlas-inference-head-actions">
+          {state.run ? (
+            <span className="atlas-inference-count" aria-label={`${formatMapCount(needsReview)} ملاحظة تحتاج مراجعة، ${formatMapCount(clusters.length)} تجمعاً`}>
+              {formatMapCount(needsReview)} تحتاج مراجعة · {formatMapCount(clusters.length)} تجمعاً
+            </span>
+          ) : null}
+          {onClose ? (
+            <button type="button" className="atlas-inference-close" onClick={onClose} aria-label="أغلق الطبقة الاستنتاجية" title="إغلاق">
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {state.forbidden ? (
@@ -49,7 +64,13 @@ export function AtlasInferenceOverlay({ state, onFocus }: { state: AtlasInferenc
         <p className="atlas-inference-empty"><LoaderCircle size={16} className="atlas-spin" /> جارٍ استعادة آخر تحليل محفوظ…</p>
       ) : null}
       {!state.isPending && !state.isError && !state.forbidden && !state.run ? (
-        <p className="atlas-inference-empty">لم يبدأ تحليل جغرافي بهذا الحساب بعد. ابدأ تحليلاً من مساحة التحقيق، وستظهر نتائجه هنا مختومة.</p>
+        <div className="atlas-inference-empty-box">
+          <p className="atlas-inference-empty">لم يبدأ تحليل جغرافي بهذا الحساب بعد. ابدأ تحليلاً من مساحة التحقيق، وستظهر نتائجه هنا مختومة.</p>
+          <Link to="/research" className="secondary-button">
+            افتح مساحة التحقيق
+            <ChevronLeft size={13} />
+          </Link>
+        </div>
       ) : null}
 
       {state.run ? (

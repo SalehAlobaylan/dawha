@@ -40,6 +40,7 @@ from evaluation.baselines import (
     evaluate_retrieval,
 )
 from evaluation.evaluate_routing import evaluate as evaluate_routing
+from evaluation.reuse import evaluate_reuse
 from evaluation.thresholds import (
     GROUPS,
     KNOWN_DEFECTS,
@@ -155,6 +156,7 @@ def build_groups() -> dict[str, dict[str, Any]]:
         "resolution": evaluate_resolution(provider),
         "contradiction": evaluate_contradiction(provider),
         "citations": evaluate_citations(provider),
+        "reuse": evaluate_reuse(),
     }
 
 

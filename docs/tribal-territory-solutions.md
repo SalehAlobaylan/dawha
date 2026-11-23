@@ -144,7 +144,7 @@ Reviewed live: **ORBIS** (Stanford geospatial network model of the Roman world �
 ## S4 v2 — Seasonal movement engine à la ORBIS + event taxonomy
 
 - Corridors, not just polygons: encode known migration corridors (e.g. ʿAnazah's northward drift, Ḥarb's Medina-facing expansion, śayf circuits into Najd/Levant pastures) as **polylines with travel-day stages** sourced from Handbook of Arabia / Lorimer (their camel-pace day-stage measurements are the ORBIS "cost function"), selectable by mode (camel/horse/foot/sea) and **season (صيف/شتاء)** — ORBIS' seasonal departures, adopted.
-- Event layer from ADER? No — **ACLED's event-type taxonomy adapted to the classical repertoire**: يوم / غزوة / سرية / نفير / منا? mapped to typed events with actors (tribe entities) and geometry, stored in `migration_events` + `entity_relationships`; markers erupt over the era slider.
+- Event layer with **ACLED's event-type taxonomy adapted to the classical repertoire**: يوم / غزوة / سرية / نفير mapped to typed events with actors (tribe entities) and geometry, stored in `migration_events` + `entity_relationships`; markers erupt over the era slider.
 - StoryMapJS-style narrated journeys ("رحلة عنزة شمالاً") = shareable slides of era snapshots: map + quote + receipt per slide — the public-facing narratives built from S1+S4 data.
 - **MVP slice:** 3 corridors (ʿAnazah N, Ḥarb E, Shammar N) + 10 أيام العرب events, all passage-cited.
 - **Metric:** events with independent receipts; corridors encoded with stage counts.

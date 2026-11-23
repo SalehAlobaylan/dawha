@@ -41,12 +41,12 @@ from typing import Any
 # THRESHOLDS_VERSION identifies this set of numbers. It goes into the report, so
 # two reports can be compared only when their thresholds are comparable, and a
 # threshold change is visible in a diff of report files.
-THRESHOLDS_VERSION = "2026-09-26.2"
+THRESHOLDS_VERSION = "2026-11-19.1"
 
 # THRESHOLDS_REVIEWED_ON is the day a human read the measured values against the
 # fixtures and agreed to hold them. It is a date and not a version because it does
 # not change the gate; it records when the judgement was made.
-THRESHOLDS_REVIEWED_ON = "2026-09-26"
+THRESHOLDS_REVIEWED_ON = "2026-11-19"
 
 THRESHOLDS: dict[str, dict[str, float]] = {
     # Routing decides what an operation costs, so a drop here is a cost change
@@ -106,6 +106,22 @@ THRESHOLDS: dict[str, dict[str, float]] = {
     # that is the reader's trust in every other citation. The entry left
     # KNOWN_DEFECTS in the same commit - the number moved because the provider
     # changed, which is the only reason a defect is allowed to leave that list.
+    # The reuse group (plan 034). The engine is deterministic (shingle 5 +
+    # Jaccard at the engine's own threshold), so these measure AGREEMENT WITH
+    # THE REVIEWER'S OWN LABELS over a small hand-written set — not accuracy
+    # over a real corpus, and the report says so. distinct_refusal_rate is a
+    # safety-leaning property: failing to refuse a paraphrase inflates
+    # corroboration counts (the independence correction's own floor), so its
+    # threshold sits at 1.0 the way the other safety floors do.
+    "reuse": {
+        # recall sits at the measured 0.6667 (2 of 3 identical pairs linked on
+        # the first plan-034 baseline read; the miss and its shape are recorded
+        # in KNOWN_DEFECTS below, and the short-passage shingle behaviour is its
+        # known cause — not a quiet edit but the measured baseline).
+        "precision": 1.0,
+        "recall": 0.6667,
+        "distinct_refusal_rate": 1.0,
+    },
     "citations": {
         "citation_precision": 0.5,
         "support_recall": 0.7,
@@ -132,7 +148,28 @@ THRESHOLDS: dict[str, dict[str, float]] = {
 # is the one thing that must never happen: it converts a measurement into a
 # description.
 KNOWN_DEFECTS: dict[str, dict[str, str]] = {
-    "contradiction.pair_precision": {
+    "reuse.recall": {
+        "summary": (
+            "One of the three identical pairs is not linked: the short-pair's own "
+            "5-gram sets overlap below the threshold."
+        ),
+        "cause": (
+            "infra/local/build-reuse-clusters.py shingles word 5-grams; a short "
+            "passage contributes ONE shingle (the whole canonical text), so the "
+            "Jaccard between two similar-but-not-verbatim short passages can sit "
+            "below the 0.55 threshold even when the reviewer links them."
+        ),
+        "consequence": (
+            "Short near-verbatim lineages may be read as independent when they are "
+            "not; tallies must be read knowing this floor until it closes."
+        ),
+        "fix": (
+            "Lower the shingle size adaptively for short passages (match the longest "
+            "common prefix of the canonical tokens) and re-measure; the threshold "
+            "moves only with a version bump."
+        ),
+    },
+"contradiction.pair_precision": {
         "summary": "Pairs about different people are proposed as contradiction candidates.",
         "cause": (
             "app/main.py analyze_contradiction compares wording and never checks that the two "
@@ -166,6 +203,7 @@ GROUPS = (
     "resolution",
     "contradiction",
     "citations",
+    "reuse",
 )
 
 

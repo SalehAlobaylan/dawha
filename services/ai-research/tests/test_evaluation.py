@@ -49,6 +49,7 @@ FIXTURE_FILES = (
     "resolution_cases.jsonl",
     "contradiction_cases.jsonl",
     "citation_cases.jsonl",
+    "reuse_cases.jsonl",
 )
 
 # The routing fixtures are the oldest set, and they predate the convention every

@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { API_URL, executeSql, grantPlatformRole, loginThroughUi, newAccount, registerThroughApi, sessionCookieHeader, waitForApi } from "../fixtures";
+
+async function openDirectory(page: Page) {
+  const toggle = page.getByRole("button", { name: "فتح الفهرس" });
+  if (await toggle.isVisible()) {
+    await toggle.click();
+  }
+}
 
 /**
  * Journey 08: browse the map.
@@ -46,6 +53,7 @@ test.describe("browse the atlas", () => {
 
     // The results are derived from the API, not a demo array: the seeded places
     // are present and each row carries a kind and a period or an explicit absence.
+    await openDirectory(page);
     const rows = page.locator(".atlas-row");
     await expect(rows.first()).toBeVisible();
     expect(await rows.count()).toBeGreaterThan(0);
@@ -65,6 +73,7 @@ test.describe("browse the atlas", () => {
     await waitForApi(request);
     await page.context().clearCookies();
     await page.goto("/places");
+    await openDirectory(page);
 
     // The seeded migration is the one feature that carries evidence text, a
     // source and a review state, so it proves the chamber reads the record rather
@@ -98,6 +107,7 @@ test.describe("browse the atlas", () => {
     await waitForApi(request);
     await page.context().clearCookies();
     await page.goto("/places");
+    await openDirectory(page);
     await expect(page.locator(".atlas-row").first()).toBeVisible();
 
     // The reader selects the region they are about to interrogate BEFORE the
@@ -150,6 +160,7 @@ test.describe("browse the atlas", () => {
     await waitForApi(request);
     await page.context().clearCookies();
     await page.goto("/places");
+    await openDirectory(page);
 
     const rows = page.locator(".atlas-row");
     await expect(rows.first()).toBeVisible();
@@ -169,6 +180,7 @@ test.describe("browse the atlas", () => {
     // The research position survives a reload: the same filter is read back from
     // the URL rather than reset to "everything".
     await page.reload();
+    await openDirectory(page);
     await expect(page.locator(".atlas-status-pill").filter({ hasText: "موثق" })).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator(".atlas-row").filter({ hasText: "مسار هجرة" })).toHaveCount(1);
 
@@ -202,6 +214,7 @@ test.describe("browse the atlas", () => {
     // The escape hatch is on screen and restores the map.
     await page.getByRole("button", { name: /أعد ضبط التصفية/ }).click();
     await expect(page).not.toHaveURL(/status=/);
+    await openDirectory(page);
     await expect(page.locator(".atlas-row").first()).toBeVisible();
   });
 
@@ -238,6 +251,7 @@ test.describe("browse the atlas", () => {
     // The debounce writes the query to the URL, and only the features that
     // actually carry the name survive.
     await expect(page).toHaveURL(/q=/);
+    await openDirectory(page);
     const rows = page.locator(".atlas-row");
     await expect(rows.first()).toBeVisible();
     const count = await rows.count();
@@ -247,6 +261,7 @@ test.describe("browse the atlas", () => {
 
     // Reload keeps the query and the reduced list.
     await page.reload();
+    await openDirectory(page);
     await expect(page.getByLabel("ابحث بموضع أو كيان")).toHaveValue("الأحساء");
     await expect(page.locator(".atlas-row").first()).toContainText("الأحساء");
   });
@@ -362,6 +377,7 @@ test.describe("browse the atlas", () => {
 
     // A reader (anonymous) sees the accepted row and does not see the pending one.
     await page.goto("/places");
+    await openDirectory(page);
     await page.locator(".atlas-row").filter({ hasText: "الرياض" }).first().click();
     const inspector = page.getByLabel("فاحصة الإشارة");
     const dossier = inspector.getByLabel("سجل الأدلة للموضع");
@@ -372,6 +388,7 @@ test.describe("browse the atlas", () => {
     // The moderator sees both, the pending one behind its band, in the same folio.
     await loginThroughUi(page, account);
     await page.goto("/places");
+    await openDirectory(page);
     await page.locator(".atlas-row").filter({ hasText: "الرياض" }).first().click();
     const dossierAsModerator = page.getByLabel("فاحصة الإشارة").getByLabel("سجل الأدلة للموضع");
     await expect(dossierAsModerator).toContainText(`نص الرحلة المقبول ${suffix}`);
@@ -397,6 +414,7 @@ test.describe("browse the atlas", () => {
     }
 
     await page.goto(`/places?subject=${personID}`);
+    await openDirectory(page);
     const banner = page.locator(".atlas-subject-banner");
     await expect(banner).toContainText("مسار");
     await expect(banner).toContainText("حدث موثّق");
@@ -433,3 +451,126 @@ test.describe("browse the atlas", () => {
     await expect(page.locator(".atlas-subject-banner")).toContainText("لا مسار موثّق بعد");
   });
 });
+
+  test("the plate lane: the register honours its own refusals, the layer-on state rides the URL, and the compare panel reads the stored plate", async ({ page, request }) => {
+    await waitForApi(request);
+    await page.context().clearCookies();
+    await page.goto("/places");
+    await openDirectory(page);
+    await expect(page.locator(".atlas-row").first()).toBeVisible();
+
+    // The register (plan 032-A) lists the seeded plates with their own honesty:
+    // a renderable plate toggles; the no-graticule plate is DISABLED WITH ITS
+    // OWN CAPTION, not silently absent.
+    const plateGroup = page.getByLabel("طبقات اللوحات المرجعية");
+    await expect(plateGroup).toBeVisible();
+    const toggles = page.locator(".atlas-plate-toggle");
+    const enabledToggles = page.locator(".atlas-plate-toggle:not([disabled])");
+    expect(await toggles.count()).toBeGreaterThanOrEqual(2);
+    expect(await enabledToggles.count()).toBeGreaterThanOrEqual(2);
+
+    // Layer-on is URL state (plan 027-D grammar): toggling writes the plate's
+    // key into the URL, and a reload reads the same layer back.
+    const firstPlate = enabledToggles.filter({ hasText: "خريطة قبائل الجزيرة العربية — هيئة الأركان" });
+    const tribeLabels = page.getByRole("group", { name: "الأسماء العربية على اللوحة التاريخية" });
+    const firstTribeLabel = tribeLabels.locator(".atlas-plate-tribe-label").first();
+    await expect(tribeLabels).toHaveCount(0);
+    await expect(firstPlate).toHaveAttribute("aria-pressed", "false");
+    await firstPlate.click();
+    await expect(firstPlate).toHaveAttribute("aria-pressed", "true");
+    await expect(page).toHaveURL(/plates=/);
+    await expect(firstTribeLabel).toHaveText(/\p{Script=Arabic}/u);
+    await page.reload();
+    await expect(firstPlate).toHaveAttribute("aria-pressed", "true");
+    await expect(page).toHaveURL(/plates=/);
+    await expect(firstTribeLabel).toBeVisible();
+
+    await page.getByRole("button", { name: "قراءة اللوحة", exact: true }).click();
+    await expect(page).toHaveURL(/view=plate/);
+    await expect(page.locator(".atlas-map .atlas-marker")).toHaveCount(0);
+    await page.getByLabel("ابحث بموضع أو كيان").fill("BARRIYAH");
+    await page.getByRole("region", { name: "أسماء مطابقة على اللوحات" }).getByRole("button", { name: /BARRIYAH/ }).click();
+    await expect(page.getByLabel("قراءة اسم من اللوحة")).toContainText("برية");
+    await expect(page).toHaveURL(/caption=/);
+    await page.getByRole("button", { name: "إغلاق الاسم" }).click();
+    await page.getByLabel("ابحث بموضع أو كيان").clear();
+    await page.getByRole("button", { name: "عرض الأدلة واللوحة" }).click();
+
+    // The opacity slider is the layer's own voice: the readout and the URL
+    // carry the same number the reader moved.
+    const opacity = page.getByLabel("شفافية طبقة اللوحات");
+    await expect(opacity).toBeEnabled();
+    await opacity.fill("85");
+    await expect(page).toHaveURL(/plateOpacity=85/);
+    await expect(page.locator(".atlas-plate-opacity")).toContainText("85%");
+
+    // مقارنة النقطة (plan 032-C): the arm writes the armed state to the URL,
+    // the map click holds the point, and the panel reads the STORED plate
+    // through the server's own inverse — the crop is the print's own ink.
+    const compareButton = page.getByRole("button", { name: /مقارنة نقطة/ });
+    await expect(compareButton).toBeEnabled();
+    await compareButton.click();
+    await expect(page).toHaveURL(/compare=arm/);
+    await expect(page.getByText("انقر على الخريطة لاختيار نقطة المقارنة")).toBeVisible();
+    // The click lands at the CANVAS's own center: a fixed page position can
+    // be covered by the filters sidebar at narrow viewports, and the map's
+    // center is the click the panel actually wants.
+    const canvas = page.locator(".atlas-map canvas").first();
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    await canvas.click({ position: { x: Math.floor((canvasBox?.width ?? 600) / 2), y: Math.floor((canvasBox?.height ?? 400) / 2) } });
+    await expect(page).toHaveURL(/compare=\d/);
+    const comparePanel = page.getByLabel("مقارنة النقطة بين اللوحات");
+    await expect(comparePanel).toBeVisible();
+    // The panel's rows are the renderable plates' own reads; a plate outside
+    // this point's frame says so honestly instead of inventing a crop.
+    await expect(comparePanel.getByRole("list").or(comparePanel.locator(".plate-compare-rows")).first()).toBeVisible();
+
+    // Closing the panel drops the URL's state — the arm/hold/close cycle is
+    // one state, not three.
+    await comparePanel.getByRole("button", { name: "إغلاق المقارنة" }).click();
+    await expect(page).not.toHaveURL(/compare=/);
+
+    // The recorded relations' stat sits beside the other layer counts (plan
+    // 032-E): a bounded read, labelled for what it is.
+    await expect(page.getByText("علاقة مسجّلة")).toBeVisible();
+    await firstPlate.click();
+    await expect(tribeLabels).toHaveCount(0);
+  });
+
+  test("the movement filters (plan 033-C): the season word narrows the movement lane, multiplies with the era window, and rides the URL", async ({ page, request }) => {
+    await waitForApi(request);
+    await page.context().clearCookies();
+    await page.goto("/places");
+    await openDirectory(page);
+    await expect(page.locator(".atlas-row").first()).toBeVisible();
+
+    // The chips' own row renders with the movement vocabulary (plan 033-D's
+    // labels — the classical words the sources narrate, not ACLED's keys).
+    const chips = page.getByLabel("مرشحات الحركة");
+    await expect(chips.getByRole("button", { name: "صيف", exact: true })).toBeVisible();
+    await expect(chips.getByRole("button", { name: "شتاء", exact: true })).toBeVisible();
+
+    // The season filter's own honesty over the demo rows: the filter's chip
+    // narrows the movement lane (the era slider scopes further, below), and
+    // the URL carries the word the reader moved.
+    await chips.getByRole("button", { name: "صيف", exact: true }).click();
+    await expect(page).toHaveURL(/season=summer/);
+    await chips.getByRole("button", { name: "صيف", exact: true }).click();
+    await expect(page).not.toHaveURL(/season=/);
+    await chips.getByRole("button", { name: "صيف", exact: true }).click();
+    await expect(page).toHaveURL(/season=summer/);
+
+    // With the era window on (the 031 lock), the two filters multiply:
+    // season=summer under the 1727..1818 window narrows further than either
+    // alone, and the URL carries the compound position.
+    const era = page.locator(".atlas-era-pill").filter({ hasText: "الدولة السعودية الأولى" }).first();
+    await era.click();
+    await expect(page).toHaveURL(/from=1727/);
+    await expect(page).toHaveURL(/season=summer/);
+
+    // The URL round trip: a reload keeps the same compound position.
+    await page.reload();
+    await expect(page).toHaveURL(/season=summer/);
+    await expect(page).toHaveURL(/from=1727/);
+  });
